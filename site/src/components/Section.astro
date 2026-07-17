@@ -1,0 +1,105 @@
+---
+/*
+ * One node in the page-length dispatcher log. A hairline "spine" runs down the
+ * left through every section; each section pins a timestamped eyebrow to a
+ * meaning-colored dot on that spine (red = now, green = fresh/guaranteed,
+ * accent = booked, graydot = idle). The timestamps are the real cockpit-fixture
+ * events, in order — the page reads as one 24-hour log.
+ */
+type Dot = "red" | "green" | "accent" | "graydot" | "amber";
+interface Props {
+  time?: string;
+  label: string;
+  dot?: Dot;
+  first?: boolean;
+  last?: boolean;
+  contentClass?: string;
+  id?: string;
+}
+const {
+  time,
+  label,
+  dot = "accent",
+  first = false,
+  last = false,
+  contentClass = "",
+  id,
+} = Astro.props;
+const dotVar = `var(--${dot})`;
+---
+
+<section
+  id={id}
+  class:list={["spine-row", { "is-first": first, "is-last": last }]}
+>
+  <div class="rail" aria-hidden="true">
+    <span class="dot" style={`background:${dotVar}`}></span>
+  </div>
+  <div class:list={["spine-content", contentClass]}>
+    <p class="eyebrow spine-eyebrow">
+      {time && <span class="mono-num">{time}</span>}{time ? " — " : ""}{label}
+    </p>
+    <slot />
+  </div>
+</section>
+
+<style>
+  .spine-row {
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr);
+    column-gap: 22px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+  .rail {
+    position: relative;
+  }
+  /* continuous vertical hairline spanning the section height */
+  .rail::before {
+    content: "";
+    position: absolute;
+    left: 6px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--hair);
+  }
+  .is-first .rail::before {
+    top: 10px;
+  }
+  .is-last .rail::before {
+    bottom: auto;
+    height: 10px;
+  }
+  .dot {
+    position: absolute;
+    left: 6px;
+    top: 10px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    /* win-bg ring so the spine line doesn't cross the dot */
+    box-shadow: 0 0 0 4px var(--win);
+  }
+  .spine-eyebrow {
+    margin: 0 0 18px;
+  }
+  .spine-content {
+    padding: var(--section) 0;
+    min-width: 0;
+  }
+  .is-first .spine-content {
+    padding-top: var(--hero-top);
+  }
+  @media (max-width: 640px) {
+    .spine-row {
+      column-gap: 14px;
+      padding: 0 18px;
+    }
+    .spine-content {
+      padding: calc(var(--section) * 0.7) 0;
+    }
+  }
+</style>

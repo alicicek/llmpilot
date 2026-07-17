@@ -1,0 +1,22 @@
+---
+// Static link styled with the button grammar (no hydration — it's an anchor).
+// verb + object labels only. Variants mirror the React Button island.
+interface Props {
+  href: string;
+  variant?: "primary" | "quiet";
+  size?: "default" | "lg";
+}
+const { href, variant = "primary", size = "default" } = Astro.props;
+
+const base =
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md font-semibold transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 select-none";
+const variants = {
+  primary:
+    "bg-primary text-primary-foreground hover:brightness-110 active:brightness-95",
+  quiet: "text-text border border-hair hover:bg-white/5 active:bg-white/10",
+};
+const sizes = { default: "h-11 px-5 text-[14px]", lg: "h-12 px-6 text-[15px]" };
+const cls = `${base} ${variants[variant]} ${sizes[size]}`;
+---
+
+<a href={href} class={cls}><slot /></a>

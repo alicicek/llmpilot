@@ -1,0 +1,280 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================================
+   llmpilot design tokens — single source of truth (derived from design/DESIGN.md).
+   Architecture: shadcn's semantic names are canonical (:root = light, .dark =
+   dark twins). Our surface names (--win, --panel, --hair…) ALIAS onto the
+   semantic layer, so a colour changes in exactly one place. The site leads dark
+   via <html class="dark">; removing that class is a working light mode.
+   ============================================================================ */
+:root {
+  /* shadcn semantic — light */
+  --background: #ffffff;
+  --foreground: #1d1d1f;
+  --card: #f8f8fa;
+  --card-foreground: #1d1d1f;
+  --popover: #f8f8fa;
+  --popover-foreground: #1d1d1f;
+  --primary: #0a7aff; /* Apple systemBlue — the one accent (booked/charging) */
+  --primary-foreground: #ffffff;
+  --secondary: #f5f5f7;
+  --secondary-foreground: #1d1d1f;
+  --muted: #f5f5f7;
+  --muted-foreground: #59595e;
+  --accent: #f5f5f7; /* shadcn hover surface — NOT the brand blue */
+  --accent-foreground: #1d1d1f;
+  --destructive: #e5493f;
+  --border: rgba(0, 0, 0, 0.11);
+  --input: rgba(0, 0, 0, 0.11);
+  --ring: #0a7aff;
+  --radius: 0.5rem;
+  --chart-1: #0a7aff;
+  --chart-2: #1fa943;
+  --chart-3: #ff9500;
+  --chart-4: #e5493f;
+  --chart-5: #86868b;
+  --sidebar: #f8f8fa;
+  --sidebar-foreground: #1d1d1f;
+  --sidebar-primary: #0a7aff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f5f5f7;
+  --sidebar-accent-foreground: #1d1d1f;
+  --sidebar-border: rgba(0, 0, 0, 0.11);
+  --sidebar-ring: #0a7aff;
+
+  /* custom meaning tokens (one meaning each, never decoration) */
+  --success: #1fa943; /* guaranteed · fresh · chained */
+  --warning: #ff9500; /* conditional · may-drift */
+  --warning-foreground: #c86f00;
+  --link: #0a6ae0; /* accent text */
+  --graydot: #a5a5ac; /* assumes-idle */
+  --floor: #ffffff; /* darkest window surface */
+  --rail: #e8e8ed;
+  --hairsoft: rgba(0, 0, 0, 0.06);
+  --ter: #86868b; /* third text step */
+
+  /* our surface aliases → the semantic layer (single source) */
+  --win: var(--background);
+  --panel: var(--card);
+  --toolbar: var(--secondary);
+  --hair: var(--border);
+  --text: var(--foreground);
+  --sec: var(--muted-foreground);
+  --green: var(--success);
+  --amber: var(--warning);
+  --amber-tx: var(--warning-foreground);
+  --red: var(--destructive);
+  --acc-tx: var(--link);
+
+  /* type — one family (Apple system stack), tabular numerals everywhere */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Helvetica Neue", system-ui, sans-serif;
+  --fs-hero: clamp(38px, 5.4vw, 64px);
+  --fs-section: clamp(24px, 3.2vw, 28px);
+  --fs-sub: 20px;
+  --fs-body: 16px;
+  --fs-label: 14px;
+  --fs-eyebrow: 12px;
+  --fs-mono: 15px;
+
+  /* radii (px) — our exact instrument radii, kept beside shadcn's --radius */
+  --r-sm: 6px;
+  --r-md: 7px;
+  --r-lg: 8px;
+  --r-xl: 12px;
+  --r-win: 11px;
+
+  /* spacing */
+  --gutter: 24px;
+  --section: clamp(64px, 10vw, 96px);
+  --hero-top: clamp(72px, 12vw, 120px);
+  --chip-pad: 10px;
+
+  --shadow-window: 0 22px 60px rgba(0, 0, 0, 0.16),
+    0 3px 12px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.14);
+
+  color-scheme: light;
+}
+
+.dark {
+  --background: #1e1e21;
+  --foreground: #f2f2f4;
+  --card: #232327;
+  --card-foreground: #f2f2f4;
+  --popover: #232327;
+  --popover-foreground: #f2f2f4;
+  --primary: #0a84ff;
+  --primary-foreground: #ffffff;
+  --secondary: #29292d;
+  --secondary-foreground: #f2f2f4;
+  --muted: #29292d;
+  --muted-foreground: #a8a8af;
+  --accent: #29292d;
+  --accent-foreground: #f2f2f4;
+  --destructive: #ff5f55;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.15);
+  --ring: #0a84ff;
+  --chart-1: #0a84ff;
+  --chart-2: #30d158;
+  --chart-3: #ff9f0a;
+  --chart-4: #ff5f55;
+  --chart-5: #8a8a91;
+  --sidebar: #232327;
+  --sidebar-foreground: #f2f2f4;
+  --sidebar-primary: #0a84ff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #29292d;
+  --sidebar-accent-foreground: #f2f2f4;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: #0a84ff;
+
+  --success: #30d158;
+  --warning: #ff9f0a;
+  --warning-foreground: #ffab3d;
+  --link: #7ab8ff;
+  --graydot: #6f6f76;
+  --floor: #0b0b0d;
+  --rail: #3a3a3f;
+  --hairsoft: rgba(255, 255, 255, 0.055);
+  --ter: #8a8a91;
+
+  --shadow-window: 0 22px 60px rgba(0, 0, 0, 0.55),
+    0 4px 14px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-sans);
+
+  /* shadcn semantic → utilities */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* custom meaning + our surface aliases → utilities */
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-link: var(--link);
+  --color-graydot: var(--graydot);
+  --color-floor: var(--floor);
+  --color-win: var(--win);
+  --color-panel: var(--panel);
+  --color-toolbar: var(--toolbar);
+  --color-rail: var(--rail);
+  --color-hair: var(--hair);
+  --color-hairsoft: var(--hairsoft);
+  --color-text: var(--text);
+  --color-sec: var(--sec);
+  --color-ter: var(--ter);
+  --color-green: var(--green);
+  --color-amber: var(--amber);
+  --color-amber-tx: var(--amber-tx);
+  --color-red: var(--red);
+  --color-acc-tx: var(--acc-tx);
+  --color-white: #ffffff;
+
+  /* radii */
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+  --radius-win: var(--r-win);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+
+  --shadow-window: var(--shadow-window);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+  * {
+    @apply border-border;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    @apply font-sans;
+  }
+  body {
+    margin: 0;
+    @apply bg-background text-foreground;
+    font-variant-numeric: tabular-nums; /* every numeral tabular by inheritance */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-size: var(--fs-body);
+    line-height: 1.55;
+  }
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+}
+
+/* Rotation budget 0° · motion is state-change only, 150–250ms; reduced = instant. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Shared type roles (used by .astro components) */
+.eyebrow {
+  font-size: var(--fs-eyebrow);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ter);
+}
+.mono-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus visibility — keyboard users get a clear accent ring */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

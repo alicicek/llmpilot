@@ -1,0 +1,181 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Brandmark from "../components/Brandmark.astro";
+import CtaButton from "../components/CtaButton.astro";
+
+// Recovery-email link target (?token=…). A browser can't reach the local
+// daemon, and /v1/recover/claim requires the daemon-supplied install_id — so
+// this page never calls the worker. It surfaces the one-time code for the
+// user to paste into the app: Settings → License → Restore with code.
+---
+
+<Layout
+  title="llmpilot — restore Pro"
+  description="Paste this one-time code into llmpilot to restore Pro on this Mac."
+  noindex
+>
+  <header class="hdr">
+    <Brandmark />
+  </header>
+  <main class="wrap">
+    <p class="eyebrow">recovery — one-time code</p>
+
+    <div id="has-token" hidden>
+      <h1>Your restore code.</h1>
+      <p class="sub">
+        This page can't reach the llmpilot app on your Mac, so the last step
+        happens in the app — copy the code, then paste it there.
+      </p>
+      <div class="code-box">
+        <code id="token"></code>
+        <button type="button" class="copy-btn" id="copy" aria-label="Copy recovery code">
+          Copy code
+        </button>
+      </div>
+      <ol class="steps">
+        <li>Open llmpilot and go to Settings → License.</li>
+        <li>Paste the code into the recovery code field.</li>
+        <li>Choose Restore with code.</li>
+      </ol>
+      <p class="fine">
+        The code works once and expires 15 minutes after the email was sent.
+        If it has expired, request a fresh one from Restore by email in the
+        app.
+      </p>
+    </div>
+
+    <div id="no-token" hidden>
+      <h1>This link is missing its code.</h1>
+      <p class="sub">
+        Open the link from your recovery email again — everything after
+        token= is the code. Or request a fresh email in llmpilot: Settings →
+        License → Restore by email.
+      </p>
+      <div class="cta">
+        <CtaButton href="/" variant="quiet" size="lg">Back to llmpilot</CtaButton>
+      </div>
+    </div>
+
+    <noscript>
+      <h1>Your code is in the address bar.</h1>
+      <p class="sub">
+        JavaScript is off, so this page can't read the code from the link —
+        it's everything after token= in the address bar. Paste it into
+        llmpilot: Settings → License → Restore with code.
+      </p>
+    </noscript>
+  </main>
+
+  <script>
+    const token = (
+      new URLSearchParams(window.location.search).get("token") ?? ""
+    ).trim();
+    const hasToken = document.getElementById("has-token");
+    const noToken = document.getElementById("no-token");
+    const code = document.getElementById("token");
+    if (token && hasToken && code) {
+      code.textContent = token;
+      hasToken.hidden = false;
+    } else if (noToken) {
+      noToken.hidden = false;
+    }
+
+    const btn = document.getElementById("copy");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    btn?.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(token);
+        btn.textContent = "Copied";
+        clearTimeout(timer);
+        timer = setTimeout(() => (btn.textContent = "Copy code"), 1600);
+      } catch {
+        /* clipboard blocked — the code is visible to select by hand */
+      }
+    });
+  </script>
+
+  <style>
+    .hdr {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 14px 24px;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: clamp(80px, 18vh, 200px) 24px;
+    }
+    h1 {
+      margin: 18px 0 0;
+      font-size: var(--fs-hero);
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .sub {
+      margin: 18px 0 0;
+      max-width: 44ch;
+      font-size: var(--fs-sub);
+      color: var(--sec);
+    }
+    .code-box {
+      display: flex;
+      align-items: stretch;
+      max-width: 640px;
+      margin: 26px 0 0;
+      overflow: hidden;
+      border: 1px solid var(--hair);
+      border-radius: var(--r-md);
+      background: var(--panel);
+    }
+    .code-box code {
+      flex: 1;
+      padding: 12px 14px;
+      font-size: 14px;
+      word-break: break-all;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    .copy-btn {
+      border: 0;
+      border-left: 1px solid var(--hair);
+      background: none;
+      padding: 0 14px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      color: var(--acc-tx);
+      cursor: pointer;
+      transition: background-color 150ms;
+    }
+    .copy-btn:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .steps {
+      max-width: 52ch;
+      margin: 26px 0 0;
+      padding-left: 22px;
+      list-style: decimal; /* Tailwind preflight strips list markers */
+      font-size: var(--fs-body);
+      color: var(--sec);
+    }
+    .steps li::marker {
+      font-variant-numeric: tabular-nums;
+      color: var(--ter);
+    }
+    .steps li {
+      margin: 6px 0 0;
+    }
+    .fine {
+      max-width: 52ch;
+      margin: 22px 0 0;
+      font-size: 12px;
+      color: var(--ter);
+    }
+    .cta {
+      margin: 30px 0 0;
+    }
+  </style>
+</Layout>

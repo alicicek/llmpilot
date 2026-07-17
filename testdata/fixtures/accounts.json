@@ -1,0 +1,18 @@
+[
+  {
+    "id": "acct-a",
+    "label": "a",
+    "email": "a@example.dev",
+    "config_dir": "/tmp/llmpilot-fixtures/config-a",
+    "keychain_service": "Claude Code-credentials",
+    "pinned": false
+  },
+  {
+    "id": "acct-b",
+    "label": "b",
+    "email": "b@example.dev",
+    "config_dir": "/tmp/llmpilot-fixtures/config-b",
+    "keychain_service": "Claude Code-credentials-deadbeef",
+    "pinned": true
+  }
+]

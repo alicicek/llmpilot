@@ -1,0 +1,43 @@
+.factory/
+.DS_Store
+node_modules/
+dist/
+/llmpilot
+coverage.out
+*.test
+
+# Xcode
+macos/**/xcuserdata/
+macos/build/
+macos/DerivedData/
+
+# playwright MCP session artifacts
+.playwright-mcp/
+tsconfig.tsbuildinfo
+.claude/
+
+# internal planning/strategy — LOCAL-ONLY, never pushed (owner 2026-07-11)
+plans/
+docs/HANDOFF.md
+docs/ROADMAP.md
+docs/research/
+docs/launch/
+
+# secrets: .dev.vars is GENERATED from a committed .dev.vars.template via
+# `op inject` — values live in 1Password, never in the repo
+**/.dev.vars
+
+# playwright artifacts
+web/test-results/
+docs/goldens/
+*.bundle
+
+# local-only: session rules + design workshop (owner 2026-07-11)
+CLAUDE.md
+design/
+
+HANDOFF.md
+go.work*
+.wrangler/
+AGENTS.md
+mp-checkout-*.png

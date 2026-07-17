@@ -1,0 +1,161 @@
+@import "tailwindcss";
+
+/*
+ * llmpilot tokens — design/DESIGN-SYSTEM.md ("Native Instrument") §Tokens.
+ * Source of truth for every color/size the cockpit uses; the vendored
+ * exemplar (design/reference/schedule-mockup.html:24-59) carries the same
+ * values. Light is :root, dark swaps the custom properties (FACE-SWAP move:
+ * token swap only, 200ms ease, nothing moves).
+ */
+:root {
+  --win: #ffffff;
+  --toolbar: #f5f5f7;
+  --panel: #f8f8fa;
+  --rail: #e8e8ed;
+  --hair: rgba(0, 0, 0, 0.11);
+  --hairsoft: rgba(0, 0, 0, 0.06);
+  --text: #1d1d1f;
+  --sec: #59595e;
+  --ter: #6a6a6f; /* was #86868b — fails AA at annotation sizes; passing on win AND panel (5.07:1) */
+  --wash: rgba(20, 20, 40, 0.035);
+  --accent: #0a7aff;
+  --acc-a: rgba(10, 122, 255, 0.07);
+  --acc-b: rgba(10, 122, 255, 0.34);
+  --acc-bd: rgba(10, 122, 255, 0.5);
+  --acc-tx: #0a6ae0;
+  --chipbg: #eaf3ff;
+  --chipbd: rgba(10, 122, 255, 0.42);
+  --ok: #1fa943;
+  --ok-tx: #147d33;
+  --okbg: rgba(52, 199, 89, 0.12);
+  --okbd: rgba(40, 170, 80, 0.4);
+  --warn: #9d5700; /* pack #c86f00 = 3.46:1 on panel, fails AA; nearest passing amber text (5.2:1) */
+  --warnraw: #ff9500;
+  --warnbg: rgba(255, 149, 0, 0.1);
+  --warnbd: rgba(255, 149, 0, 0.4);
+  --warnzone: rgba(255, 149, 0, 0.09);
+  --crit: #e5493f;
+  --crit-deep: #d0342b; /* white-text-safe red (4.99:1) for filled pills */
+  --critzone1: rgba(255, 59, 48, 0.13);
+  --critzone2: rgba(255, 59, 48, 0.045);
+  --graydot: #a5a5ac;
+  --hatch: rgba(60, 60, 67, 0.3);
+  --hatchbg: rgba(60, 60, 67, 0.05);
+  --hudbg: rgba(28, 28, 32, 0.95);
+  --hudtx: #f5f5f7;
+  --tick: rgba(10, 122, 255, 0.35);
+  --shadow-window:
+    0 22px 60px rgba(0, 0, 0, 0.16), 0 3px 12px rgba(0, 0, 0, 0.08),
+    0 0 0 0.5px rgba(0, 0, 0, 0.14);
+  --shadow-drag: 0 7px 18px rgba(0, 0, 0, 0.38);
+  --shadow-hud: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --win: #1e1e21;
+    --toolbar: #29292d;
+    --panel: #232327;
+    --rail: #3a3a3f;
+    --hair: rgba(255, 255, 255, 0.1);
+    --hairsoft: rgba(255, 255, 255, 0.055);
+    --text: #f2f2f4;
+    --sec: #a8a8af;
+    --ter: #8a8a91; /* was #77777e — 3.74:1 on dark; nearest passing step */
+    --wash: rgba(0, 0, 0, 0.17);
+    --accent: #0a84ff;
+    --acc-a: rgba(10, 132, 255, 0.1);
+    --acc-b: rgba(10, 132, 255, 0.4);
+    --acc-bd: rgba(90, 170, 255, 0.55);
+    --acc-tx: #7ab8ff;
+    --chipbg: rgba(10, 132, 255, 0.17);
+    --chipbd: rgba(100, 175, 255, 0.5);
+    --ok: #30d158;
+    --ok-tx: #30d158;
+    --okbg: rgba(48, 209, 88, 0.13);
+    --okbd: rgba(48, 209, 88, 0.4);
+    --warn: #ffab3d;
+    --warnraw: #ff9f0a;
+    --warnbg: rgba(255, 159, 10, 0.12);
+    --warnbd: rgba(255, 159, 10, 0.42);
+    --warnzone: rgba(255, 159, 10, 0.1);
+    --crit: #ff5f55;
+    --crit-deep: #d0342b;
+    --critzone1: rgba(255, 69, 58, 0.16);
+    --critzone2: rgba(255, 69, 58, 0.05);
+    --graydot: #6f6f76;
+    --hatch: rgba(255, 255, 255, 0.17);
+    --hatchbg: rgba(255, 255, 255, 0.045);
+    --hudbg: rgba(44, 44, 50, 0.97);
+    --hudtx: #ffffff;
+    --tick: rgba(120, 185, 255, 0.4);
+    --shadow-window:
+      0 26px 70px rgba(0, 0, 0, 0.55), 0 4px 14px rgba(0, 0, 0, 0.4),
+      0 0 0 0.5px rgba(255, 255, 255, 0.12);
+  }
+}
+
+@theme inline {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    system-ui, sans-serif;
+  --color-*: initial;
+  --color-win: var(--win);
+  --color-toolbar: var(--toolbar);
+  --color-panel: var(--panel);
+  --color-rail: var(--rail);
+  --color-hair: var(--hair);
+  --color-hairsoft: var(--hairsoft);
+  --color-text: var(--text);
+  --color-sec: var(--sec);
+  --color-ter: var(--ter);
+  --color-wash: var(--wash);
+  --color-accent: var(--accent);
+  --color-acc-a: var(--acc-a);
+  --color-acc-b: var(--acc-b);
+  --color-acc-bd: var(--acc-bd);
+  --color-acc-tx: var(--acc-tx);
+  --color-chipbg: var(--chipbg);
+  --color-chipbd: var(--chipbd);
+  --color-ok: var(--ok);
+  --color-ok-tx: var(--ok-tx);
+  --color-okbg: var(--okbg);
+  --color-okbd: var(--okbd);
+  --color-warn: var(--warn);
+  --color-warnraw: var(--warnraw);
+  --color-warnbg: var(--warnbg);
+  --color-warnbd: var(--warnbd);
+  --color-warnzone: var(--warnzone);
+  --color-crit: var(--crit);
+  --color-crit-deep: var(--crit-deep);
+  --color-critzone1: var(--critzone1);
+  --color-critzone2: var(--critzone2);
+  --color-graydot: var(--graydot);
+  --color-hatch: var(--hatch);
+  --color-hatchbg: var(--hatchbg);
+  --color-hudbg: var(--hudbg);
+  --color-hudtx: var(--hudtx);
+  --color-tick: var(--tick);
+  --color-white: #ffffff;
+  --shadow-window: var(--shadow-window);
+  --shadow-drag: var(--shadow-drag);
+  --shadow-hud: var(--shadow-hud);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  background: var(--win);
+  color: var(--text);
+  transition: background 200ms ease, color 200ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

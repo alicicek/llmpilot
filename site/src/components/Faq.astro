@@ -1,0 +1,99 @@
+---
+// FAQ — native <details>, no JS. Answers state real behavior only; the ToS and
+// wake-honesty items mirror the README's expectation-management stance.
+const items = [
+  {
+    q: "Does it need my Claude password or API keys?",
+    a: "No. llmpilot reads Claude Code's own OAuth token from the macOS Keychain (read-only, with your one-time Always Allow) to check usage, and switches accounts through the official claude auth CLI. Tokens never leave your Mac.",
+  },
+  {
+    q: "Is it safe to run multiple accounts?",
+    a: "llmpilot uses your own logged-in accounts through the official CLI — no reimplemented login, no third-party credentials. It reads the same usage endpoint Claude Code's own /usage screen uses. The README carries Anthropic's verbatim credential policy so you can decide informed.",
+  },
+  {
+    q: "What is free and what is Pro?",
+    a: "The core is free and open source forever: statusline, cockpit, menu bar, manual switching, analytics, notifications. Pro is a one-time purchase for the autopilot — automatic switching, scheduling, and wake.",
+  },
+  {
+    q: "Does scheduling work while my Mac is asleep?",
+    a: "It wakes the Mac a couple of minutes early via a privileged helper you set up once. On battery with the lid closed, macOS can defer a wake — llmpilot surfaces a late fire honestly rather than pretending it ran on time.",
+  },
+  {
+    q: "Any telemetry?",
+    a: "None, ever. No analytics, no phone-home beyond an optional version check you can turn off. Cached data holds percentages and reset times only — never tokens.",
+  },
+];
+---
+
+<div class="faq">
+  {
+    items.map((it) => (
+      <details class="faq-item">
+        <summary>
+          <span>{it.q}</span>
+          <span class="faq-mark" aria-hidden="true" />
+        </summary>
+        <p>{it.a}</p>
+      </details>
+    ))
+  }
+</div>
+
+<style>
+  .faq {
+    max-width: 720px;
+  }
+  .faq-item {
+    border-bottom: 1px solid var(--hair);
+  }
+  .faq-item summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 0;
+    cursor: pointer;
+    font-size: var(--fs-body);
+    font-weight: 600;
+    color: var(--text);
+    list-style: none;
+  }
+  .faq-item summary::-webkit-details-marker {
+    display: none;
+  }
+  .faq-mark {
+    position: relative;
+    flex-shrink: 0;
+    width: 12px;
+    height: 12px;
+  }
+  .faq-mark::before,
+  .faq-mark::after {
+    content: "";
+    position: absolute;
+    background: var(--ter);
+  }
+  .faq-mark::before {
+    left: 0;
+    top: 5.5px;
+    width: 12px;
+    height: 1px;
+  }
+  .faq-mark::after {
+    left: 5.5px;
+    top: 0;
+    width: 1px;
+    height: 12px;
+    transition: opacity 150ms ease;
+  }
+  .faq-item[open] .faq-mark::after {
+    opacity: 0;
+  }
+  .faq-item p {
+    margin: 0;
+    padding: 0 0 20px;
+    max-width: 64ch;
+    color: var(--sec);
+    line-height: 1.6;
+  }
+</style>

@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "llmpilot-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-12",
+  // nodejs_compat: the Stripe SDK touches Node built-ins.
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.01 }
+  },
+  // Hourly reminder scan; daily cancellation-invariant reconciliation.
+  "triggers": { "crons": ["0 * * * *", "17 3 * * *"] },
+  "d1_databases": [
+    {
+      "binding": "ENT_DB",
+      "database_name": "llmpilot-entitlements",
+      "database_id": "bf199cbf-7dbc-4be4-b980-59638789b32f",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["support@llmpilot.dev"]
+    }
+  ],
+  "vars": {
+    // "staging" while on TEST Stripe keys. Flip to "production" ONLY when live
+    // keys are set — the worker fails closed on a key-mode/ENVIRONMENT mismatch
+    // (test key in production, or live key outside production).
+    "ENVIRONMENT": "staging",
+    "EMAIL_FROM": "support@llmpilot.dev",
+    "PUBLIC_ORIGIN": "https://llmpilot.dev",
+    "TRIAL_DAYS": "8",
+    "SEAT_LIMIT": "4"
+  }
+  // Secrets (wrangler secret / .dev.vars — see .dev.vars.template):
+  //   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, ENT_SIGNING_KEY,
+  //   ENT_SIGNING_KEY_ID, PRICE_FULL, PRICE_DISCOUNT
+}

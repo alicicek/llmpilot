@@ -1,0 +1,50 @@
+name: deploy-site
+
+# Deploys the llmpilot.dev landing (site/) to Cloudflare Workers Static Assets
+# on push to main that touches the site. Hosted ubuntu (1x, cheap).
+# Needs one repo secret:
+#   CLOUDFLARE_API_TOKEN  — a token scoped to Account · Workers Scripts · Edit
+# and one repo variable (already set): CLOUDFLARE_ACCOUNT_ID.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-site
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: site
+      - run: pnpm build
+        working-directory: site
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
+        with:
+          # wrangler-action defaults to wrangler 3.90.0, which rejects the
+          # assets-only site config with "Missing entry-point". Pin to v4.
+          wranglerVersion: "4.110.0"
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: site
+          command: deploy

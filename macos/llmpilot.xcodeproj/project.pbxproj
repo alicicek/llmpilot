@@ -1,0 +1,520 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1124CDB91E9CADA37F8100E6 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 9C7160A030FB6AD8F5B98EC5 /* Sparkle */; };
+		14758478B797F59CFA7ACFF0 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7101FC348F4D0F5A5A20CD /* MenuBarView.swift */; };
+		252306E439AEC6401D5B2779 /* FormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60DD5B8F2791EEAD33662102 /* FormatTests.swift */; };
+		373D6BF3C4A83AC36D278A1A /* FleetViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F145734CB66F81A06F5E9A62 /* FleetViewModelTests.swift */; };
+		3D2A191FD2515A599781956F /* FleetViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 832D6CB2B46A2E0E9E6C08A3 /* FleetViewModel.swift */; };
+		3EB8D3B163E377DF36FCD179 /* RunwayBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2501E07E5E08AC68E1ED4C6E /* RunwayBar.swift */; };
+		5491A718B01CD0E3A00A8C96 /* DaemonLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91EBE1758BF5088559041005 /* DaemonLauncher.swift */; };
+		5B3572A3BC79AE4CA4C87B73 /* MenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08837C38A931F867D09A8BA7 /* MenuBarLabel.swift */; };
+		949073F9ADB1BCFCE4F8B32C /* DaemonClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68868CA442D6B4783E52574B /* DaemonClient.swift */; };
+		94EC15362B065F3BA7AF9060 /* CockpitWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D2C9FD0DD642E709B21C55C /* CockpitWindow.swift */; };
+		A68C2EA86A5DBE72B45C0164 /* DecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A92599E52DF40F6D82DC68 /* DecodingTests.swift */; };
+		A8FC211EB811F20EBC69887B /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 540EA8D2C6CF625B97EE521B /* Theme.swift */; };
+		ACDDFF8EDDE5A4E85681C84A /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298F79108B7529E8A2B51599 /* Models.swift */; };
+		CE0F3D2EBA34674E7A979B40 /* Format.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109CE6394902AF4D2464EBB8 /* Format.swift */; };
+		ED78413C9CE9CD066CCC60D5 /* LLMPilotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB37742EE077E02EFE176E1 /* LLMPilotApp.swift */; };
+		F18348926E13F630628A69CD /* StubAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24B54C26175A44616808D0D2 /* StubAPI.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		7A6FD223A238C8DA12AEF8FE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7A1CA9702A65008AB8669C78 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6C3F788725218AF6114D3260;
+			remoteInfo = llmpilot;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		08837C38A931F867D09A8BA7 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
+		0B070A1CBD84AD69CFB17F2C /* llmpilot.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = llmpilot.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0D2C9FD0DD642E709B21C55C /* CockpitWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CockpitWindow.swift; sourceTree = "<group>"; };
+		109CE6394902AF4D2464EBB8 /* Format.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Format.swift; sourceTree = "<group>"; };
+		1C7876EA16A1BC16C09C3E96 /* llmpilotTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = llmpilotTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		24B54C26175A44616808D0D2 /* StubAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubAPI.swift; sourceTree = "<group>"; };
+		2501E07E5E08AC68E1ED4C6E /* RunwayBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunwayBar.swift; sourceTree = "<group>"; };
+		298F79108B7529E8A2B51599 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		540EA8D2C6CF625B97EE521B /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		60DD5B8F2791EEAD33662102 /* FormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormatTests.swift; sourceTree = "<group>"; };
+		68868CA442D6B4783E52574B /* DaemonClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonClient.swift; sourceTree = "<group>"; };
+		7D7101FC348F4D0F5A5A20CD /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		832D6CB2B46A2E0E9E6C08A3 /* FleetViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetViewModel.swift; sourceTree = "<group>"; };
+		91A92599E52DF40F6D82DC68 /* DecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecodingTests.swift; sourceTree = "<group>"; };
+		91EBE1758BF5088559041005 /* DaemonLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonLauncher.swift; sourceTree = "<group>"; };
+		DAB37742EE077E02EFE176E1 /* LLMPilotApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMPilotApp.swift; sourceTree = "<group>"; };
+		F145734CB66F81A06F5E9A62 /* FleetViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetViewModelTests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		297F5406DF69530B418E20C0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1124CDB91E9CADA37F8100E6 /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		107A1C8E4EC93873B5813B62 = {
+			isa = PBXGroup;
+			children = (
+				20F14EFEB541D0E23D6EE8D9 /* Sources */,
+				B6D38E0A54ED063A256AECA3 /* Tests */,
+				2776B87BA76FB267EA47193E /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		20F14EFEB541D0E23D6EE8D9 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				DAB37742EE077E02EFE176E1 /* LLMPilotApp.swift */,
+				A3FA72AB88310E327DE10142 /* API */,
+				F5ADC59FCCB6F72E0A85D075 /* Support */,
+				A593BD489DD2E56BCEE6E2B1 /* ViewModels */,
+				77FED49C30DC5499D4FFF930 /* Views */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		2776B87BA76FB267EA47193E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0B070A1CBD84AD69CFB17F2C /* llmpilot.app */,
+				1C7876EA16A1BC16C09C3E96 /* llmpilotTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		77FED49C30DC5499D4FFF930 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				0D2C9FD0DD642E709B21C55C /* CockpitWindow.swift */,
+				08837C38A931F867D09A8BA7 /* MenuBarLabel.swift */,
+				7D7101FC348F4D0F5A5A20CD /* MenuBarView.swift */,
+				2501E07E5E08AC68E1ED4C6E /* RunwayBar.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		A3FA72AB88310E327DE10142 /* API */ = {
+			isa = PBXGroup;
+			children = (
+				68868CA442D6B4783E52574B /* DaemonClient.swift */,
+				91EBE1758BF5088559041005 /* DaemonLauncher.swift */,
+				298F79108B7529E8A2B51599 /* Models.swift */,
+			);
+			path = API;
+			sourceTree = "<group>";
+		};
+		A593BD489DD2E56BCEE6E2B1 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				832D6CB2B46A2E0E9E6C08A3 /* FleetViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		B6D38E0A54ED063A256AECA3 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				91A92599E52DF40F6D82DC68 /* DecodingTests.swift */,
+				F145734CB66F81A06F5E9A62 /* FleetViewModelTests.swift */,
+				60DD5B8F2791EEAD33662102 /* FormatTests.swift */,
+				24B54C26175A44616808D0D2 /* StubAPI.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		F5ADC59FCCB6F72E0A85D075 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				109CE6394902AF4D2464EBB8 /* Format.swift */,
+				540EA8D2C6CF625B97EE521B /* Theme.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		6C3F788725218AF6114D3260 /* llmpilot */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 49D9CA1A2976858B28CED414 /* Build configuration list for PBXNativeTarget "llmpilot" */;
+			buildPhases = (
+				469A17C8A754A89D0B121122 /* Sources */,
+				297F5406DF69530B418E20C0 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = llmpilot;
+			packageProductDependencies = (
+				9C7160A030FB6AD8F5B98EC5 /* Sparkle */,
+			);
+			productName = llmpilot;
+			productReference = 0B070A1CBD84AD69CFB17F2C /* llmpilot.app */;
+			productType = "com.apple.product-type.application";
+		};
+		9203C66294BD270894E39CEC /* llmpilotTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 39F7E4CFED462DE963DFA710 /* Build configuration list for PBXNativeTarget "llmpilotTests" */;
+			buildPhases = (
+				F55936288C831AA593315FA0 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6A47CDD1C7BF57C031A5ED1E /* PBXTargetDependency */,
+			);
+			name = llmpilotTests;
+			packageProductDependencies = (
+			);
+			productName = llmpilotTests;
+			productReference = 1C7876EA16A1BC16C09C3E96 /* llmpilotTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		7A1CA9702A65008AB8669C78 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					6C3F788725218AF6114D3260 = {
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = 5C6AB196B143E06BBAEE4EF5 /* Build configuration list for PBXProject "llmpilot" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 107A1C8E4EC93873B5813B62;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				82B58C38A8964B967CBF992A /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2776B87BA76FB267EA47193E /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				6C3F788725218AF6114D3260 /* llmpilot */,
+				9203C66294BD270894E39CEC /* llmpilotTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		469A17C8A754A89D0B121122 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				94EC15362B065F3BA7AF9060 /* CockpitWindow.swift in Sources */,
+				949073F9ADB1BCFCE4F8B32C /* DaemonClient.swift in Sources */,
+				5491A718B01CD0E3A00A8C96 /* DaemonLauncher.swift in Sources */,
+				3D2A191FD2515A599781956F /* FleetViewModel.swift in Sources */,
+				CE0F3D2EBA34674E7A979B40 /* Format.swift in Sources */,
+				ED78413C9CE9CD066CCC60D5 /* LLMPilotApp.swift in Sources */,
+				5B3572A3BC79AE4CA4C87B73 /* MenuBarLabel.swift in Sources */,
+				14758478B797F59CFA7ACFF0 /* MenuBarView.swift in Sources */,
+				ACDDFF8EDDE5A4E85681C84A /* Models.swift in Sources */,
+				3EB8D3B163E377DF36FCD179 /* RunwayBar.swift in Sources */,
+				A8FC211EB811F20EBC69887B /* Theme.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F55936288C831AA593315FA0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A68C2EA86A5DBE72B45C0164 /* DecodingTests.swift in Sources */,
+				373D6BF3C4A83AC36D278A1A /* FleetViewModelTests.swift in Sources */,
+				252306E439AEC6401D5B2779 /* FormatTests.swift in Sources */,
+				F18348926E13F630628A69CD /* StubAPI.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		6A47CDD1C7BF57C031A5ED1E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6C3F788725218AF6114D3260 /* llmpilot */;
+			targetProxy = 7A6FD223A238C8DA12AEF8FE /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		196FF3A2080D8B778EEB3126 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.llmpilot.llmpilotTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/llmpilot.app/Contents/MacOS/llmpilot";
+			};
+			name = Release;
+		};
+		374A147D9733B9EFF9CCF013 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = Config/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.llmpilot.menubar;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		4038A70EAA5A725CD1DFFD58 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		660BCD826982435297BAF6C3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.llmpilot.llmpilotTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/llmpilot.app/Contents/MacOS/llmpilot";
+			};
+			name = Debug;
+		};
+		A163FAE31197636555581F2B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = Config/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.llmpilot.menubar;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		D4FA127307F122691EC5B2BB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		39F7E4CFED462DE963DFA710 /* Build configuration list for PBXNativeTarget "llmpilotTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				660BCD826982435297BAF6C3 /* Debug */,
+				196FF3A2080D8B778EEB3126 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		49D9CA1A2976858B28CED414 /* Build configuration list for PBXNativeTarget "llmpilot" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A163FAE31197636555581F2B /* Debug */,
+				374A147D9733B9EFF9CCF013 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		5C6AB196B143E06BBAEE4EF5 /* Build configuration list for PBXProject "llmpilot" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4038A70EAA5A725CD1DFFD58 /* Debug */,
+				D4FA127307F122691EC5B2BB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		82B58C38A8964B967CBF992A /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.4;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		9C7160A030FB6AD8F5B98EC5 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 82B58C38A8964B967CBF992A /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 7A1CA9702A65008AB8669C78 /* Project object */;
+}

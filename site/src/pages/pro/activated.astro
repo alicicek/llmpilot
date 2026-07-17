@@ -1,0 +1,107 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import Brandmark from "../../components/Brandmark.astro";
+import CtaButton from "../../components/CtaButton.astro";
+
+// Checkout success_url target (?session_id={CHECKOUT_SESSION_ID}). The native
+// CheckoutWindow intercepts this navigation in-app, so this page is the
+// browser-flow fallback. It never calls the worker — the daemon's activation
+// poller finishes the job; the page only confirms and points back at the app.
+---
+
+<Layout
+  title="llmpilot — payment confirmed"
+  description="Checkout is complete. Open llmpilot on your Mac — Pro turns on by itself."
+  noindex
+>
+  <header class="hdr">
+    <Brandmark />
+  </header>
+  <main class="wrap">
+    <p class="eyebrow">checkout — paid</p>
+    <h1>Payment confirmed.</h1>
+    <p class="sub">
+      Your receipt is on its way by email. Open llmpilot on your Mac — Pro
+      turns on by itself, usually within seconds.
+    </p>
+    <div class="card">
+      <p class="card-lead">llmpilot finishes activation on its own.</p>
+      <p class="card-body">
+        If Pro isn't on after a minute, open Settings → License → Restore by
+        email — a one-time code arrives at your receipt address.
+      </p>
+    </div>
+    <p class="ref" id="ref-row" hidden>
+      checkout reference <span class="mono-num" id="ref-tail"></span>
+    </p>
+    <div class="cta">
+      <CtaButton href="/" variant="quiet" size="lg">Back to llmpilot</CtaButton>
+    </div>
+  </main>
+
+  <script>
+    // Truncated tail only — enough to quote at support, not the whole id.
+    const id = new URLSearchParams(window.location.search).get("session_id");
+    const row = document.getElementById("ref-row");
+    const tail = document.getElementById("ref-tail");
+    if (id && id.length >= 8 && row && tail) {
+      tail.textContent = `…${id.slice(-8)}`;
+      row.hidden = false;
+    }
+  </script>
+
+  <style>
+    .hdr {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 14px 24px;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: clamp(80px, 18vh, 200px) 24px;
+    }
+    h1 {
+      margin: 18px 0 0;
+      font-size: var(--fs-hero);
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .sub {
+      margin: 18px 0 0;
+      max-width: 44ch;
+      font-size: var(--fs-sub);
+      color: var(--sec);
+    }
+    .card {
+      margin: 26px 0 0;
+      max-width: 52ch;
+      padding: 14px 16px;
+      border: 1px solid var(--hair);
+      border-radius: var(--r-lg);
+      background: var(--panel);
+    }
+    .card-lead {
+      margin: 0;
+      font-size: var(--fs-label);
+      font-weight: 600;
+      color: var(--text);
+    }
+    .card-body {
+      margin: 6px 0 0;
+      font-size: var(--fs-label);
+      line-height: 1.55;
+      color: var(--sec);
+    }
+    .ref {
+      margin: 22px 0 0;
+      font-size: 12px;
+      color: var(--ter);
+    }
+    .cta {
+      margin: 30px 0 0;
+    }
+  </style>
+</Layout>

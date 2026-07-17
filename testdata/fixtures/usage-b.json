@@ -1,0 +1,45 @@
+{
+  "five_hour": {
+    "utilization": 88.0,
+    "resets_at": "2026-07-08T16:05:00.000000+00:00",
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null
+  },
+  "seven_day": {
+    "utilization": 91.0,
+    "resets_at": "2026-07-13T09:00:00.000000+00:00",
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null
+  },
+  "seven_day_opus": {
+    "utilization": 14.25,
+    "resets_at": "2026-07-13T09:00:00.000000+00:00",
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null
+  },
+  "seven_day_sonnet": null,
+  "mango_daily": {
+    "utilization": 3.5,
+    "resets_at": null
+  },
+  "extra_usage": {
+    "is_enabled": false,
+    "monthly_limit": null,
+    "used_credits": null,
+    "utilization": null
+  },
+  "spend": {
+    "used": {
+      "amount_minor": 0,
+      "currency": "USD",
+      "exponent": 2
+    },
+    "percent": 0,
+    "severity": "normal",
+    "enabled": false
+  },
+  "member_dashboard_available": true
+}

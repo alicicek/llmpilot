@@ -1,0 +1,53 @@
+version: 2
+
+project_name: llmpilot
+
+# Homebrew handling re-verified against the goreleaser v2 docs (context7,
+# as of 2026-07-17): `brews:` (the only formula emitter) is deprecated since
+# v2.10 and now FAILS `goreleaser check` — our own CI gate — and
+# `homebrew_casks:` computes a cask's sha256 only from artifacts goreleaser
+# built itself, which excludes the externally signed + notarized menu-bar
+# .app. So goreleaser owns the CLI archives + checksums here, and
+# scripts/release-local.sh writes BOTH tap files (Formula/llmpilot.rb from
+# dist/checksums.txt, Casks/llmpilot.rb from the notarized zip's sha256).
+
+before:
+  hooks:
+    # No `go mod tidy` here: tidy's all-build-tags analysis follows the
+    # //go:build pro import of the private engine and tries to pull the
+    # private module into the public go.mod (verified failing 2026-07-17).
+    # the release binary must embed the REAL cockpit, not the .gitkeep
+    # placeholder a clean tree carries (web/embed.go)
+    - sh -c "cd web && pnpm install --frozen-lockfile && pnpm build"
+
+builds:
+  - main: ./cmd/llmpilot
+    binary: llmpilot
+    env:
+      - CGO_ENABLED=0
+      # The PATH binary is the free app — the Pro daemon ships only inside
+      # the signed .app (release-local.sh builds it with -tags=pro via
+      # go.work). GOWORK=off keeps the local workspace out of module
+      # resolution so this artifact is exactly what a from-source build gets.
+      - GOWORK=off
+    goos:
+      - darwin
+    goarch:
+      - arm64
+      - amd64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+# Explicit name template: Formula/llmpilot.rb (release-local.sh) derives its
+# download URLs from this exact shape — keep the two in lockstep.
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+# release-local.sh creates the release first (signed .app zip + appcast);
+# goreleaser then appends the CLI archives and checksums to that release.
+release:
+  mode: append

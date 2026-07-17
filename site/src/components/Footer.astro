@@ -1,0 +1,51 @@
+---
+import Brandmark from "./Brandmark.astro";
+const year = 2026;
+---
+
+<footer class="foot">
+  <div class="foot-inner">
+    <Brandmark />
+    <nav class="foot-links">
+      <a href="https://github.com/alicicek/llmpilot">GitHub</a>
+      <a href="https://github.com/alicicek/llmpilot/blob/main/LICENSE">MIT license</a>
+      <a href="https://github.com/alicicek/llmpilot/blob/main/SECURITY.md">Security</a>
+    </nav>
+  </div>
+  <p class="foot-fine">
+    © {year} llmpilot · your Claude accounts, on autopilot · not affiliated with
+    Anthropic
+  </p>
+</footer>
+
+<style>
+  .foot {
+    border-top: 1px solid var(--hair);
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 24px 56px;
+  }
+  .foot-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .foot-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 22px;
+    font-size: var(--fs-label);
+    font-weight: 600;
+    color: var(--sec);
+  }
+  .foot-links a:hover {
+    color: var(--text);
+  }
+  .foot-fine {
+    margin: 22px 0 0;
+    font-size: 12px;
+    color: var(--ter);
+  }
+</style>

@@ -1,0 +1,58 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import Brandmark from "../../components/Brandmark.astro";
+import CtaButton from "../../components/CtaButton.astro";
+
+// Checkout cancel_url target — the buyer closed Stripe checkout before paying.
+---
+
+<Layout
+  title="llmpilot — checkout cancelled"
+  description="Checkout closed before payment — nothing was charged."
+  noindex
+>
+  <header class="hdr">
+    <Brandmark />
+  </header>
+  <main class="wrap">
+    <p class="eyebrow">checkout — cancelled</p>
+    <h1>Nothing was charged.</h1>
+    <p class="sub">
+      Checkout closed before payment. When you're ready, start again from the
+      paywall in llmpilot — the free core keeps working either way.
+    </p>
+    <div class="cta">
+      <CtaButton href="/" variant="quiet" size="lg">Back to llmpilot</CtaButton>
+    </div>
+  </main>
+
+  <style>
+    .hdr {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 14px 24px;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: clamp(80px, 18vh, 200px) 24px;
+    }
+    h1 {
+      margin: 18px 0 0;
+      font-size: var(--fs-hero);
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .sub {
+      margin: 18px 0 0;
+      max-width: 44ch;
+      font-size: var(--fs-sub);
+      color: var(--sec);
+    }
+    .cta {
+      margin: 30px 0 0;
+    }
+  </style>
+</Layout>

@@ -1,0 +1,13 @@
+# Development only. Generate .dev.vars with `op inject`; never commit the
+# generated file. These references contain no secret values.
+ENVIRONMENT=development
+STRIPE_SECRET_KEY={{ op://llmpilot/stripe/test-secret-key }}
+STRIPE_WEBHOOK_SECRET={{ op://llmpilot/stripe/test-webhook-secret }}
+STRIPE_PUBLISHABLE_KEY={{ op://llmpilot/stripe/test-publishable-key }}
+ENT_SIGNING_KEY={{ op://llmpilot/entitlement/signing-key }}
+ENT_SIGNING_KEY_ID={{ op://llmpilot/entitlement/signing-key-id }}
+PRICE_FULL={{ op://llmpilot/stripe/test-price-full }}
+PRICE_DISCOUNT={{ op://llmpilot/stripe/test-price-discount }}
+EMAIL_FROM=support@llmpilot.dev
+PUBLIC_ORIGIN=http://localhost:8787
+TRIAL_DAYS=8

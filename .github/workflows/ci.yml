@@ -1,0 +1,165 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# One in-flight run per ref: a new push cancels the superseded run instead
+# of stacking a second set of hosted-ubuntu jobs (saves metered minutes).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# macOS jobs run on hosted macos-latest (ephemeral; free for public repos).
+# go.work is never committed, so every CI checkout builds the public tree
+# alone — the pro-inclusive workspace build happens only in the local
+# release flow. web + worker + goreleaser-check stay on hosted ubuntu (1x).
+
+jobs:
+  # web/dist is embedded into the binary (web/embed.go go:embed) and is a
+  # build artifact, never committed — every Go job must build the cockpit
+  # first or `go build ./...` fails on the embed pattern.
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: web
+      - run: pnpm build
+        working-directory: web
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+      - run: go build ./...
+      - run: go test ./...
+
+  lint:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: web
+      - run: pnpm build
+        working-directory: web
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.12
+
+  # The public tree on linux — what a from-source build gets, plus the grep
+  # proof that no pro-engine source reaches the public tree. `test` covers the
+  # same tree on macOS; this job adds the cheap cross-platform compile check.
+  free-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: web
+      - run: pnpm build
+        working-directory: web
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+      - run: GOWORK=off go build ./...
+      - run: GOWORK=off go test ./...
+      - name: public-tree grep proof
+        run: |
+          set -e
+          # The pro engine (policy/scheduler/wake) lives only in the private
+          # module; the public tree may IMPORT it ONLY behind the build tag
+          # (pilot_pro.go). Doc-comment mentions elsewhere are fine.
+          leaked=$(grep -rl 'alicicek/llmpilot-pro/engine' --include='*.go' . | grep -v 'pilot_pro\.go$' || true)
+          if [ -n "$leaked" ]; then echo "pro engine imported outside pilot_pro.go:"; echo "$leaked"; exit 1; fi
+          for d in internal/autopilot internal/scheduler internal/wake; do
+            if [ -d "$d" ]; then echo "pro engine package present in public tree: $d"; exit 1; fi
+          done
+          echo "grep-proof OK: no pro engine sources in the public tree"
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: web
+      - run: pnpm build
+        working-directory: web
+      # the slop gate (CLAUDE.md): deterministic detector over the cockpit src
+      - run: npx impeccable detect src/
+        working-directory: web
+
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci
+        working-directory: worker
+      - run: npm run types
+        working-directory: worker
+      - run: npm run check
+        working-directory: worker
+      - run: npm test
+        working-directory: worker
+      - run: npx wrangler deploy --dry-run
+        working-directory: worker
+
+  menubar:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - run: xcodebuild -project llmpilot.xcodeproj -scheme llmpilot -configuration Debug build test
+        working-directory: macos
+
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: "~> v2"
+          args: check

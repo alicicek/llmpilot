@@ -1,0 +1,47 @@
+---
+// The only claims permitted outside product copy — all real and verifiable.
+const facts = [
+  "open source",
+  "MIT",
+  "zero telemetry",
+  "tokens never leave your Mac",
+  "free core",
+  "one-time Pro",
+];
+---
+
+<ul class="trust">
+  {
+    facts.map((f) => (
+      <li>
+        <span class="trust-dot" aria-hidden="true" />
+        {f}
+      </li>
+    ))
+  }
+</ul>
+
+<style>
+  .trust {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--fs-label);
+    font-weight: 600;
+    color: var(--sec);
+  }
+  .trust li {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .trust-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--graydot);
+  }
+</style>

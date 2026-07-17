@@ -1,0 +1,16 @@
+{
+  // llmpilot.dev landing — Workers Static Assets (Cloudflare's recommended path
+  // for new static sites; see workers/static-assets). Assets-only Worker: no
+  // handler script, just the built dist/. Deploy: pnpm build && wrangler deploy
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "llmpilot-site",
+  "compatibility_date": "2026-07-12",
+  "assets": {
+    "directory": "./dist",
+    // serve dist/404.html on unmatched routes (Astro builds 404.astro → 404.html)
+    "not_found_handling": "404-page"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

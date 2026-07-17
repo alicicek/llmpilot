@@ -1,0 +1,26 @@
+{
+  "name": "llmpilot-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "llmpilot entitlement service: Stripe Managed Payments checkout + webhook, Ed25519 entitlement minting, trial reminders. Cloudflare Worker on D1.",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "types": "wrangler types --check",
+    "types:generate": "wrangler types",
+    "check": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "migrate:local": "wrangler d1 migrations apply llmpilot-entitlements --local",
+    "secrets:push": "node scripts/secrets-push.mjs"
+  },
+  "dependencies": {
+    "hono": "4.12.29",
+    "stripe": "22.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260712.1",
+    "@types/node": "26.1.1",
+    "typescript": "7.0.2",
+    "wrangler": "4.110.0"
+  }
+}

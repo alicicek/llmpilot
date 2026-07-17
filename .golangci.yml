@@ -1,0 +1,12 @@
+version: "2"
+
+linters:
+  default: standard
+  settings:
+    errcheck:
+      # CLI surfaces print to stdout/stderr constantly; a failed terminal
+      # write is not an error path we act on. Flush errors still checked.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln

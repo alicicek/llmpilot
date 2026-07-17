@@ -1,0 +1,5 @@
+{"type":"assistant","timestamp":"2026-07-01T09:00:00.000Z","requestId":"req_a1","message":{"id":"msg_a1","model":"claude-fable-5","usage":{"input_tokens":1200,"output_tokens":300,"cache_creation_input_tokens":80,"cache_read_input_tokens":4000}}}
+{"type":"user","timestamp":"2026-07-01T09:00:05.000Z","message":{"role":"user","content":"synthetic fixture line"}}
+{"type":"assistant","timestamp":"2026-07-01T09:01:00.000Z","requestId":"req_a2","message":{"id":"msg_a2","model":"claude-fable-5","usage":{"input_tokens":800,"output_tokens":150,"cache_creation_input_tokens":0,"cache_read_input_tokens":5200}}}
+{"type":"assistant","timestamp":"2026-07-01T09:01:00.000Z","requestId":"req_a2","message":{"id":"msg_a2","model":"claude-fable-5","usage":{"input_tokens":800,"output_tokens":150,"cache_creation_input_tokens":0,"cache_read_input_tokens":5200}}}
+{"type":"file-history-snapshot","messageId":"fh_1","snapshot":{"future":"stuff"}}

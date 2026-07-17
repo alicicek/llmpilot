@@ -1,0 +1,61 @@
+---
+// Native macOS window chrome: traffic-light dots (graydot — meaning colors
+// stay meaning-only), a title bar, and the window shadow. Wraps a product
+// screenshot or any framed content.
+interface Props {
+  title: string;
+  class?: string;
+}
+const { title, class: cls = "" } = Astro.props;
+---
+
+<div class:list={["win", cls]}>
+  <div class="win-bar">
+    <span class="win-dot"></span>
+    <span class="win-dot"></span>
+    <span class="win-dot"></span>
+    <span class="win-title">{title}</span>
+  </div>
+  <div class="win-body"><slot /></div>
+</div>
+
+<style>
+  .win {
+    border: 1px solid var(--hair);
+    border-radius: var(--r-win);
+    background: var(--floor);
+    box-shadow: var(--shadow-window);
+    overflow: hidden;
+  }
+  .win-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--toolbar);
+    border-bottom: 1px solid var(--hair);
+  }
+  .win-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--graydot);
+  }
+  .win-title {
+    flex: 1;
+    text-align: center;
+    font-size: 12px;
+    color: var(--ter);
+    /* nudge past the three dots so the title is optically centered */
+    margin-right: 45px;
+  }
+  .win-body {
+    position: relative;
+    line-height: 0;
+  }
+  .win-body :global(img) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+</style>

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# llmpilot pre-commit — fast tier only: secret scan + internal-path guard.
+# Build/test/lint gates run in CI; a slow pre-commit trains --no-verify.
+#
+# Enable once per clone: git config core.hooksPath .githooks
+# Bypass deliberately:   git commit --no-verify   (visible, not a silent skip)
+
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
+[ -z "$STAGED" ] && exit 0
+fail=0
+
+# ── Internal-docs guard: these paths are deliberately untracked; a forced
+# add (`git add -f`) bypasses .gitignore, so the hook is the real fence.
+localonly="$(printf '%s\n' "$STAGED" | grep -E \
+  '^(plans/|docs/HANDOFF\.md|docs/ROADMAP\.md|docs/research/|docs/launch/|design/|CLAUDE\.md|HANDOFF\.md|\.claude/)' || true)"
+if [ -n "$localonly" ]; then
+  printf '✗ internal-only path(s) staged — these never enter git history:\n'
+  printf '%s\n' "$localonly" | sed 's/^/  • /'
+  fail=1
+fi
+
+# ── Secret scan: staged ADDED lines, high-confidence secret shapes only.
+# .dev.vars is generated and gitignored; committed templates hold op://
+# references, never values. Test-mode Stripe keys are secrets here too.
+secrets="$(git diff --cached --no-color -U0 -- . ':(exclude).githooks/' \
+  | grep -aE '^\+[^+]' \
+  | grep -aoE 'sk_(live|test)_[0-9A-Za-z]{10,}|rk_(live|test)_[0-9A-Za-z]{10,}|whsec_[0-9A-Za-z]{10,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----' \
+  | sort -u || true)"
+if [ -n "$secrets" ]; then
+  printf '✗ secret-like token(s) in staged changes — refusing to commit:\n'
+  printf '%s\n' "$secrets" | sed 's/^/  • /'
+  printf '  Secrets belong in the vault; .dev.vars is generated, never committed.\n'
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  printf '\n✗ pre-commit failed. Fix, or bypass deliberately: git commit --no-verify\n'
+  exit 1
+fi
+printf '✓ pre-commit passed\n'
+exit 0

@@ -1,0 +1,349 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Brandmark from "../components/Brandmark.astro";
+import Section from "../components/Section.astro";
+import CtaButton from "../components/CtaButton.astro";
+import WindowFrame from "../components/WindowFrame.astro";
+import TrustRow from "../components/TrustRow.astro";
+import Faq from "../components/Faq.astro";
+import Footer from "../components/Footer.astro";
+import StatuslineBand from "../components/islands/StatuslineBand.tsx";
+import CommandChip from "../components/islands/CommandChip.tsx";
+import InstallTabs from "../components/islands/InstallTabs.tsx";
+import DemoButton from "../components/islands/DemoButton.tsx";
+
+// Product shots live in public/ (served verbatim). Dimensions are the known
+// fixture size 1440×900 — set explicitly to reserve layout space (no CLS).
+const COCKPIT = "/assets/product/product-cockpit-dark.png";
+const BURNRATE = "/assets/product/product-burnrate-dark.png";
+
+const BREW = "brew install alicicek/tap/llmpilot";
+const GITHUB = "https://github.com/alicicek/llmpilot";
+const RELEASES = "https://github.com/alicicek/llmpilot/releases/latest";
+---
+
+<Layout>
+  <!-- header (outside the spine) -->
+  <header class="site-header">
+    <div class="header-inner">
+      <Brandmark />
+      <nav class="header-nav">
+        <a href={GITHUB} class="header-link">GitHub</a>
+        <CtaButton href="#install" size="default">Get llmpilot</CtaButton>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- 1 · HERO -->
+    <Section time="14:32" label="now" dot="red" first contentClass="hero">
+      <h1 class="hero-title">Your accounts,<br />on autopilot.</h1>
+      <p class="hero-sub">
+        llmpilot books fresh windows on a 24h timeline, keeps idle tokens fresh,
+        and switches to headroom before the wall — while you sleep or ship.
+      </p>
+      <div class="hero-cta">
+        <CtaButton href={RELEASES} size="lg">Get llmpilot</CtaButton>
+        <DemoButton client:visible label="Watch the demo" />
+      </div>
+      <div class="hero-chip">
+        <CommandChip client:visible command={BREW} />
+      </div>
+
+      <div class="cockpit-wrap">
+        <WindowFrame title="llmpilot — cockpit">
+          <div class="shot">
+            <img
+              src={COCKPIT}
+              width="1440"
+              height="900"
+              alt="llmpilot cockpit — a 24h timeline with four masked demo accounts, booked fresh windows as blue charge blocks, a chained seam riding the 09:00 reset, the now-line at 14:32, and honesty annotations."
+              loading="eager"
+              decoding="async"
+            />
+            <!-- fixture-true callouts, anchored to the real events -->
+            <span class="cline cline-chain" aria-hidden="true"></span>
+            <p class="callout callout-chain">
+              chained — guaranteed · rides the 09:00 reset
+            </p>
+            <span class="cline cline-fresh" aria-hidden="true"></span>
+            <p class="callout callout-fresh">
+              fresh window from 04:00 — you were asleep
+            </p>
+          </div>
+        </WindowFrame>
+        <ul class="callout-captions">
+          <li>chained — guaranteed · rides the 09:00 reset</li>
+          <li>fresh window from 04:00 — you were asleep</li>
+        </ul>
+      </div>
+    </Section>
+
+    <!-- 2 · STATUSLINE BAND -->
+    <Section time="all day" label="in your prompt" dot="accent">
+      <h2 class="sec-title">One line, every account.</h2>
+      <p class="sec-body">
+        The statusline lives inside Claude Code and shows real limits for the
+        account you are on — plus where the autopilot would switch next. This is
+        the real render, from the shipped binary.
+      </p>
+      <div class="band-wrap">
+        <StatuslineBand client:visible />
+      </div>
+    </Section>
+
+    <!-- 3 · WHAT RUNS OVERNIGHT -->
+    <Section time="04:00" label="fresh window fired" dot="green">
+      <h2 class="sec-title">What runs while you don't.</h2>
+      <ul class="dispatch">
+        <li><strong>watches</strong> — real limits, every account</li>
+        <li><strong>nudges</strong> — idle tokens stay fresh</li>
+        <li><strong>switches</strong> — headroom before the wall</li>
+      </ul>
+      <p class="stale">
+        <strong>stale data reads stale</strong> — as of 4 min ago, never old
+        numbers in live colors.
+      </p>
+      <div class="history-wrap">
+        <WindowFrame title="llmpilot — burn rate">
+          <img
+            src={BURNRATE}
+            width="1440"
+            height="262"
+            alt="llmpilot burn-rate projection for the current 5-hour window — a rising line with a dashed forecast to the reset, reading 'wall ≈ 15:15 · resets 19:00 — will be tight' and '≈ $22/h API-equivalent', from masked demo data."
+            loading="lazy"
+            decoding="async"
+          />
+        </WindowFrame>
+        <p class="history-cap">
+          the burn-rate projection — it sees the wall coming before you do
+        </p>
+      </div>
+    </Section>
+
+    <!-- 4 · INSTALL -->
+    <Section time="19:00" label="resets" dot="accent" id="install">
+      <h2 class="sec-title">Install llmpilot.</h2>
+      <div class="install-wrap">
+        <InstallTabs client:visible />
+      </div>
+      <p class="split">
+        The core is free and open source. Automatic switching, scheduling, and
+        wake are a one-time Pro purchase.
+      </p>
+      <div class="trust-wrap"><TrustRow /></div>
+    </Section>
+
+    <!-- 5 · FAQ -->
+    <Section label="questions" dot="graydot" last>
+      <h2 class="sec-title">Questions.</h2>
+      <Faq />
+    </Section>
+  </main>
+
+  <Footer />
+</Layout>
+
+<style>
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background: color-mix(in srgb, var(--win) 82%, transparent);
+    backdrop-filter: saturate(140%) blur(12px);
+    border-bottom: 1px solid var(--hairsoft);
+  }
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 14px 24px;
+  }
+  .header-nav {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .header-link {
+    font-size: var(--fs-label);
+    font-weight: 600;
+    color: var(--sec);
+  }
+  .header-link:hover {
+    color: var(--text);
+  }
+
+  /* hero */
+  .hero-title {
+    margin: 0;
+    font-size: var(--fs-hero);
+    font-weight: 700;
+    line-height: 1.04;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  .hero-sub {
+    margin: 20px 0 0;
+    max-width: 34ch;
+    font-size: var(--fs-sub);
+    line-height: 1.45;
+    color: var(--sec);
+  }
+  .hero-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 28px 0 0;
+  }
+  .hero-chip {
+    margin: 16px 0 0;
+  }
+  .cockpit-wrap {
+    margin: 40px 0 0;
+  }
+
+  /* callouts over the cockpit shot */
+  .shot {
+    position: relative;
+  }
+  .callout {
+    position: absolute;
+    z-index: 2;
+    margin: 0;
+    padding: 6px 11px;
+    background: var(--panel);
+    border: 1px solid var(--hair);
+    border-radius: var(--r-md);
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: var(--text);
+    white-space: nowrap;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+  .cline {
+    position: absolute;
+    z-index: 1;
+    width: 1px;
+    background: var(--graydot);
+  }
+  .callout-chain {
+    left: 44.6%;
+    top: 24%;
+    transform: translateX(-50%);
+  }
+  .cline-chain {
+    left: 44.6%;
+    top: 16.4%;
+    height: 7.6%;
+  }
+  .callout-fresh {
+    left: 27.9%;
+    top: 33%;
+    margin-left: 10px;
+  }
+  .cline-fresh {
+    left: 27.9%;
+    top: 20%;
+    height: 13%;
+  }
+  .callout-captions {
+    display: none;
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+    color: var(--sec);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  /* section shared */
+  .sec-title {
+    margin: 0;
+    font-size: var(--fs-section);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+  .sec-body {
+    margin: 14px 0 0;
+    max-width: 56ch;
+    color: var(--sec);
+    line-height: 1.55;
+  }
+  .band-wrap {
+    margin: 28px 0 0;
+    max-width: 760px;
+  }
+
+  /* how-it-works */
+  .dispatch {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    margin: 28px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .dispatch li {
+    padding: 14px 20px 14px 0;
+    border-top: 1px solid var(--hair);
+    color: var(--sec);
+    font-size: var(--fs-body);
+  }
+  .dispatch strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .stale {
+    margin: 22px 0 0;
+    color: var(--sec);
+  }
+  .stale strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .history-wrap {
+    margin: 32px 0 0;
+    max-width: 1000px;
+  }
+  .history-cap {
+    margin: 14px 0 0;
+    color: var(--ter);
+    font-size: 13px;
+  }
+
+  /* install */
+  .install-wrap {
+    margin: 26px 0 0;
+  }
+  .split {
+    margin: 22px 0 0;
+    max-width: 52ch;
+    color: var(--sec);
+  }
+  .trust-wrap {
+    margin: 28px 0 0;
+  }
+
+  @media (max-width: 720px) {
+    .callout,
+    .cline {
+      display: none;
+    }
+    .callout-captions {
+      display: block;
+    }
+    .dispatch {
+      grid-template-columns: 1fr;
+    }
+    .dispatch li {
+      padding: 12px 0;
+    }
+    .hero-sub {
+      max-width: none;
+    }
+  }
+</style>

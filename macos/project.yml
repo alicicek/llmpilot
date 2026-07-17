@@ -1,0 +1,63 @@
+name: llmpilot
+options:
+  bundleIdPrefix: dev.llmpilot
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.9.4 # verified latest stable via github releases, as-of 2026-07-11
+targets:
+  llmpilot:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: Sparkle
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleName: llmpilot
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSUIElement: true
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        SUFeedURL: https://github.com/alicicek/llmpilot/releases/latest/download/appcast.xml
+        SUPublicEDKey: qbbYQDx2v2GpZS41BfsQDj26MEvw1oAuQZae5uoQQho=
+        SUEnableAutomaticChecks: true
+        NSHumanReadableCopyright: MIT License
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.llmpilot.menubar
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "5.0"
+        ENABLE_HARDENED_RUNTIME: true
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEAD_CODE_STRIPPING: true
+  llmpilotTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: llmpilot
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: true
+        CODE_SIGN_IDENTITY: "-"
+schemes:
+  llmpilot:
+    build:
+      targets:
+        llmpilot: all
+        llmpilotTests: [test]
+    test:
+      targets:
+        - llmpilotTests

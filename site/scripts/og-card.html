@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --win: #1e1e21;
+        --panel: #232327;
+        --hair: rgba(255, 255, 255, 0.1);
+        --text: #f2f2f4;
+        --sec: #a8a8af;
+        --ter: #8a8a91;
+        --accent: #0a84ff;
+        --green: #30d158;
+        --amber: #ffab3d;
+        --graydot: #6f6f76;
+      }
+      * { margin: 0; box-sizing: border-box; }
+      body {
+        width: 1200px;
+        height: 630px;
+        background: var(--win);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+          "Helvetica Neue", system-ui, sans-serif;
+        font-variant-numeric: tabular-nums;
+        padding: 72px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .top { display: flex; align-items: center; gap: 14px; }
+      .glyph { width: 40px; height: 40px; }
+      .wordmark { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+      .eyebrow {
+        font-size: 17px; font-weight: 700; letter-spacing: 0.08em;
+        text-transform: uppercase; color: var(--ter); margin-bottom: 18px;
+      }
+      h1 {
+        font-size: 76px; font-weight: 700; line-height: 1.03;
+        letter-spacing: -0.02em;
+      }
+      p.sub { font-size: 25px; color: var(--sec); margin-top: 20px; max-width: 20ch; }
+      .line {
+        display: inline-flex; align-items: center; gap: 14px;
+        margin-top: 30px; padding: 12px 18px; border: 1px solid var(--hair);
+        border-radius: 8px; background: var(--panel);
+        font-size: 19px; color: var(--text);
+      }
+      .line .dim { color: var(--ter); }
+      .line .amber { color: var(--amber); }
+      .line .gray { color: var(--graydot); }
+      .foot { display: flex; gap: 26px; font-size: 17px; color: var(--sec); font-weight: 600; }
+      .foot .dot { color: var(--graydot); }
+    </style>
+  </head>
+  <body>
+    <div class="top">
+      <svg class="glyph" viewBox="0 0 64 64">
+        <rect x="5" y="23" width="54" height="19" rx="7" fill="#0A84FF" />
+      </svg>
+      <span class="wordmark">llmpilot</span>
+    </div>
+    <div>
+      <p class="eyebrow">14:32 — now</p>
+      <h1>Your accounts,<br />on autopilot.</h1>
+      <p class="sub">Watch every Claude account. Switch before the wall.</p>
+      <div class="line">
+        <span class="dim">[acct 1/4 | alex@example.dev]</span>
+        <span>5h:23%(19:00)</span>
+        <span>wk:41%</span>
+        <span>F:12%</span>
+        <span class="gray">→noor:2%</span>
+        <span class="amber">auto:down</span>
+      </div>
+    </div>
+    <div class="foot">
+      <span>open source</span><span class="dot">·</span>
+      <span>zero telemetry</span><span class="dot">·</span>
+      <span>tokens never leave your Mac</span><span class="dot">·</span>
+      <span>free core · one-time Pro</span>
+    </div>
+  </body>
+</html>

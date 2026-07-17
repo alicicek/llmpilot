@@ -1,0 +1,15 @@
+# Cloudflare Workers Static Assets — cache rules.
+# Content-hashed build assets are immutable; product shots cache a day; HTML
+# stays revalidated (default) so deploys go live immediately.
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/product/*
+  Cache-Control: public, max-age=86400
+
+/og.png
+  Cache-Control: public, max-age=86400
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
