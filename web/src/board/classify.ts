@@ -43,7 +43,10 @@ export interface MidWindow {
 export type ChipClass = "ran" | "blocked" | "missed" | "charging" | "upcoming";
 
 function inWindow(t: number, mid: MidWindow): boolean {
-  return t >= mid.start && t < mid.end;
+  // Exclusive at the start: a trigger exactly AT the window's start is the
+  // chained trigger that OPENED it (fired on the previous reset), not one
+  // the window blocks.
+  return t > mid.start && t < mid.end;
 }
 
 export function classify(ls: LaneSchedule, nowMinutes: number, mid: MidWindow | null): ChipClass {

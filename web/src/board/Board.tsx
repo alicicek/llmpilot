@@ -77,7 +77,7 @@ export default function Board({ state, schedules, nowMinutes, onSwitch, onCreate
   const selected = findSelected(lanesData, selectedId, nowMinutes);
 
   return (
-    <div className="relative w-[1368px] max-w-full overflow-hidden bg-win">
+    <div className="relative w-[1400px] max-w-full overflow-hidden bg-win">
       <Axis />
       <div className="relative">
         {lanesData.map(({ account, sched, mid }) => (

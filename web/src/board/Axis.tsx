@@ -3,7 +3,9 @@
 import { HEADER_PX, toPx } from "./geometry.ts";
 
 export default function Axis() {
-  const hours = Array.from({ length: 13 }, (_, i) => i * 2);
+  // 0..22 only: the right cap IS the 24h marker — a "24" label at the
+  // board's clipped right edge collided with it ("24h · local 2").
+  const hours = Array.from({ length: 12 }, (_, i) => i * 2);
   const ticks = Array.from({ length: 25 }, (_, i) => i);
   return (
     <div className="relative h-[30px] border-b border-hair">

@@ -33,9 +33,9 @@ mkdir -p docs/media
 
 # webm -> gif, two-pass palette for quality at README-friendly weight
 ffmpeg -y -i docs/media/scheduler.webm \
-  -vf "fps=12,scale=960:-1:flags=lanczos,palettegen" "$ROOT/palette.png" >/dev/null 2>&1
+  -vf "fps=15,scale=960:-1:flags=lanczos,palettegen" "$ROOT/palette.png" >/dev/null 2>&1
 ffmpeg -y -i docs/media/scheduler.webm -i "$ROOT/palette.png" \
-  -filter_complex "fps=12,scale=960:-1:flags=lanczos[x];[x][1:v]paletteuse" \
+  -filter_complex "fps=15,scale=960:-1:flags=lanczos[x];[x][1:v]paletteuse" \
   docs/media/scheduler.gif >/dev/null 2>&1
 rm -f docs/media/scheduler.webm
 

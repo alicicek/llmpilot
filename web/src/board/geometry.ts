@@ -6,7 +6,10 @@
 import { DAY_MIN } from "../schedule.ts";
 
 export const TRACK_PX = 1160;
-export const HEADER_PX = 208;
+// 240 (was the mockup's 208): at 208 the header column truncated its own
+// default-length content — an active account's email + ACTIVE badge, and
+// "Mid-window — resets HH:MM" — in every screenshot.
+export const HEADER_PX = 240;
 export const ROW_PX = 116;
 export const PPM = TRACK_PX / DAY_MIN;
 

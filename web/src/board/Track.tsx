@@ -204,7 +204,10 @@ export default function Track({
       ) : (
         <div className="pointer-events-none absolute inset-x-0 top-12 h-0.5 bg-rail" />
       )}
-      {empty && (
+      {empty && !mid && (
+        // The book-one nudge targets a genuinely idle lane; a mid-window
+        // lane already says it's busy via the in-use band (and still books
+        // via the hover ghost).
         <div className="pointer-events-none absolute inset-x-0 top-[42px] text-center text-[11px] text-ter">
           No fresh windows — click a time to book one
         </div>
@@ -322,7 +325,11 @@ export default function Track({
               exit={{ opacity: 0 }}
               transition={{ duration: 0.7, times: [0, 0.25, 1] }}
               onAnimationComplete={() => setFlash(null)}
-              className="pointer-events-none absolute top-[31px] z-0 h-[37px] bg-warnzone"
+              // Solid warn at 0.4 peak per the interaction contract
+              // (design/llmpilot-scheduler-radix.html .flashzone) — the 10%
+              // --warnzone wash is the sustained drag-zone fill and reads as
+              // nothing when flashed for 0.7s.
+              className="pointer-events-none absolute top-[31px] z-0 h-[37px] rounded-[3px] bg-warnraw"
               style={{ left: flash.left, width: flash.width }}
             />
           )}

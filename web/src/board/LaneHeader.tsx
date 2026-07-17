@@ -44,7 +44,7 @@ export default function LaneHeader({ account, active, nowMinutes, onSwitch }: La
   if (stale) dotClass = "bg-graydot";
 
   return (
-    <div className="flex w-[208px] shrink-0 gap-[10px] border-r border-hairsoft px-3 pt-[15px]">
+    <div className="flex w-[240px] shrink-0 gap-[10px] border-r border-hairsoft px-3 pt-[15px]">
       <div
         className="mt-px flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-white"
         style={avatarStyle(account.id)}

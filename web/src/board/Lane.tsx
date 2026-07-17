@@ -1,5 +1,5 @@
-// Component grammar #3 — one LANE: 208px header + 1160px track, hairsoft
-// row separator.
+// Component grammar #3 — one LANE: 240px header (geometry.HEADER_PX) +
+// 1160px track, hairsoft row separator.
 import type { AccountState } from "../api.ts";
 import type { LaneSchedule, MidWindow } from "./classify.ts";
 import LaneHeader from "./LaneHeader.tsx";
