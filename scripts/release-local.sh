@@ -46,7 +46,7 @@ APP="$DD/dd/Build/Products/Release/llmpilot.app"
 echo "== bundle the Pro-enabled daemon (-tags=pro, go.work resolves the engine) =="
 # From-source and Homebrew installs get the free binary on PATH; the official
 # app carries this one and DaemonLauncher prefers it (macos DaemonLauncher.swift).
-go build -tags=pro -trimpath -ldflags "-s -w" \
+go build -tags=pro -trimpath -ldflags "-s -w -X main.version=$VERSION" \
   -o "$APP/Contents/Resources/llmpilot" ./cmd/llmpilot
 
 echo "== sign Sparkle internals, then the app =="
