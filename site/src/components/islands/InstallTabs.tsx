@@ -2,9 +2,10 @@ import * as React from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../ui/tabs";
 
 /*
- * The W10 tabbed install block. Every command is real and verifiable — the .app
- * download is a GitHub release link, the rest are the shipped install paths.
- * npm/curl are marked "at launch" honestly rather than shown as live today.
+ * The tabbed install block. Every command is real and verifiable against the
+ * shipped release tooling: the .app download is a GitHub release link, brew
+ * and cask match the tap files release-local.sh publishes, and curl runs the
+ * brew install via /install.sh served from this site.
  */
 interface Target {
   id: string;
@@ -15,9 +16,9 @@ interface Target {
 
 const TARGETS: Target[] = [
   { id: "app", label: "Download .app", command: "", note: "Signed & notarized — from GitHub Releases." },
-  { id: "brew", label: "brew", command: "brew install alicicek/tap/llmpilot" },
-  { id: "npm", label: "npm", command: "npm install -g llmpilot", note: "Published at launch." },
-  { id: "curl", label: "curl", command: "curl -fsSL https://llmpilot.dev/install.sh | sh", note: "Published at launch." },
+  { id: "brew", label: "brew", command: "brew install alicicek/tap/llmpilot", note: "The CLI + daemon." },
+  { id: "cask", label: "cask", command: "brew install --cask alicicek/tap/llmpilot", note: "The menu bar app." },
+  { id: "curl", label: "curl", command: "curl -fsSL https://llmpilot.dev/install.sh | sh", note: "Runs the brew install for you." },
 ];
 
 const RELEASES = "https://github.com/alicicek/llmpilot/releases/latest";

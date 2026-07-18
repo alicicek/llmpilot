@@ -45,7 +45,8 @@ const { title, class: cls = "" } = Astro.props;
     flex: 1;
     text-align: center;
     font-size: 12px;
-    color: var(--ter);
+    /* --sec, not --ter: 12px on the panel surface needs the 6.1:1 step (AA) */
+    color: var(--sec);
     /* nudge past the three dots so the title is optically centered */
     margin-right: 45px;
   }

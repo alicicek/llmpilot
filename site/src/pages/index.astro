@@ -10,7 +10,7 @@ import Footer from "../components/Footer.astro";
 import StatuslineBand from "../components/islands/StatuslineBand.tsx";
 import CommandChip from "../components/islands/CommandChip.tsx";
 import InstallTabs from "../components/islands/InstallTabs.tsx";
-import DemoButton from "../components/islands/DemoButton.tsx";
+import ProPricing from "../components/islands/ProPricing.tsx";
 
 // Product shots live in public/ (served verbatim). Dimensions are the known
 // fixture size 1440×900 — set explicitly to reserve layout space (no CLS).
@@ -44,7 +44,7 @@ const RELEASES = "https://github.com/alicicek/llmpilot/releases/latest";
       </p>
       <div class="hero-cta">
         <CtaButton href={RELEASES} size="lg">Get llmpilot</CtaButton>
-        <DemoButton client:visible label="Watch the demo" />
+        <CtaButton href="#plan" variant="quiet" size="lg">See it plan a window</CtaButton>
       </div>
       <div class="hero-chip">
         <CommandChip client:visible command={BREW} />
@@ -92,7 +92,38 @@ const RELEASES = "https://github.com/alicicek/llmpilot/releases/latest";
       </div>
     </Section>
 
-    <!-- 3 · WHAT RUNS OVERNIGHT -->
+    <!-- 3 · PLAN FRESH WINDOWS (the drag, moving) -->
+    <Section label="you plan tomorrow" dot="accent" id="plan">
+      <h2 class="sec-title">Plan fresh windows.</h2>
+      <p class="sec-body">
+        Choose when you want full capacity — llmpilot works backward and fires
+        the trigger that opens the window. Drag a reset along the 24h board;
+        positions the physics can't honor are locked and say why.
+      </p>
+      <div class="plan-wrap">
+        <WindowFrame title="llmpilot — scheduler">
+          <video
+            src="/assets/product/scheduler-drag.mp4"
+            poster="/assets/product/scheduler-drag-poster.png"
+            width="960"
+            height="428"
+            autoplay
+            muted
+            loop
+            playsinline
+            controls
+            preload="metadata"
+            aria-label="Dragging a reset along the 24-hour board: the booked window snaps to the 15-minute grid, a chained window rides the 09:00 reset, and locked positions explain themselves."
+          ></video>
+        </WindowFrame>
+        <p class="plan-cap">
+          the real board, masked demo accounts — a chained window rides the
+          09:00 reset, guaranteed
+        </p>
+      </div>
+    </Section>
+
+    <!-- 4 · WHAT RUNS OVERNIGHT -->
     <Section time="04:00" label="fresh window fired" dot="green">
       <h2 class="sec-title">What runs while you don't.</h2>
       <ul class="dispatch">
@@ -121,7 +152,7 @@ const RELEASES = "https://github.com/alicicek/llmpilot/releases/latest";
       </div>
     </Section>
 
-    <!-- 4 · INSTALL -->
+    <!-- 5 · INSTALL -->
     <Section time="19:00" label="resets" dot="accent" id="install">
       <h2 class="sec-title">Install llmpilot.</h2>
       <div class="install-wrap">
@@ -134,15 +165,54 @@ const RELEASES = "https://github.com/alicicek/llmpilot/releases/latest";
       <div class="trust-wrap"><TrustRow /></div>
     </Section>
 
-    <!-- 5 · FAQ -->
+    <!-- 6 · GET PRO -->
+    <Section time="21:05" label="the autopilot" dot="green" id="pro">
+      <h2 class="sec-title">Turn on the autopilot.</h2>
+      <p class="sec-body">
+        Pro is the part that acts while you don't. Everything else — statusline,
+        cockpit, menu bar, manual switching, analytics, notifications — is free
+        forever, no sign-up.
+      </p>
+      <ul class="pro-list">
+        <li><strong>switches automatically</strong> — moves you to headroom before the wall</li>
+        <li><strong>plans windows</strong> — the 24h board, chained resets, catch-up</li>
+        <li><strong>wakes the Mac</strong> — in time to open the window you booked</li>
+      </ul>
+      <div class="pro-buy">
+        <ProPricing client:visible />
+        <CtaButton href="#install">Install llmpilot</CtaButton>
+      </div>
+      <p class="pro-fine">
+        Buy inside the app — Apple Pay or card, no account, activation is
+        automatic. Official downloads include Pro; building from source gives
+        you the free app.
+      </p>
+    </Section>
+
+    <!-- 7 · FAQ -->
     <Section label="questions" dot="graydot" last>
       <h2 class="sec-title">Questions.</h2>
       <Faq />
+      <p class="faq-more">
+        <a href="https://github.com/alicicek/llmpilot/blob/main/docs/FAQ.md"
+          >More in the full FAQ</a
+        >
+      </p>
     </Section>
   </main>
 
   <Footer />
 </Layout>
+
+<script>
+  // Motion is state-change only: the looping demo defers to reduced motion
+  // and waits for a deliberate play (controls stay available either way).
+  const video = document.querySelector<HTMLVideoElement>("#plan video");
+  if (video && matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    video.autoplay = false;
+    video.pause();
+  }
+</script>
 
 <style>
   .site-header {
@@ -315,6 +385,23 @@ const RELEASES = "https://github.com/alicicek/llmpilot/releases/latest";
     font-size: 13px;
   }
 
+  /* plan fresh windows */
+  .plan-wrap {
+    margin: 32px 0 0;
+    max-width: 1000px;
+  }
+  .plan-wrap video {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: var(--floor);
+  }
+  .plan-cap {
+    margin: 14px 0 0;
+    color: var(--ter);
+    font-size: 13px;
+  }
+
   /* install */
   .install-wrap {
     margin: 26px 0 0;
@@ -326,6 +413,51 @@ const RELEASES = "https://github.com/alicicek/llmpilot/releases/latest";
   }
   .trust-wrap {
     margin: 28px 0 0;
+  }
+
+  /* get pro */
+  .pro-list {
+    margin: 24px 0 0;
+    padding: 0;
+    list-style: none;
+    max-width: 560px;
+  }
+  .pro-list li {
+    padding: 12px 0;
+    border-top: 1px solid var(--hair);
+    color: var(--sec);
+    font-size: var(--fs-body);
+  }
+  .pro-list strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .pro-buy {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px 28px;
+    margin: 28px 0 0;
+  }
+  .pro-fine {
+    margin: 18px 0 0;
+    max-width: 56ch;
+    color: var(--ter);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  /* faq */
+  .faq-more {
+    margin: 24px 0 0;
+    font-size: var(--fs-label);
+    font-weight: 600;
+  }
+  .faq-more a {
+    color: var(--acc-tx);
+  }
+  .faq-more a:hover {
+    color: var(--text);
   }
 
   @media (max-width: 720px) {
