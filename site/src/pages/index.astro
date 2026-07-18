@@ -43,9 +43,12 @@ const RELEASES = "https://github.com/alicicek/llmpilot/releases/latest";
         and switches to headroom before the wall — while you sleep or ship.
       </p>
       <div class="hero-cta">
-        <CtaButton href={RELEASES} size="lg">Get llmpilot</CtaButton>
+        <CtaButton href="/download" size="lg">Download llmpilot</CtaButton>
         <CtaButton href="#plan" variant="quiet" size="lg">See it plan a window</CtaButton>
       </div>
+      <p class="hero-meta">
+        macOS 13+ · signed &amp; notarized · free core
+      </p>
       <div class="hero-chip">
         <CommandChip client:visible command={BREW} />
       </div>
@@ -267,6 +270,12 @@ const RELEASES = "https://github.com/alicicek/llmpilot/releases/latest";
     flex-wrap: wrap;
     gap: 12px;
     margin: 28px 0 0;
+  }
+  .hero-meta {
+    margin: 12px 0 0;
+    font-size: 13px;
+    color: var(--ter);
+    font-variant-numeric: tabular-nums;
   }
   .hero-chip {
     margin: 16px 0 0;

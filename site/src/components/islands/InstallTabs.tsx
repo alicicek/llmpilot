@@ -15,7 +15,7 @@ interface Target {
 }
 
 const TARGETS: Target[] = [
-  { id: "app", label: "Download .app", command: "", note: "Signed & notarized — from GitHub Releases." },
+  { id: "app", label: "Download .dmg", command: "", note: "Drag to Applications. Signed & notarized." },
   { id: "brew", label: "brew", command: "brew install alicicek/tap/llmpilot", note: "The CLI + daemon." },
   { id: "cask", label: "cask", command: "brew install --cask alicicek/tap/llmpilot", note: "The menu bar app." },
   { id: "curl", label: "curl", command: "curl -fsSL https://llmpilot.dev/install.sh | sh", note: "Runs the brew install for you." },
@@ -71,7 +71,7 @@ export default function InstallTabs() {
         <TabsContent key={t.id} value={t.id}>
           {t.id === "app" ? (
             <a
-              href={RELEASES}
+              href="/download"
               className="inline-flex h-11 items-center justify-center rounded-md bg-primary px-5 text-[14px] font-semibold text-primary-foreground transition-[filter] duration-150 hover:brightness-110"
             >
               Download for macOS
@@ -80,6 +80,13 @@ export default function InstallTabs() {
             <CopyRow command={t.command} />
           )}
           {t.note ? <p className="mt-2 text-[13px] text-ter">{t.note}</p> : null}
+          {t.id === "app" ? (
+            <p className="mt-1 text-[13px]">
+              <a href={RELEASES} className="font-semibold text-acc-tx hover:text-text">
+                All releases &amp; checksums
+              </a>
+            </p>
+          ) : null}
         </TabsContent>
       ))}
     </Tabs>

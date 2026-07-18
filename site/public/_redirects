@@ -1,0 +1,4 @@
+# The one shareable download URL. GitHub's releases/latest/download alias
+# always resolves to the newest release's fixed-name asset, so this never
+# needs a per-release edit — release-local.sh uploads llmpilot.dmg each cut.
+/download https://github.com/alicicek/llmpilot/releases/latest/download/llmpilot.dmg 302
