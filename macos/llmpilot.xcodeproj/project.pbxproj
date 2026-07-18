@@ -21,6 +21,7 @@
 		A8FC211EB811F20EBC69887B /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 540EA8D2C6CF625B97EE521B /* Theme.swift */; };
 		ACDDFF8EDDE5A4E85681C84A /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298F79108B7529E8A2B51599 /* Models.swift */; };
 		CE0F3D2EBA34674E7A979B40 /* Format.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109CE6394902AF4D2464EBB8 /* Format.swift */; };
+		E1E93DFED475926FD1BDC905 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D50EBC3C5DB39F3EE971ECF5 /* Assets.xcassets */; };
 		ED78413C9CE9CD066CCC60D5 /* LLMPilotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB37742EE077E02EFE176E1 /* LLMPilotApp.swift */; };
 		F18348926E13F630628A69CD /* StubAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24B54C26175A44616808D0D2 /* StubAPI.swift */; };
 /* End PBXBuildFile section */
@@ -51,6 +52,7 @@
 		832D6CB2B46A2E0E9E6C08A3 /* FleetViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetViewModel.swift; sourceTree = "<group>"; };
 		91A92599E52DF40F6D82DC68 /* DecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecodingTests.swift; sourceTree = "<group>"; };
 		91EBE1758BF5088559041005 /* DaemonLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonLauncher.swift; sourceTree = "<group>"; };
+		D50EBC3C5DB39F3EE971ECF5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		DAB37742EE077E02EFE176E1 /* LLMPilotApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMPilotApp.swift; sourceTree = "<group>"; };
 		F145734CB66F81A06F5E9A62 /* FleetViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetViewModelTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -79,6 +81,7 @@
 		20F14EFEB541D0E23D6EE8D9 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				D50EBC3C5DB39F3EE971ECF5 /* Assets.xcassets */,
 				DAB37742EE077E02EFE176E1 /* LLMPilotApp.swift */,
 				A3FA72AB88310E327DE10142 /* API */,
 				F5ADC59FCCB6F72E0A85D075 /* Support */,
@@ -154,6 +157,7 @@
 			buildConfigurationList = 49D9CA1A2976858B28CED414 /* Build configuration list for PBXNativeTarget "llmpilot" */;
 			buildPhases = (
 				469A17C8A754A89D0B121122 /* Sources */,
+				FFA8717E7EBE0E261DAF56CF /* Resources */,
 				297F5406DF69530B418E20C0 /* Frameworks */,
 			);
 			buildRules = (
@@ -222,6 +226,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		FFA8717E7EBE0E261DAF56CF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E1E93DFED475926FD1BDC905 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		469A17C8A754A89D0B121122 /* Sources */ = {
