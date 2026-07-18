@@ -28,9 +28,19 @@ async function jsonBody(req: Request): Promise<Record<string, unknown> | null> {
 app.get("/healthz", (c) => c.json({ ok: true }));
 app.get("/checkout", (c) => checkoutPage(c.env, c.req.raw));
 
+// The landing site renders its pricing from the same quote the app paywall
+// uses — CORS for exactly the site origins, GET only (no preflight needed).
+const QUOTE_CORS_ORIGINS = new Set(["https://llmpilot.dev", "https://www.llmpilot.dev"]);
+
 app.get("/v1/quote", async (c) => {
   const res = await getQuote(c.env, c.req.header("cf-connecting-ip") ?? "unknown");
-  return c.json(res.body, res.status as 200);
+  const origin = c.req.header("origin") ?? "";
+  // vary on BOTH branches — a shared cache must never serve one origin's
+  // CORS decision to another.
+  const cors: Record<string, string> = QUOTE_CORS_ORIGINS.has(origin)
+    ? { "access-control-allow-origin": origin, vary: "origin" }
+    : { vary: "origin" };
+  return c.json(res.body, res.status as 200, cors);
 });
 
 app.post("/v1/checkout", async (c) => {

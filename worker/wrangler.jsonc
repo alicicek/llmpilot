@@ -39,4 +39,8 @@
   // Secrets (wrangler secret / .dev.vars — see .dev.vars.template):
   //   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, ENT_SIGNING_KEY,
   //   ENT_SIGNING_KEY_ID, PRICE_FULL, PRICE_DISCOUNT
+  // Launch-price window (optional; both or neither):
+  //   PRICE_LAUNCH   — the £5.99/$7.99 launch Price id (catalog.mjs --only=launch)
+  //   LAUNCH_ENDS_AT — RFC 3339 end instant; the full rung reverts to
+  //                    PRICE_FULL at this moment with no deploy (clock-resolved).
 }

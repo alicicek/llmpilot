@@ -11,4 +11,8 @@ export type WorkerEnv = Omit<Env, "ENVIRONMENT" | "TRIAL_DAYS" | "SEAT_LIMIT"> &
   ENT_SIGNING_KEY_ID: string;
   PRICE_FULL: string;
   PRICE_DISCOUNT: string;
+  // Launch-price window (both set ⇒ the full rung sells at PRICE_LAUNCH
+  // until LAUNCH_ENDS_AT). Optional: absent means no window.
+  PRICE_LAUNCH?: string;
+  LAUNCH_ENDS_AT?: string;
 };

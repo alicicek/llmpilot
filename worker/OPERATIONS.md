@@ -48,7 +48,25 @@ structured alarm count for anything it cannot repair.
 custom hourly reminder is dormant. Change it to 3 only after a test delivery from
 the native email binding is proven; that configuration activates the custom sweep.
 
-Stripe SDK and webhook endpoints must stay on `2026-06-24.dahlia`. The two
+Stripe SDK and webhook endpoints must stay on `2026-06-24.dahlia`. The
 Prices are yearly recurring Prices with GBP base amounts and pinned USD currency
 options. Catalog and end-to-end scripts default to dry-run and every Stripe CLI
 command uses the `llmpilot` profile.
+
+## Launch-price window
+
+For the 14-day launch sale the full rung sells at `PRICE_LAUNCH`
+(£5.99/$7.99) until `LAUNCH_ENDS_AT`, then reverts to `PRICE_FULL` — resolved
+per request from the clock, so closing needs no deploy and no cron. Opening
+the window on launch day:
+
+1. `node scripts/catalog.mjs --only=launch --apply` (once per key mode) and
+   put the printed Price id in `wrangler secret put PRICE_LAUNCH`.
+2. `wrangler secret put LAUNCH_ENDS_AT` with the RFC 3339 end instant,
+   exactly 14 days after the posts go out (honest urgency: the stated end
+   date is the real one).
+
+`GET /v1/quote` then serves the launch amounts as `prices.full` plus
+`launch: { ends_at, regular_full }`; the site banner and the app paywall both
+render from it, and a checkout echo priced on the wrong side of the boundary
+refuses with `quote_stale`.

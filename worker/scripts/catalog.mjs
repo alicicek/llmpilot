@@ -2,10 +2,16 @@
 import { spawnSync } from "node:child_process";
 import { assertApprovedStripeIdentity, approvedStripeAccount, stripeProfile } from "./stripe-identity.mjs";
 
-const products = [
+const catalog = [
   { rung: "full", gbp: 999, usd: 1299 },
   { rung: "discount", gbp: 599, usd: 799 },
+  // The 14-day launch sale: the full rung's own Price at the launch amounts.
+  { rung: "launch", gbp: 599, usd: 799 },
 ];
+// --only=<rung> creates one Price without duplicating the others (the base
+// catalog was applied 2026-07-12; a bare --apply would mint them again).
+const only = process.argv.find((a) => a.startsWith("--only="))?.slice(7);
+const products = only ? catalog.filter((p) => p.rung === only) : catalog;
 if (!process.argv.includes("--apply")) {
   console.log(JSON.stringify({ mode: "dry-run", profile: stripeProfile, expectedAccount: approvedStripeAccount, recurringInterval: "year", products }));
   process.exit(0);

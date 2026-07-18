@@ -108,17 +108,19 @@ export function makeFakeStripe(state: Partial<FakeStripeState> = {}) {
     prices: {
       async retrieve(id: string, params?: Record<string, unknown>) {
         rec("prices.retrieve", id, params);
-        // Amounts mirror the real ladder: full £9.99/$12.99, discount £5.99/$7.99.
-        const discount = id.includes("discount");
+        // Amounts mirror the real ladder: full £9.99/$12.99, discount AND
+        // launch £5.99/$7.99 (the launch sale sells the full rung at the
+        // discount amounts under its own Price id).
+        const cheap = id.includes("discount") || id.includes("launch");
         return {
           id,
           type: "recurring",
           recurring: { interval: "year" },
           currency: "gbp",
-          unit_amount: discount ? 599 : 999,
+          unit_amount: cheap ? 599 : 999,
           currency_options: {
-            gbp: { unit_amount: discount ? 599 : 999 },
-            usd: { unit_amount: discount ? 799 : 1299 },
+            gbp: { unit_amount: cheap ? 599 : 999 },
+            usd: { unit_amount: cheap ? 799 : 1299 },
           },
         };
       },

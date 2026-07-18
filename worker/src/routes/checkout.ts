@@ -10,7 +10,7 @@ import { getStripe } from "../lib/stripe.ts";
 import { insertLicense, newLicenseID } from "../lib/licenses.ts";
 import { takeRateLimit } from "../lib/rate-limit.ts";
 import { validInstallID } from "../lib/seats.ts";
-import { currentTerms, effectiveTrialDays, type PriceTerms } from "../lib/terms.ts";
+import { currentTerms, effectiveTrialDays, resolvePriceID, type PriceTerms } from "../lib/terms.ts";
 
 export type Rung = "full" | "discount_trial" | "nocard_trial";
 
@@ -28,8 +28,9 @@ export function sessionParams(
   rung: Rung,
   licenseId: string,
   ui: "hosted" | "embedded",
+  now: Date = new Date(),
 ): Stripe.Checkout.SessionCreateParams {
-  const price = rung === "full" ? env.PRICE_FULL : env.PRICE_DISCOUNT;
+  const price = resolvePriceID(env, rung, now);
   const trialDays = effectiveTrialDays(env);
   const params: Stripe.Checkout.SessionCreateParams = {
     mode: "subscription",
@@ -101,6 +102,9 @@ export async function createCheckout(
   // its URL from PUBLIC_ORIGIN (the llmpilot.dev site) 404s. Default to the
   // worker origin; PUBLIC_ORIGIN stays for the success/cancel SITE pages.
   origin?: string,
+  // One clock reading binds consent compare AND Session creation — a request
+  // arriving at the launch-window boundary resolves the same price for both.
+  now: Date = new Date(),
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const stripe = stripeOverride ?? getStripe(env);
   if (!stripe || !env.PRICE_FULL || !env.PRICE_DISCOUNT) {
@@ -130,14 +134,14 @@ export async function createCheckout(
     // Bind consent BEFORE any license row or Session exists: the shown terms
     // must equal the terms this Session will be created with, from the same
     // derivation (lib/terms.ts).
-    const terms = await currentTerms(stripe, env, rung);
+    const terms = await currentTerms(stripe, env, rung, now);
     if (!echoMatches(rung, echo, effectiveTrialDays(env), terms)) {
       return { status: 409, body: { error: "quote_stale" } };
     }
 
     const licenseId = newLicenseID();
     await insertLicense(env.ENT_DB, licenseId, rung, body.install_id);
-    const params = sessionParams(env, rung, licenseId, ui);
+    const params = sessionParams(env, rung, licenseId, ui, now);
     const session = await stripe.checkout.sessions.create(params, {
       idempotencyKey: `checkout:${licenseId}`,
     });
