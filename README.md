@@ -7,9 +7,10 @@ brew install alicicek/tap/llmpilot        # the CLI + daemon
 brew install --cask alicicek/tap/llmpilot # the menu bar app
 ```
 
+[![CI](https://github.com/alicicek/llmpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/alicicek/llmpilot/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/tag/alicicek/llmpilot?label=release&sort=semver)](https://github.com/alicicek/llmpilot/releases)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
-![status: pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)
 
 One daemon watches every account's real usage, keeps idle logins fresh, switches
 to the account with headroom before you hit a wall, and starts your 5-hour
