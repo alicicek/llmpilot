@@ -79,13 +79,34 @@ fetch_sparkle "$DD/sparkle" # digest-verified, freshly extracted every run
   --download-url-prefix "https://github.com/alicicek/llmpilot/releases/download/$TAG/" \
   "$DD/updates"
 
+echo "== styled DMG (the website download; the zip stays for Sparkle + cask) =="
+# create-dmg 1.3.0 via Homebrew (as-of 2026-07-18); it signs, notarizes with
+# the same keychain profile, and staples the image. Built AFTER the appcast so
+# generate_appcast never scans it. FIXED name: the site's /download redirect
+# rides github's releases/latest/download/llmpilot.dmg alias.
+command -v create-dmg >/dev/null || { echo "ERROR: create-dmg missing — brew install create-dmg" >&2; exit 1; }
+mkdir -p "$DD/dmgroot"
+ditto "$APP" "$DD/dmgroot/llmpilot.app"
+create-dmg \
+  --volname "llmpilot $VERSION" \
+  --volicon scripts/dmg/volume.icns \
+  --background scripts/dmg/background.tiff \
+  --window-pos 200 140 --window-size 660 400 --icon-size 128 \
+  --icon "llmpilot.app" 180 185 \
+  --app-drop-link 480 185 \
+  --codesign "$IDENTITY" \
+  --notarize "$PROFILE" \
+  "$DD/llmpilot.dmg" "$DD/dmgroot"
+spctl -a -t open --context context:primary-signature -v "$DD/llmpilot.dmg"
+
 echo "== tag + GitHub release =="
 git tag -a "$TAG" -m "llmpilot $VERSION" 2>/dev/null || echo "tag $TAG exists locally"
 git push origin "refs/tags/$TAG"
 PRERELEASE=""
 case "$TAG" in test-*) PRERELEASE="--prerelease" ;; esac
 gh release create "$TAG" $PRERELEASE --title "llmpilot $VERSION" \
-  --generate-notes "$DD/updates/llmpilot-$VERSION.zip" "$DD/updates/appcast.xml"
+  --generate-notes "$DD/updates/llmpilot-$VERSION.zip" "$DD/updates/appcast.xml" \
+  "$DD/llmpilot.dmg"
 
 # CLI archives via goreleaser, then both tap files. goreleaser can no longer
 # emit either tap artifact itself (brews: is deprecated and fails our
