@@ -3,7 +3,7 @@
   "type": "module",
   "version": "0.1.0",
   "private": true,
-  "description": "llmpilot.dev landing page — Astro static site, cockpit-aligned tokens.",
+  "description": "llmpilot.dev landing page \u2014 Astro static site, cockpit-aligned tokens.",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
@@ -33,5 +33,12 @@
     "tailwindcss": "4.3.2",
     "typescript": "7.0.2",
     "wrangler": "4.111.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "sharp": "^0.35.3",
+      "fast-uri": "^3.1.4",
+      "@hono/node-server": "^2.0.11"
+    }
   }
 }
