@@ -1,11 +1,14 @@
 name: codeql
 
 # CodeQL static analysis (SAST) for the Go core and the TS/JS surfaces
-# (site, worker, embedded cockpit). Runs on PRs, push to main, and weekly.
+# (site, worker, cockpit). On PRs, push to main, and weekly; security-extended
+# query suite.
 #
-# build-mode: none — CodeQL extracts and analyzes without compiling, so it
-# never trips the `pnpm build` -> go:embed ordering the real app build needs,
-# and needs no ../llmpilot-pro sibling. Hosted ubuntu (1x).
+# Go requires a build (build-mode: none is unsupported for Go), so it runs a
+# minimal `GOWORK=off go build ./...` — the same command CI proves green on
+# ubuntu. The committed web/dist/.gitkeep satisfies the `//go:embed all:dist`
+# directive, and GOWORK=off ignores the (untracked, local-only) go.work so no
+# private engine sibling is needed. TS/JS needs no build (build-mode: none).
 
 on:
   push:
@@ -27,7 +30,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [go, javascript-typescript]
+        include:
+          - language: go
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -35,8 +42,14 @@ jobs:
       - uses: github/codeql-action/init@4187e74d05793876e9989daffde9c3e66b4acd07 # v3.37.3
         with:
           languages: ${{ matrix.language }}
-          build-mode: none
+          build-mode: ${{ matrix.build-mode }}
           queries: security-extended
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+      - if: matrix.language == 'go'
+        run: GOWORK=off go build ./...
       - uses: github/codeql-action/analyze@4187e74d05793876e9989daffde9c3e66b4acd07 # v3.37.3
         with:
           category: "/language:${{ matrix.language }}"

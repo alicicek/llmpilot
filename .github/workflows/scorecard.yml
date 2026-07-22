@@ -1,8 +1,14 @@
 name: scorecard
 
 # OpenSSF Scorecard — supply-chain security posture, published for the README
-# badge and surfaced in the Security tab. Weekly + on push to main. Hosted
-# ubuntu (1x, ~2-3 min); publish uses OIDC, so no secret is needed.
+# badge. Weekly + on push to main. Hosted ubuntu (1x, ~2 min); publish uses
+# OIDC, so no secret is needed.
+#
+# Results are published to the OpenSSF API (the badge). We deliberately do NOT
+# upload the SARIF to code scanning — that would dump Scorecard's own meta-
+# checks (branch-protection, code-review, maintained, ...) into the Security
+# tab as permanent "alerts", cluttering it. The code-scanning tab is CodeQL's
+# (real code findings); the Scorecard number lives in the badge.
 
 on:
   branch_protection_rule: {}
@@ -18,7 +24,6 @@ jobs:
     name: Scorecard analysis
     runs-on: ubuntu-latest
     permissions:
-      security-events: write # upload SARIF to code scanning
       id-token: write # publish results for the public badge
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -29,11 +34,3 @@ jobs:
           results_file: results.sarif
           results_format: sarif
           publish_results: true
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: SARIF file
-          path: results.sarif
-          retention-days: 5
-      - uses: github/codeql-action/upload-sarif@4187e74d05793876e9989daffde9c3e66b4acd07 # v3.37.3
-        with:
-          sarif_file: results.sarif
