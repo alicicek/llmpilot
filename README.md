@@ -8,9 +8,15 @@ brew install --cask alicicek/tap/llmpilot # the menu bar app
 ```
 
 [![CI](https://github.com/alicicek/llmpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/alicicek/llmpilot/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/alicicek/llmpilot/badge)](https://scorecard.dev/viewer/?uri=github.com/alicicek/llmpilot)
 [![release](https://img.shields.io/github/v/tag/alicicek/llmpilot?label=release&sort=semver)](https://github.com/alicicek/llmpilot/releases)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
+
+> **Signed & notarized by Apple** (Developer ID, Team `6UUS5FCSJ3`) — installs
+> with no Gatekeeper warning. **Zero telemetry. Your account tokens never leave
+> your Mac** — the cache holds only usage percentages and reset timestamps, and
+> the only network calls are to Anthropic. Open source, MIT.
 
 One daemon watches every account's real usage, keeps idle logins fresh, switches
 to the account with headroom before you hit a wall, and starts your 5-hour
