@@ -1,6 +1,7 @@
 ---
-// Wordmark + the charge-block glyph: a token window (the pill) riding its
-// rail, green light on. Same geometry as the app icon — one mark everywhere.
+// Wordmark + the phosphor mark: the plane climbing inside its usage ring,
+// rendered as a matrix of terminal glyphs. Same master as the app icon —
+// one mark everywhere.
 interface Props {
   href?: string;
 }
@@ -8,10 +9,6 @@ const { href = "/" } = Astro.props;
 ---
 
 <a href={href} class="inline-flex items-center gap-2.5" aria-label="llmpilot home">
-  <svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
-    <rect x="9.3" y="30.8" width="45.4" height="2.5" rx="1.25" fill="currentColor" opacity="0.3"></rect>
-    <rect x="21.4" y="24.5" width="21.2" height="15" rx="4.8" fill="var(--primary)"></rect>
-    <circle cx="48.2" cy="32" r="2.35" fill="var(--success)"></circle>
-  </svg>
+  <img src="/brand/icon-128.png" alt="" width="26" height="26" class="rounded-md" aria-hidden="true" />
   <span class="text-[17px] font-semibold tracking-tight text-text">llmpilot</span>
 </a>

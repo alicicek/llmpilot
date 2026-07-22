@@ -1,0 +1,35 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "extended-srgb:0.03922,0.05098,0.04314,1.00000",
+      "extended-srgb:0.01569,0.01961,0.01961,1.00000"
+    ]
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "glass": false,
+          "image-name": "phosphor.png",
+          "name": "phosphor"
+        }
+      ],
+      "lighting": "individual",
+      "shadow": {
+        "kind": "none",
+        "opacity": 0.5
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "circles": [
+      "watchOS"
+    ],
+    "squares": "shared"
+  }
+}
