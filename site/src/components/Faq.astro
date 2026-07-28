@@ -4,11 +4,11 @@
 const items = [
   {
     q: "Does it need my Claude password or API keys?",
-    a: "No. llmpilot reads Claude Code's own OAuth token from the macOS Keychain (read-only, with your one-time Always Allow) to check usage, and switches accounts through the official claude auth CLI. Tokens never leave your Mac.",
+    a: "No. llmpilot uses the OAuth credential Claude Code already stores in your macOS Keychain (with your one-time Always Allow). Switching swaps that credential lock-first, backed up and verified, cooperating with a running claude session. Tokens never leave your Mac.",
   },
   {
     q: "Is it safe to run multiple accounts?",
-    a: "llmpilot uses your own logged-in accounts through the official CLI — no reimplemented login, no third-party credentials. It reads the same usage endpoint Claude Code's own /usage screen uses. The README carries Anthropic's verbatim credential policy so you can decide informed.",
+    a: "llmpilot uses your own logged-in accounts — no third-party credentials, and signing in always happens on Anthropic's own page. It reads the same usage endpoint Claude Code's own /usage screen uses, and it never runs a background token-refresh loop. The README carries Anthropic's verbatim credential policy so you can decide informed.",
   },
   {
     q: "What is free and what is Pro?",
@@ -20,7 +20,7 @@ const items = [
   },
   {
     q: "Any telemetry?",
-    a: "None, ever. No analytics, no phone-home beyond an optional version check you can turn off. Cached data holds percentages and reset times only — never tokens.",
+    a: "None, ever. No analytics, no tracking, no usage data. The menu bar app checks GitHub for updates; the CLI and daemon make no update check at all. Pro licences re-validate with llmpilot's licensing worker about once a week — a licence id and a random install id, never a Claude token. Every request llmpilot makes is listed in full in SECURITY.md. Cached data holds percentages and reset times only — never tokens.",
   },
 ];
 ---

@@ -105,6 +105,7 @@ final class DecodingTests: XCTestCase {
         let dirs = try DaemonDates.decoder().decode([DetectedDir].self, from: Data(detect.utf8))
         XCTAssertEqual(dirs.first?.configDir, "/Users/x/.claude")
         XCTAssertEqual(dirs.first?.registered, false)
+        XCTAssertEqual(dirs.first?.moved, false)
 
         let config = """
         {"autopilot": {"disabled": false, "threshold_percent": 92.5},
@@ -112,5 +113,81 @@ final class DecodingTests: XCTestCase {
         """
         let c = try DaemonDates.decoder().decode(DaemonConfig.self, from: Data(config.utf8))
         XCTAssertEqual(c.autopilot?.thresholdPercent, 92.5)
+    }
+
+    func testDetectDecodesMovedField() throws {
+        let json = """
+        [{"config_dir": "/Users/x/.claude-2", "email": "b@example.dev",
+          "registered": false, "moved": true}]
+        """
+        let dirs = try DaemonDates.decoder().decode([DetectedDir].self, from: Data(json.utf8))
+        XCTAssertEqual(dirs.first?.moved, true)
+    }
+
+    /// Older daemons predate the "moved" field — its absence must decode to
+    /// false, never fail the row (a field the emitter omits
+    /// must still decode; the same rule extended to /v1/detect).
+    func testDetectDecodesMissingMovedFieldAsFalse() throws {
+        let json = """
+        [{"config_dir": "/Users/x/.claude-3", "email": "c@example.dev", "registered": true}]
+        """
+        let dirs = try DaemonDates.decoder().decode([DetectedDir].self, from: Data(json.utf8))
+        XCTAssertEqual(dirs.first?.moved, false)
+    }
+
+    /// A Go nil slice marshals as top-level JSON null — /v1/detect's bare
+    /// array response must decode to empty, never crash the fleet view when
+    /// nothing is detected (the same discipline as accounts:null).
+    func testDetectNullArrayDecodesToEmpty() throws {
+        let dirs = try DaemonDates.decoder().decode([DetectedDir]?.self, from: Data("null".utf8))
+        XCTAssertEqual(dirs ?? [], [])
+    }
+}
+
+/// A FRESH install has zero accounts and Go marshals nil slices as JSON
+/// null — that exact emitter output must decode, never kill the fleet view
+/// (the first-run e2e found the whole state failing on `accounts:null`).
+final class FreshInstallDecodingTests: XCTestCase {
+    func testNullArraysDecodeToEmpty() throws {
+        let json = #"{"accounts":null,"schedules":null,"stash":null,"as_of":"2026-07-22T14:32:00Z"}"#
+        let s = try DaemonDates.decoder().decode(DaemonState.self, from: Data(json.utf8))
+        XCTAssertEqual(s.accounts, [])
+        XCTAssertEqual(s.schedules, [])
+        XCTAssertEqual(s.stash, [])
+        XCTAssertNil(s.license)
+    }
+}
+
+/// The stash rides /v1/state (P2): BOTH the empty and the populated emitter
+/// shapes must decode — the wire-contract rule every new array field earns
+/// (accounts:null kill).
+final class StashDecodingTests: XCTestCase {
+    func testStashEmptyArrayDecodes() throws {
+        let json = #"{"accounts":[],"schedules":[],"stash":[],"as_of":"2026-07-25T14:32:00Z"}"#
+        let s = try DaemonDates.decoder().decode(DaemonState.self, from: Data(json.utf8))
+        XCTAssertEqual(s.stash, [])
+    }
+
+    func testStashPopulatedDecodes() throws {
+        let json = """
+        {"accounts":[],"schedules":[],
+         "stash":[{"fingerprint":"sha256:abc","label":"s@example.dev",
+                   "stashed_at":"2026-07-25T14:30:00.5Z","dead":true},
+                  {"fingerprint":"sha256-full:def","stashed_at":"2026-07-25T14:31:00Z"}],
+         "as_of":"2026-07-25T14:32:00Z"}
+        """
+        let s = try DaemonDates.decoder().decode(DaemonState.self, from: Data(json.utf8))
+        XCTAssertEqual(s.stash.count, 2)
+        XCTAssertEqual(s.stash[0].label, "s@example.dev")
+        XCTAssertEqual(s.stash[0].dead, true)
+        XCTAssertNil(s.stash[1].label)
+        XCTAssertNil(s.stash[1].dead)
+    }
+
+    func testStashMissingKeyDecodes() throws {
+        // An older daemon without the field: absence must decode to [].
+        let json = #"{"accounts":[],"schedules":[],"as_of":"2026-07-25T14:32:00Z"}"#
+        let s = try DaemonDates.decoder().decode(DaemonState.self, from: Data(json.utf8))
+        XCTAssertEqual(s.stash, [])
     }
 }

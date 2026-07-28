@@ -14,6 +14,18 @@ enum DaemonError: LocalizedError, Equatable {
     }
 }
 
+/// One started in-app sign-in: the approval URL to load and the CSRF state
+/// riding it (the PKCE verifier stays inside the daemon).
+struct LoginStart: Decodable, Equatable, Sendable {
+    let authorizeURL: String
+    let state: String
+
+    enum CodingKeys: String, CodingKey {
+        case authorizeURL = "authorize_url"
+        case state
+    }
+}
+
 /// The app's only data source. Thin means thin: state from GET /v1/state
 /// + SSE, actions via POST — never Keychain, never the usage endpoint.
 protocol DaemonAPI: Sendable {
@@ -27,6 +39,10 @@ protocol DaemonAPI: Sendable {
     func config() async throws -> DaemonConfig
     /// Report the native no-card-trial marker so the daemon hides that rung.
     func reportMarker(present: Bool) async throws
+    /// Begin an in-app sign-in (POST /v1/login/start).
+    func startLogin() async throws -> LoginStart
+    /// Finish it with the intercepted or pasted code (POST /v1/login/complete).
+    func completeLogin(code: String, state: String) async throws
     /// Long-lived SSE stream of full states; throws when the connection drops.
     func events() -> AsyncThrowingStream<DaemonState, Error>
 }
@@ -98,7 +114,13 @@ struct HTTPDaemonClient: DaemonAPI {
 
     /// Mutations must send Content-Type: application/json — the daemon's
     /// CSRF posture 415-rejects anything else.
-    private func postJSON<T: Encodable>(_ path: String, _ body: T) async throws {
+    private func postJSON<T: Encodable>(_ path: String, _ body: T, timeout: TimeInterval = 10) async throws {
+        _ = try await postJSONData(path, body, timeout: timeout)
+    }
+
+    private func postJSONData<T: Encodable>(
+        _ path: String, _ body: T, timeout: TimeInterval = 10
+    ) async throws -> Data {
         var req = URLRequest(url: try url(path))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -106,7 +128,7 @@ struct HTTPDaemonClient: DaemonAPI {
             req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }
         req.httpBody = try JSONEncoder().encode(body)
-        req.timeoutInterval = 10
+        req.timeoutInterval = timeout
         let (data, resp): (Data, URLResponse)
         do {
             (data, resp) = try await URLSession.shared.data(for: req)
@@ -119,6 +141,7 @@ struct HTTPDaemonClient: DaemonAPI {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw DaemonError.http(code, msg?.isEmpty == false ? msg! : "http \(code)")
         }
+        return data
     }
 
     private func post(_ path: String, body: [String: String]) async throws {
@@ -134,7 +157,10 @@ struct HTTPDaemonClient: DaemonAPI {
     }
 
     func detect() async throws -> [DetectedDir] {
-        try DaemonDates.decoder().decode([DetectedDir].self, from: try await get("v1/detect"))
+        // The daemon marshals a nil slice as top-level JSON null when
+        // nothing is detected — decode as optional and coalesce, the same
+        // null/absent discipline every array field on the wire earns.
+        try DaemonDates.decoder().decode([DetectedDir]?.self, from: try await get("v1/detect")) ?? []
     }
 
     func adopt(configDir: String) async throws {
@@ -147,6 +173,18 @@ struct HTTPDaemonClient: DaemonAPI {
 
     func reportMarker(present: Bool) async throws {
         try await postJSON("v1/license/marker", ["present": present])
+    }
+
+    func startLogin() async throws -> LoginStart {
+        let data = try await postJSONData("v1/login/start", [String: String]())
+        return try JSONDecoder().decode(LoginStart.self, from: data)
+    }
+
+    func completeLogin(code: String, state: String) async throws {
+        // The daemon's exchange (30s budget) + identity fetch + lock-first
+        // install can legitimately take a while — never hang up mid-write.
+        try await postJSON(
+            "v1/login/complete", ["code": code, "state": state], timeout: 90)
     }
 
     func events() -> AsyncThrowingStream<DaemonState, Error> {

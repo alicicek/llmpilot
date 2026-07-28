@@ -5,8 +5,15 @@ import SwiftUI
 final class FleetViewModel: ObservableObject {
     enum Status: Equatable {
         case connecting
+        case starting // ensure-running in flight — transient, never an error
         case live
         case down
+    }
+
+    /// A start the app must not attempt — each gets a dedicated popover state.
+    enum StartGate: Equatable {
+        case requiresApproval // BTM holds the agent (or the user revoked it)
+        case moveToApplications // translocated or running off the DMG
     }
 
     enum IconMode: String, CaseIterable, Identifiable {
@@ -28,6 +35,8 @@ final class FleetViewModel: ObservableObject {
 
     @Published private(set) var state: DaemonState?
     @Published private(set) var status: Status = .connecting
+    @Published private(set) var startGate: StartGate?
+    @Published private(set) var startAtLogin = false
     @Published private(set) var autopilot: DaemonConfig.Autopilot?
     @Published private(set) var switchingID: String?
     @Published private(set) var detected: [DetectedDir] = []
@@ -52,11 +61,59 @@ final class FleetViewModel: ObservableObject {
     /// Injectable for tests — production launches via launchd.
     var launch: @Sendable () -> String? = { DaemonLauncher.start() }
     var startupProbeNanos: UInt64 = 500_000_000
+    /// Injectable ServiceManagement seam — tests never touch the real BTM.
+    var loginItems: LoginItems = LoginItemsFactory.make()
+    /// Legacy CLI-installed plist at ~/Library/LaunchAgents — when present it
+    /// owns the label; registering on top silently loses to it (verified on
+    /// macOS 26.5: register() reports enabled while launchd keeps the legacy
+    /// definition, and unregister() then fails).
+    var legacyPlistPresent: @Sendable () -> Bool = {
+        FileManager.default.fileExists(
+            atPath: DaemonLauncher.userHome() + "/Library/LaunchAgents/dev.llmpilot.daemon.plist")
+    }
+    /// Translocated or on a read-only (DMG) volume: registering would pin a
+    /// doomed path, so the app must ask to be moved to Applications instead.
+    var bundleLocationBlocked: @Sendable () -> Bool = {
+        let path = Bundle.main.bundlePath
+        if path.contains("/AppTranslocation/") { return true }
+        if let v = try? URL(fileURLWithPath: path)
+            .resourceValues(forKeys: [.volumeIsReadOnlyKey]),
+            v.volumeIsReadOnly == true
+        {
+            return true
+        }
+        return false
+    }
+    /// First-launch flag store + window opener, injectable for tests. The
+    /// default opener no-ops under XCTest so hosted unit tests never spawn a
+    /// real cockpit window. cfprefsd keys UserDefaults by uid + bundle id and
+    /// IGNORES a sandboxed $HOME (verified), so e2e runs isolate the flag via
+    /// a throwaway suite named in LLMPILOT_DEFAULTS_SUITE instead.
+    var defaults: UserDefaults = {
+        if let suite = ProcessInfo.processInfo.environment["LLMPILOT_DEFAULTS_SUITE"],
+           !suite.isEmpty, let d = UserDefaults(suiteName: suite)
+        {
+            return d
+        }
+        return .standard
+    }()
+    var openWindow: (URL) -> Void = { url in
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+        else { return }
+        CockpitWindowController.shared.open(url: url)
+    }
+
+    static let firstLaunchKey = "firstLaunchWindowShown"
+
+    private var ensureInFlight = false
 
     init(api: DaemonAPI, trialMarker: TrialMarkerStore = KeychainTrialMarker(), autostart: Bool = true) {
         self.api = api
         self.trialMarker = trialMarker
-        if autostart { start() }
+        if autostart {
+            start()
+            Task { await self.ensureRunning() }
+        }
     }
 
     deinit {
@@ -91,7 +148,10 @@ final class FleetViewModel: ObservableObject {
             dlog("SSE stream ended")
         } catch {
             dlog("connect failed: \(error)")
-            status = .down
+            // While ensure-running is in flight the popover shows the
+            // transient "starting…" state — a failed poll at t≈0 must not
+            // clobber it with "daemon not running".
+            if !ensureInFlight { status = .down }
         }
     }
 
@@ -116,13 +176,17 @@ final class FleetViewModel: ObservableObject {
             apply(s)
             await reportMarkerOnce()
             autopilot = try? await api.config().autopilot
-            if s.accounts.isEmpty {
-                detected = (try? await api.detect()) ?? []
-            }
+            // Detected is a cheap filesystem + config read on the daemon
+            // side (no Keychain, no network) — fetch it every refresh so
+            // OTHER Claude sign-ins on the Mac stay visible after the first
+            // account is adopted, not just while the fleet is empty.
+            detected = (try? await api.detect()) ?? []
         } catch {
             // An action-triggered refresh must not downgrade a live SSE
             // connection — only the connect loop decides "down" once live.
-            if status != .live { status = .down }
+            // And while ensure-running is starting the daemon, its probe
+            // failures stay under the transient .starting state.
+            if status != .live, !ensureInFlight { status = .down }
             throw error
         }
     }
@@ -130,8 +194,28 @@ final class FleetViewModel: ObservableObject {
     private func apply(_ s: DaemonState) {
         state = s
         status = .live
+        startGate = nil
+        // A live state means the daemon IS reachable, so a prior startup
+        // "never became reachable" error is stale — clear only that one, so
+        // real action errors (switch, login item) still surface.
+        if lastError == Self.daemonUnreachableError { lastError = nil }
         now = Date()
-        if !s.accounts.isEmpty { detected = [] }
+        maybeAutoOpenWindow()
+    }
+
+    static let daemonUnreachableError =
+        "the daemon never became reachable — run `llmpilot daemon status` in a terminal"
+
+    /// Auto-open the cockpit window exactly once EVER. The flag is set only
+    /// here — at a successful state fetch — never on a failed start, so a
+    /// daemon that fails to come up cannot burn the one auto-open. Flushed
+    /// synchronously so an immediate app kill can't lose it.
+    private func maybeAutoOpenWindow() {
+        guard !defaults.bool(forKey: Self.firstLaunchKey) else { return }
+        guard let url = api.cockpitURL() else { return }
+        defaults.set(true, forKey: Self.firstLaunchKey)
+        defaults.synchronize()
+        openWindow(url)
     }
 
     func switchTo(_ id: String) async {
@@ -159,20 +243,108 @@ final class FleetViewModel: ObservableObject {
         }
     }
 
-    func startDaemon() async {
+    /// The ensure-running state machine — runs at app launch and again from
+    /// the popover's "Start daemon" button (same path, by design):
+    /// (1) daemon reachable → done. (2) translocated/DMG → honest move state,
+    /// start nothing. (3) legacy CLI plist present → bootstrap through the
+    /// proven legacy path, never SMAppService on top of it. (4) else
+    /// SMAppService.agent register; requiresApproval gets its own state and
+    /// is never loop-registered; any other refusal falls back to the legacy
+    /// path. Then poll /v1/state ~10 s under the transient .starting status.
+    func ensureRunning() async {
+        guard !ensureInFlight else { return }
+        ensureInFlight = true
+        defer { ensureInFlight = false }
         lastError = nil
-        let launch = self.launch
-        let launchError = await Task.detached { launch() }.value
-        if let launchError {
-            lastError = launchError
+        startGate = nil
+        if status != .live { status = .starting }
+
+        if (try? await refresh()) != nil { return }
+
+        if bundleLocationBlocked() {
+            startGate = .moveToApplications
+            status = .down
             return
         }
-        // launchd needs a beat to bring the socket up.
-        for _ in 0..<10 {
-            try? await Task.sleep(nanoseconds: startupProbeNanos)
-            if (try? await refresh()) != nil { return }
+
+        if legacyPlistPresent() {
+            let launch = self.launch
+            if let err = await Task.detached { launch() }.value {
+                lastError = err
+                status = .down
+                return
+            }
+        } else {
+            let items = loginItems
+            let registerError = await Task.detached { () -> Error? in
+                do {
+                    try items.registerAgent()
+                    return nil
+                } catch {
+                    return error
+                }
+            }.value
+            let agentStatus = await Task.detached { items.agentStatus() }.value
+            if registerError != nil {
+                // No error-code guessing: consult status. Already-enabled is
+                // fine (agent registered by an earlier run); approval gets
+                // its own state; anything else means BTM refused this build
+                // — fall back to the legacy CLI path.
+                switch agentStatus {
+                case .enabled:
+                    break
+                case .requiresApproval:
+                    startGate = .requiresApproval
+                    status = .down
+                    return
+                default:
+                    let launch = self.launch
+                    if let err = await Task.detached { launch() }.value {
+                        lastError = err
+                        status = .down
+                        return
+                    }
+                }
+            } else if agentStatus == .requiresApproval {
+                // register() can also park the agent awaiting approval
+                // without throwing — surface it, never loop-register.
+                startGate = .requiresApproval
+                status = .down
+                return
+            }
         }
-        lastError = "daemon installed but never became reachable — run `llmpilot daemon status` in a terminal"
+
+        // launchd needs a beat to bring the socket up.
+        for _ in 0..<20 {
+            if (try? await refresh()) != nil { return }
+            try? await Task.sleep(nanoseconds: startupProbeNanos)
+        }
+        status = .down
+        lastError = Self.daemonUnreachableError
+    }
+
+    /// The gear toggle state. Read fresh when the popover opens — System
+    /// Settings can revoke the login item behind the app's back.
+    func refreshLoginItemState() {
+        let items = loginItems
+        Task {
+            let s = await Task.detached { items.mainAppStatus() }.value
+            startAtLogin = s == .enabled
+        }
+    }
+
+    func setStartAtLogin(_ on: Bool) async {
+        let items = loginItems
+        let err = await Task.detached { () -> String? in
+            do {
+                try items.setMainApp(enabled: on)
+                return nil
+            } catch {
+                return error.localizedDescription
+            }
+        }.value
+        if let err { lastError = "could not update the login item — \(err)" }
+        startAtLogin = await Task.detached { items.mainAppStatus() }.value == .enabled
     }
 
     /// Report the native no-card-trial marker once the daemon is reachable, so
@@ -191,6 +363,15 @@ final class FleetViewModel: ObservableObject {
     // MARK: - Derived
 
     var accounts: [AccountState] { state?.accounts ?? [] }
+
+    /// Preserved foreign credentials awaiting a decision (adopt/discard
+    /// lives in the cockpit; the menu bar surfaces that they exist).
+    var stash: [StashEntry] { state?.stash ?? [] }
+
+    /// Other logged-in Claude Code accounts on this Mac that aren't part of
+    /// the fleet yet — the destructive move lives in the cockpit; the menu
+    /// bar only surfaces that they exist so nothing goes invisible.
+    var unadoptedDetectedCount: Int { detected.filter { !$0.registered }.count }
 
     var cockpitURL: URL? { api.cockpitURL() }
 

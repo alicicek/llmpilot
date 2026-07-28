@@ -12,6 +12,16 @@ export function bucketLabel(b: Bucket): string {
 
 export type Severity = "calm" | "warn" | "crit";
 
+/** The doctor's finding severities ride the SAME shipped trio — the panel
+ *  invents no hue of its own, reusing the shipped severity vocabulary
+ *  instead. An informational finding is calm on purpose: a watched lane
+ *  is a feature, not a fault. */
+export function findingSeverity(s: "critical" | "warning" | "info"): Severity {
+  if (s === "critical") return "crit";
+  if (s === "warning") return "warn";
+  return "calm";
+}
+
 export function bucketSeverity(b: Bucket): Severity {
   if (b.severity === "critical") return "crit";
   if (b.severity === "warning") return "warn";

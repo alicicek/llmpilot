@@ -8,10 +8,15 @@ final class StubAPI: DaemonAPI, @unchecked Sendable {
     var detectResult: [DetectedDir] = []
     var configResult = DaemonConfig(autopilot: nil)
     var base: URL? = URL(string: "http://127.0.0.1:59999")
+    var startLoginResult: Result<LoginStart, Error> =
+        .success(LoginStart(authorizeURL: "https://claude.com/cai/oauth/authorize?state=st-1", state: "st-1"))
+    var completeLoginResult: Result<Void, Error> = .success(())
 
     private(set) var switchedTo: [String] = []
     private(set) var adopted: [String] = []
     private(set) var markerReports: [Bool] = []
+    private(set) var startedLogins = 0
+    private(set) var completedLogins: [(code: String, state: String)] = []
     /// Applied to stateResult after a successful switch, so refresh() sees it.
     var stateAfterSwitch: DaemonState?
 
@@ -33,9 +38,50 @@ final class StubAPI: DaemonAPI, @unchecked Sendable {
 
     func reportMarker(present: Bool) async throws { markerReports.append(present) }
 
+    func startLogin() async throws -> LoginStart {
+        startedLogins += 1
+        return try startLoginResult.get()
+    }
+
+    func completeLogin(code: String, state: String) async throws {
+        completedLogins.append((code, state))
+        try completeLoginResult.get()
+    }
+
     func events() -> AsyncThrowingStream<DaemonState, Error> {
         AsyncThrowingStream { $0.finish(throwing: DaemonError.down) }
     }
+}
+
+/// Scriptable ServiceManagement seam — tests never touch the real BTM
+/// database (a real register() would enroll a login item on the dev Mac).
+final class FakeLoginItems: LoginItems, @unchecked Sendable {
+    struct Refused: Error {}
+    var agentStatusValue: LoginItemStatus = .notRegistered
+    var registerShouldThrow = false
+    /// Runs on a successful register — e.g. flip the stub API to reachable.
+    var onRegister: (@Sendable () -> Void)?
+    var mainStatus: LoginItemStatus = .notRegistered
+    private(set) var registerCalls = 0
+    private(set) var mainSets: [Bool] = []
+    private(set) var openedSettings = 0
+
+    func agentStatus() -> LoginItemStatus { agentStatusValue }
+
+    func registerAgent() throws {
+        registerCalls += 1
+        if registerShouldThrow { throw Refused() }
+        onRegister?()
+    }
+
+    func mainAppStatus() -> LoginItemStatus { mainStatus }
+
+    func setMainApp(enabled: Bool) throws {
+        mainSets.append(enabled)
+        mainStatus = enabled ? .enabled : .notRegistered
+    }
+
+    func openLoginItemsSettings() { openedSettings += 1 }
 }
 
 /// In-memory trial marker — tests never touch the real Keychain.

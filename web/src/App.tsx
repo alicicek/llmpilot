@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, startCheckout, switchAccount, type QuoteEcho, type Rung, type State } from "./api.ts";
+import {
+  ApiError,
+  fetchDetected,
+  startCheckout,
+  switchAccount,
+  type DetectedDir,
+  type QuoteEcho,
+  type Rung,
+  type State,
+} from "./api.ts";
 import { useDaemonState } from "./useDaemonState.ts";
 import { useLicense } from "./pro/useLicense.ts";
 import { useQuote } from "./pro/useQuote.ts";
@@ -22,9 +31,29 @@ import Board from "./board/Board.tsx";
 import { Toolbar } from "./shell/Toolbar.tsx";
 import { History } from "./shell/History.tsx";
 import { FirstRun } from "./shell/FirstRun.tsx";
+import { StashPanel } from "./shell/StashPanel.tsx";
+import { DoctorPanel } from "./shell/DoctorPanel.tsx";
 import { AddAccountDialog } from "./shell/AddAccountDialog.tsx";
 import { SettingsDialog, showHistoryPref, HISTORY_PREF_KEY } from "./shell/SettingsDialog.tsx";
 import { StatuslineDialog } from "./shell/StatuslineDialog.tsx";
+
+// doctorKey changes exactly when something the sweep would report changes.
+// Fleet size alone missed real health flips — a re-login clears a quarantine,
+// a move flips a lane from watched to switchable, a poll marks an account
+// stale — all of which ride State without changing a count.
+//
+// Deliberately NOT state.as_of: that changes on every SSE push, and each sweep
+// costs one Keychain read per account. This refetches on health, not on the
+// clock. (The refresh budget and the 429 breaker live only in the sweep, so a
+// breaker that trips while the page sits open still needs a reload — the
+// panel's own header is the honest place to notice that.)
+function doctorKey(state: State): string {
+  const accounts = state.accounts
+    .map((a) => `${a.id}:${a.stale ? 1 : 0}:${a.pinned ? 1 : 0}:${a.token_note ? 1 : 0}`)
+    .join(",");
+  const stash = state.stash ?? [];
+  return `${accounts}|${stash.length}:${stash.filter((e) => e.dead).length}`;
+}
 
 function nowMinutesLocal(): number {
   const d = new Date();
@@ -67,15 +96,36 @@ export default function App() {
   const [onboarded, setOnboarded] = useState(
     () => !proFixtureMode && localStorage.getItem(ONBOARDED_KEY) === "yes",
   );
+  // Adopt-first funnel: with an empty fleet the adopt screen renders before
+  // any pitch; skip is the forward path when nothing was detected (session
+  // state only — the adopt screen returns after onboarding).
+  const [adoptSkipped, setAdoptSkipped] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
   const [handoffURL, setHandoffURL] = useState<string | null>(null);
   const checkoutInFlight = useRef(false);
+  // Detected-but-unregistered config dirs on this Mac — the toolbar badge and
+  // the Add-account dialog's "already signed in" section both read this, so
+  // one adopt/move anywhere refreshes both instantly instead of drifting out
+  // of sync.
+  const [detected, setDetected] = useState<DetectedDir[]>([]);
+  const refreshDetected = () => {
+    fetchDetected()
+      .then(setDetected)
+      .catch(() => {});
+  };
 
   useEffect(() => {
     if (fixturesMode) return;
     const t = setInterval(() => setNowMin(nowMinutesLocal()), 30_000);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    if (fixturesMode) return;
+    refreshDetected();
+    // Re-check whenever the fleet's size changes (adopted via FirstRun, the
+    // CLI, or this dialog) so the badge never shows a stale count.
+  }, [fixturesMode, live.state?.accounts.length]);
 
   // Schedules ride State once the daemon serves them; until then fetch once.
   useEffect(() => {
@@ -230,6 +280,7 @@ export default function App() {
         conn={conn}
         state={state}
         asOfAge={conn === "down" ? asOfAge : null}
+        detectedCount={detected.filter((d) => !d.registered).length}
         onFreshWindow={bookFreshWindow}
         onAddAccount={() => setAddOpen(true)}
         onSettings={() => setSettingsOpen(true)}
@@ -272,7 +323,9 @@ export default function App() {
           </div>
         ) : !state ? (
           <p className="p-6 text-[12.5px] text-ter">Connecting to the daemon…</p>
-        ) : showOnboarding && license ? (
+        ) : showOnboarding && license && (!firstRun || adoptSkipped) ? (
+          // Adopt-first: the pitch runs AFTER adoption, on the user's own
+          // fleet — the demo fixtures appear only when adoption was skipped.
           <Onboarding
             license={license}
             quote={quote}
@@ -283,11 +336,22 @@ export default function App() {
             onDismiss={dismissOnboarding}
             caughtThisWeek={caughtThisWeek || undefined}
             handoffURL={handoffURL}
+            demo={state.accounts.length > 0 ? state : undefined}
           />
-        ) : firstRun ? (
-          <FirstRun />
+        ) : firstRun && !adoptSkipped ? (
+          <FirstRun onSkip={showOnboarding ? () => setAdoptSkipped(true) : undefined} />
         ) : (
           <>
+            {!fixturesMode && (
+              <DoctorPanel
+                onAddAccount={() => setAddOpen(true)}
+                onReviewStash={() =>
+                  document.getElementById("kept-signins")?.scrollIntoView({ block: "center" })
+                }
+                reloadKey={doctorKey(state)}
+              />
+            )}
+            <StashPanel stash={state.stash ?? []} />
             <Board state={state} schedules={schedules} nowMinutes={nowMinutes} {...actions} />
             {showHistory && <History state={state} fixturesMode={fixturesMode} defaultOpen={fixturesMode} />}
           </>
@@ -313,7 +377,13 @@ export default function App() {
           </div>
         </div>
       )}
-      <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddAccountDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        detected={detected}
+        fleetDir={(state?.accounts ?? []).find((a) => !a.pinned)?.config_dir ?? ""}
+        onDetectedChange={refreshDetected}
+      />
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

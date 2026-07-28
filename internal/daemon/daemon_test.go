@@ -125,97 +125,41 @@ func TestSSEEventOnCacheChange(t *testing.T) {
 	}
 }
 
-func TestSharedBackoffOn429(t *testing.T) {
+func TestPerAccount429Cooldown(t *testing.T) {
 	st := testStore(t)
-	calls := 0
+	calls := map[string]int{}
 	d := &Daemon{
 		Store:         st,
 		AllowFastPoll: true,
 		PollInterval:  time.Millisecond,
-		Fetch: func(context.Context, store.Account) ([]store.Bucket, error) {
-			calls++
+		Fetch: func(_ context.Context, a store.Account) ([]store.Bucket, error) {
+			calls[a.ID]++
 			return nil, &anthropic.StatusError{StatusCode: 429}
 		},
 	}
 	d.init()
-	d.pollDue(context.Background()) // first account 429s → shared pause
-	if calls != 1 {
-		t.Fatalf("first pass calls = %d, want 1 (shared backoff must stop the second account)", calls)
+	// A 429 cools ONLY the offending account: both accounts still get their
+	// own poll in the first pass (no fleet-global silence).
+	d.pollDue(context.Background())
+	if calls["a"] != 1 || calls["b"] != 1 {
+		t.Fatalf("first pass calls = %v, want each account polled once (per-account, not fleet-global)", calls)
 	}
-	d.pollDue(context.Background()) // still paused
-	if calls != 1 {
-		t.Fatalf("paused pass calls = %d, want 1", calls)
+	// Second pass: both are now cooling → neither re-polls.
+	d.pollDue(context.Background())
+	if calls["a"] != 1 || calls["b"] != 1 {
+		t.Fatalf("cooling pass calls = %v, want no re-polls", calls)
 	}
 	d.mu.Lock()
-	if until := time.Until(d.pausedUntil); until < 50*time.Second || until > time.Minute {
-		t.Fatalf("pausedUntil %v from now, want ~1m (Backoff(0))", until)
-	}
+	until := time.Until(d.cooldown["a"].until)
 	d.mu.Unlock()
-}
-
-func TestIdleRefreshRefreshesBeforeExpiry(t *testing.T) {
-	st := testStore(t)
-	exp := map[string]time.Time{
-		"a": time.Now().Add(10 * time.Minute), // inside lead → refresh
-		"b": time.Now().Add(48 * time.Hour),   // far out → untouched
+	if until < 9*time.Minute || until > 10*time.Minute {
+		t.Fatalf("cooldown[a] = %v from now, want ~10m (RateLimitBackoff(0,0))", until)
 	}
-	var refreshed []string
-	d := &Daemon{
-		Store:       st,
-		RefreshLead: time.Hour,
-		Expiry: func(_ context.Context, a store.Account) (time.Time, error) {
-			return exp[a.ID], nil
-		},
-		Refresh: func(_ context.Context, a store.Account) error {
-			refreshed = append(refreshed, a.ID)
-			exp[a.ID] = time.Now().Add(12 * time.Hour) // delegate worked
-			return nil
-		},
-	}
-	d.init()
-	d.refreshIdle(context.Background())
-	if len(refreshed) != 1 || refreshed[0] != "a" {
-		t.Fatalf("refreshed = %v, want [a]", refreshed)
-	}
-	stt, err := d.State(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, a := range stt.Accounts {
-		if a.TokenNote != "" {
-			t.Fatalf("account %s has TokenNote %q after successful refresh", a.ID, a.TokenNote)
+	stt, _ := d.State(context.Background())
+	for _, acc := range stt.Accounts {
+		if acc.TokenNote != rateLimitedNote {
+			t.Fatalf("account %s note = %q, want rateLimitedNote", acc.ID, acc.TokenNote)
 		}
-	}
-}
-
-// TestIdleRefreshNoOpGetsHonestNote pins the honest-failure behavior: when
-// the delegated refresh doesn't move the expiry (claude auth status is
-// read-only in CC 2.1.205), the account carries an honest TokenNote.
-func TestIdleRefreshNoOpGetsHonestNote(t *testing.T) {
-	st := testStore(t)
-	exp := time.Now().Add(10 * time.Minute)
-	d := &Daemon{
-		Store:       st,
-		RefreshLead: time.Hour,
-		Expiry: func(_ context.Context, a store.Account) (time.Time, error) {
-			if a.ID != "a" {
-				return time.Now().Add(48 * time.Hour), nil
-			}
-			return exp, nil // never moves
-		},
-		Refresh: func(context.Context, store.Account) error { return nil },
-	}
-	d.init()
-	d.refreshIdle(context.Background())
-	stt, err := d.State(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stt.Accounts[0].TokenNote, "token expiring") {
-		t.Fatalf("TokenNote = %q, want an honest expiring warning", stt.Accounts[0].TokenNote)
-	}
-	if stt.Accounts[1].TokenNote != "" {
-		t.Fatalf("account b TokenNote = %q, want empty", stt.Accounts[1].TokenNote)
 	}
 }
 
@@ -341,5 +285,26 @@ func TestServeSocketAndPortFile(t *testing.T) {
 	}
 	if _, err := os.Stat(tokenFile); !os.IsNotExist(err) {
 		t.Fatalf("token file not cleaned up: %v", err)
+	}
+}
+
+// A fresh install serves zero accounts — the arrays must marshal as [] and
+// never as null, or every state decoder on the fleet surfaces dies exactly
+// on first run (the menu bar's did).
+func TestStateEmptyFleetMarshalsArraysNotNull(t *testing.T) {
+	d := &Daemon{Store: store.At(t.TempDir())}
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/v1/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `"accounts":[]`) {
+		t.Fatalf("empty fleet must serve accounts:[] — got: %s", body)
+	}
+	if strings.Contains(string(body), `"accounts":null`) || strings.Contains(string(body), `"schedules":null`) {
+		t.Fatalf("null arrays in fresh-install state: %s", body)
 	}
 }

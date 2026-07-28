@@ -14,6 +14,13 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      # SMAppService.agent(plistName:) loads its plist from the app's
+      # Contents/Library/LaunchAgents — a copyFiles phase, not a resource.
+      - path: LaunchAgents/dev.llmpilot.daemon.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
     dependencies:
       - package: Sparkle
     info:

@@ -319,3 +319,43 @@ func TestBackoff(t *testing.T) {
 		}
 	}
 }
+
+func TestRateLimitBackoff(t *testing.T) {
+	cases := []struct {
+		attempt    int
+		retryAfter time.Duration
+		want       time.Duration
+	}{
+		{0, 0, 10 * time.Minute},                // floor
+		{1, 0, 20 * time.Minute},                // doubled
+		{2, 0, 30 * time.Minute},                // 40m clamped to backoffCap
+		{3, 0, 30 * time.Minute},                // shift capped → still 30m
+		{0, 45 * time.Minute, 45 * time.Minute}, // Retry-After longer than the ramp wins
+		{0, 90 * time.Minute, 60 * time.Minute}, // Retry-After capped at maxRateLimitWait
+	}
+	for _, c := range cases {
+		if got := RateLimitBackoff(c.attempt, c.retryAfter); got != c.want {
+			t.Errorf("RateLimitBackoff(%d, %v) = %v, want %v", c.attempt, c.retryAfter, got, c.want)
+		}
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	if got := parseRetryAfter("120"); got != 2*time.Minute {
+		t.Errorf("delta-seconds: got %v, want 2m", got)
+	}
+	future := time.Now().Add(90 * time.Second).UTC().Format(http.TimeFormat)
+	if got := parseRetryAfter(future); got <= 0 {
+		t.Errorf("future HTTP-date: got %v, want > 0", got)
+	}
+	past := time.Now().Add(-time.Hour).UTC().Format(http.TimeFormat)
+	for _, v := range []string{"", "0", "-5", "garbage", past} {
+		if got := parseRetryAfter(v); got != 0 {
+			t.Errorf("parseRetryAfter(%q) = %v, want 0", v, got)
+		}
+	}
+	// An absurd delta-seconds value clamps instead of overflowing int64.
+	if got := parseRetryAfter("99999999999"); got != maxRetryAfterSeconds*time.Second {
+		t.Errorf("overflow clamp: got %v, want %v", got, time.Duration(maxRetryAfterSeconds)*time.Second)
+	}
+}

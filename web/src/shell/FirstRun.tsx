@@ -3,16 +3,17 @@ import { adoptAccount, fetchDetected, type DetectedDir } from "../api.ts";
 
 // Empty fleet = first run. Detect logged-in Claude accounts on this Mac and
 // adopt them with one click — the UI flow IS onboarding; `llmpilot init` is
-// the power-user shortcut, never the required path.
-export function FirstRun() {
+// the power-user shortcut, never the required path. onSkip, when provided,
+// is the forward path to the autopilot pitch — nothing dead-ends here.
+export function FirstRun({ onSkip }: { onSkip?: () => void }) {
   const [detected, setDetected] = useState<DetectedDir[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  const refresh = () => fetchDetected().then(setDetected).catch(() => setDetected([]));
+
   useEffect(() => {
-    fetchDetected()
-      .then(setDetected)
-      .catch(() => setDetected([]));
+    void refresh();
   }, []);
 
   const candidates = (detected ?? []).filter((d) => !d.registered);
@@ -50,6 +51,7 @@ export function FirstRun() {
                   setBusy(d.config_dir);
                   setErr(null);
                   adoptAccount(d.config_dir)
+                    .then(() => refresh())
                     .catch((e: Error) => setErr(e.message))
                     .finally(() => setBusy(null));
                 }}
@@ -73,6 +75,12 @@ export function FirstRun() {
         prompt; choose "Always Allow" so the daemon can watch limits unattended.
         Tokens never leave this Mac.
       </p>
+
+      {onSkip && (
+        <button className="mt-4 text-[11.5px] text-ter hover:underline" onClick={onSkip}>
+          Skip for now
+        </button>
+      )}
     </div>
   );
 }

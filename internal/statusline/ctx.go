@@ -7,17 +7,13 @@ import (
 	"github.com/alicicek/llmpilot/internal/store"
 )
 
-// Honesty windows, matching the classic statusline:
-//   - a cache older than AgeNoteAfter carries a dim age token (a stale cache
-//     must never read as live);
-//   - past FloorAfter the cache no longer speaks for the fast-moving windows:
-//     the native rate_limits floor from Claude Code's stdin JSON (live by
-//     definition) replaces 5h/wk, and only cache-exclusive buckets (the Fable
-//     weekly, unknown kinds) still render from it.
-const (
-	AgeNoteAfter = 2 * time.Minute
-	FloorAfter   = 10 * time.Minute
-)
+// AgeNoteAfter is the honesty window: cache-sourced buckets older than this
+// carry a dim age token (a stale cache must never read as live). The native
+// rate_limits floor from Claude Code's stdin JSON — live by definition, and
+// only present for the active session — always outranks the cache for the
+// windows it carries (design: official statusline data over the
+// experimental endpoint for the ACTIVE account).
+const AgeNoteAfter = 2 * time.Minute
 
 // Sample is one burn-rate observation (mirrors the daemon's history ring —
 // defined here too so the engine never imports the daemon).
@@ -67,6 +63,10 @@ type Ctx struct {
 
 	cfgLoaded bool
 	pilotCfg  store.Config
+
+	// floor guard memo (see floorguard.go)
+	floorChecked bool
+	floorOK      bool
 }
 
 func (c *Ctx) defaults() {
@@ -155,7 +155,7 @@ func (c *Ctx) sessionBucket() *store.Bucket {
 			}
 		}
 	}
-	if w := c.In.RateLimits.FiveHour; w != nil {
+	if w := c.In.RateLimits.FiveHour; w != nil && c.floorAllowed() {
 		b := w.Bucket("five_hour", c.Loc)
 		return &b
 	}

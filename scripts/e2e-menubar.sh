@@ -16,7 +16,12 @@ ROOT=$(mktemp -d /tmp/llmpilot-e2e-menubar.XXXXXX)
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home"
 export HOME="$ROOT/home"
-export CLAUDE_CONFIG_DIR="$ROOT/home/claude-main"
+# The global config dir lives OUTSIDE the redirected $HOME (the
+# e2e-switch-hardening.sh layout): the assertSandboxDir interlock refuses to
+# swap/keep-warm any dir under the process home, and a redirected HOME makes
+# a home-nested fixture dir self-refusing. Both fixture
+# accounts still register on this ONE global dir.
+export CLAUDE_CONFIG_DIR="$ROOT/claude"
 KEYCHAIN="$ROOT/throwaway.keychain-db"
 export LLMPILOT_KEYCHAIN="$KEYCHAIN"
 
@@ -48,7 +53,7 @@ trap cleanup EXIT
 # which Swap refuses by design (clone-lineage hazard, owner 2026-07-16)
 # and whose keep-warm dir the LLMPILOT_TEST interlock refuses under a
 # sandboxed $HOME. So the sandbox mirrors two real logins in sequence.
-mkdir -p "$CLAUDE_CONFIG_DIR" "$LLMPILOT_HOME"
+mkdir -p "$CLAUDE_CONFIG_DIR" "$LLMPILOT_HOME" "$HOME"
 SERVICE="Claude Code-credentials-$(printf '%s' "$CLAUDE_CONFIG_DIR" | shasum -a 256 | cut -c1-8)"
 
 /usr/bin/security create-keychain -p e2e "$KEYCHAIN"

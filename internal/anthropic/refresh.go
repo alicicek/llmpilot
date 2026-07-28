@@ -2,8 +2,7 @@ package anthropic
 
 // OAuth token refresh — the second undocumented surface this adapter owns.
 //
-// Receipts (verified live on this machine, as-of 2026-07-16; see
-// docs/research/TOKEN-KEEP-WARM.md):
+// Receipts (verified live, as-of 2026-07-16):
 //   - POST https://platform.claude.com/v1/oauth/token with JSON
 //     {"grant_type":"refresh_token","refresh_token":…,"client_id":…} mints a
 //     new access token. It is a pure auth call: no model request, so it never
@@ -48,10 +47,12 @@ const (
 )
 
 // RefreshError is a non-200 from the token endpoint. The response body is
-// never surfaced — only the parsed OAuth error code rides along.
+// never surfaced — only the parsed OAuth error code rides along. RetryAfter
+// carries the server's Retry-After header when present (0 otherwise).
 type RefreshError struct {
 	StatusCode int
-	Code       string // e.g. "invalid_grant"; "" when the body carried none
+	Code       string        // e.g. "invalid_grant"; "" when the body carried none
+	RetryAfter time.Duration // server Retry-After, 0 if absent
 }
 
 func (e *RefreshError) Error() string {
@@ -133,7 +134,7 @@ func (c *RefreshClient) Refresh(ctx context.Context, refreshToken string) (Refre
 	defer resp.Body.Close() //nolint:errcheck // read-only body
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return RefreshResult{}, &RefreshError{StatusCode: resp.StatusCode, Code: oauthErrorCode(raw)}
+		return RefreshResult{}, &RefreshError{StatusCode: resp.StatusCode, Code: oauthErrorCode(raw), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"))}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {

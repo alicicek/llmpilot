@@ -21,7 +21,9 @@ function tokenNoteSevere(note: string): boolean {
 
 export default function LaneHeader({ account, active, nowMinutes, onSwitch }: LaneHeaderProps) {
   const snap = account.snapshot;
-  const stale = snap ? isStale(snap.as_of, nowMinutes) : false;
+  // Stale = the daemon says the token expired (authoritative) OR the
+  // snapshot is simply old — either way the lane drains and stamps its age.
+  const stale = account.stale === true || (snap ? isStale(snap.as_of, nowMinutes) : false);
   const session = snap?.buckets.find((b) => b.kind === "session");
   const initial = (account.label || account.email || "?").slice(0, 1).toUpperCase();
 
@@ -106,7 +108,13 @@ export default function LaneHeader({ account, active, nowMinutes, onSwitch }: La
           </div>
         )}
         {stale && snap && <div className="mt-1.5 text-[9.5px] text-ter">{staleStamp(snap.as_of, nowMinutes)}</div>}
-        {!active && (
+        {!active && account.pinned && (
+          <p className="mt-1.5 text-[10px] leading-relaxed text-ter">
+            Watched — signs in from its own folder, usage only. Move it into the fleet from Add
+            account to make it switchable.
+          </p>
+        )}
+        {!active && !account.pinned && (
           <button
             type="button"
             onClick={onSwitch}

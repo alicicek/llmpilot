@@ -211,16 +211,24 @@ func renderAccountPrivacy(ctx *Ctx, privacy bool) []Span {
 
 // --- usage --------------------------------------------------------------
 
-// usageBuckets picks what to render and the honesty age token — the classic
-// floor/stale semantics verbatim.
+// usageBuckets picks what to render and the honesty age token. The official
+// stdin rate_limits — live by definition, and only ever present for the
+// ACTIVE session — outrank the experimental endpoint's cache for the windows
+// they carry; the cache fills in everything else (the scoped weekly, unknown
+// kinds), wearing the age token once it is old enough to say so.
 func usageBuckets(ctx *Ctx) (buckets []store.Bucket, age string) {
 	ctx.resolve()
 	var floor []store.Bucket
-	if w := ctx.In.RateLimits.FiveHour; w != nil {
-		floor = append(floor, w.Bucket("five_hour", ctx.Loc))
-	}
-	if w := ctx.In.RateLimits.SevenDay; w != nil {
-		floor = append(floor, w.Bucket("seven_day", ctx.Loc))
+	// Floor guard: after a global swap an old session's stdin still carries
+	// the OUTGOING account's windows; attribute the floor only while this
+	// session's bound identity matches the dir's current one (floorguard.go).
+	if ctx.floorAllowed() {
+		if w := ctx.In.RateLimits.FiveHour; w != nil {
+			floor = append(floor, w.Bucket("five_hour", ctx.Loc))
+		}
+		if w := ctx.In.RateLimits.SevenDay; w != nil {
+			floor = append(floor, w.Bucket("seven_day", ctx.Loc))
+		}
 	}
 
 	snap := ctx.snap
@@ -230,33 +238,33 @@ func usageBuckets(ctx *Ctx) (buckets []store.Bucket, age string) {
 	}
 
 	switch {
-	case snap != nil && (cacheAge <= FloorAfter || len(floor) == 0):
-		// Cache speaks for everything (or nothing better exists).
+	case len(floor) > 0:
+		// Live official windows first; the cache keeps only the buckets the
+		// floor doesn't carry (a missing fast window still renders from
+		// cache — a stale reading with an age token beats a silent absence).
+		hasFive := ctx.In.RateLimits.FiveHour != nil
+		hasSeven := ctx.In.RateLimits.SevenDay != nil
+		var extras []store.Bucket
+		if snap != nil {
+			for _, b := range snap.Buckets {
+				replaced := (hasFive && (b.Kind == "session" || b.Kind == "five_hour")) ||
+					(hasSeven && (b.Kind == "weekly_all" || b.Kind == "seven_day"))
+				if !replaced {
+					extras = append(extras, b)
+				}
+			}
+		}
+		buckets = append(floor, extras...)
+		if len(extras) > 0 && cacheAge > AgeNoteAfter {
+			age = FormatAge(cacheAge)
+		}
+	case snap != nil:
+		// No live floor (an idle account's preview, a daemon-only render):
+		// the cache speaks for everything, honestly aged.
 		buckets = snap.Buckets
 		if cacheAge > AgeNoteAfter {
 			age = FormatAge(cacheAge)
 		}
-	case snap != nil:
-		// Stale cache + live floor: the floor owns the windows it actually
-		// carries; the cache keeps everything else (Fable weekly, unknown
-		// kinds — and a fast window the floor happens to be missing, since a
-		// stale reading with an age token beats a silently absent one).
-		hasFive := ctx.In.RateLimits.FiveHour != nil
-		hasSeven := ctx.In.RateLimits.SevenDay != nil
-		var extras []store.Bucket
-		for _, b := range snap.Buckets {
-			replaced := (hasFive && (b.Kind == "session" || b.Kind == "five_hour")) ||
-				(hasSeven && (b.Kind == "weekly_all" || b.Kind == "seven_day"))
-			if !replaced {
-				extras = append(extras, b)
-			}
-		}
-		buckets = append(floor, extras...)
-		if len(extras) > 0 {
-			age = FormatAge(cacheAge)
-		}
-	default:
-		buckets = floor
 	}
 	return buckets, age
 }

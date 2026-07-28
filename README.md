@@ -16,12 +16,14 @@ brew install --cask alicicek/tap/llmpilot # the menu bar app
 > **Signed & notarized by Apple** (Developer ID, Team `6UUS5FCSJ3`) — installs
 > with no Gatekeeper warning. **Zero telemetry. Your account tokens never leave
 > your Mac** — the cache holds only usage percentages and reset timestamps, and
-> the only network calls are to Anthropic. Open source, MIT.
+> account traffic goes only to Anthropic. Beyond that the app reaches the network
+> only for Sparkle updates (GitHub) and, on Pro, the licensing worker and
+> Stripe's hosted checkout. Open source, MIT.
 
-One daemon watches every account's real usage, keeps idle logins fresh, switches
-to the account with headroom before you hit a wall, and starts your 5-hour
-windows on schedule. Five thin surfaces over one brain: a native menu bar app, a
-local cockpit, a statusline, a CLI, and the autopilot itself.
+One daemon watches every account's real usage, switches to the account with
+headroom before you hit a wall, and starts your 5-hour windows on schedule.
+Five thin surfaces over one brain: a native menu bar app, a local cockpit, a
+statusline, a CLI, and the autopilot itself.
 
 Built for people who run more than one Claude Max plan and are tired of the
 `/login` dance, guessing which account has room left, and waking up to windows
@@ -36,8 +38,8 @@ a one-time £9.99 / $12.99, not a subscription.
 
 - **See every account at a glance.** Live usage for all your accounts — 5-hour,
   weekly, and per-model buckets — read straight from Anthropic's usage endpoint
-  with an honest "as of" timestamp. Idle accounts stay fresh, so the dashboard
-  never goes blind on the account you're about to switch to.
+  with an honest "as of" timestamp. When a login goes stale, the dashboard
+  shows the last-known numbers marked stale, never old numbers in live colors.
 - **Switch before the wall.** When the account you're on runs low, llmpilot
   switches you to one with headroom and tells you after — switch first, notify
   second. Credential writes are lock-first and backed up, so a switch never
@@ -45,6 +47,19 @@ a one-time £9.99 / $12.99, not a subscription.
 - **Start windows on time.** Schedule a fresh 5-hour window to open at a set
   time on a chosen account, so your overnight or early-morning capacity isn't
   wasted. It only *starts* a window; it never advances one you're already in.
+- **Bring every sign-in into the fleet.** `llmpilot init` registers the
+  accounts already signed in on your Mac. A sign-in living in its own folder
+  (`CLAUDE_CONFIG_DIR`) can be adopted as a watched account, or moved into the
+  fleet — backed up first, then made switchable — from the cockpit or the menu
+  bar. You can also sign in to a new account from inside the app, on
+  Anthropic's own page.
+- **Diagnose it honestly.** `llmpilot doctor` checks the fleet — duplicate
+  sign-ins, frozen logins, the refresh budget, unproven migrations, the
+  install — and names what is wrong, what it could not check, and the one
+  thing that fixes each finding. It only looks; it never writes.
+- **Keep a CI token.** `llmpilot token add/list/copy/remove` stores long-lived
+  headless tokens (the `claude setup-token` kind) in your Keychain. The only
+  way a token leaves it is an explicit `token copy` to the clipboard.
 - **Read it anywhere.** The same live state renders in the menu bar, a local
   cockpit window, a Claude Code statusline, and `llmpilot status`.
 
@@ -52,11 +67,22 @@ a one-time £9.99 / $12.99, not a subscription.
 
 ## How it works
 
-llmpilot is one Go binary. The **daemon** polls each account's usage (no more
-than once every 5 minutes per account, backing off on rate limits), caches
-percentages and reset times locally, and drives the autopilot. Every surface —
-menu bar, cockpit, statusline, CLI — reads that one daemon over a loopback
-socket. Nothing is duplicated, nothing disagrees.
+llmpilot is one Go binary. The **daemon** polls each account's usage — every
+3 minutes in steady state, never more than 28 requests per account per rolling
+hour, backing off on rate limits — caches percentages and reset times locally,
+and drives the autopilot. The menu bar, cockpit, and CLI read that one daemon
+over a loopback socket; the statusline reads the snapshots the daemon writes —
+asking the daemon for burn-rate history when it's up — inside its 50 ms render
+budget. Nothing is duplicated, nothing disagrees.
+
+llmpilot never runs a background token-refresh loop. It refreshes a login only
+when something needs it: about 10 minutes before a switch (yours or the
+autopilot's), when the autopilot revives a stale account, or when you sign in
+from the app. Refreshes
+are capped at 2 attempts per account per rolling 24 hours, and one rate-limit
+answer from the token endpoint pauses all refreshes for 24 hours. A login that
+goes stale anyway is shown stale — last-known numbers, marked — until a
+switch, a revive, or a re-login proves it live again.
 
 Credentials are Claude Code's own. llmpilot reads and writes the macOS Keychain
 item Claude Code already uses, under Claude Code's own lock files, so it
@@ -87,8 +113,9 @@ you later.
   worker that never sees a Claude token.
 - **No telemetry, ever.** Cache files hold usage percentages and reset
   timestamps only — never tokens.
-- **One optional network check:** a GET-only version check. Turn it off with
-  `LLMPILOT_NO_UPDATE_CHECK=1`.
+- **Updates:** the menu bar app checks a GitHub-hosted appcast via Sparkle
+  (GET only) and downloads updates from GitHub releases. The CLI never checks
+  for updates — Homebrew updates it.
 
 See [SECURITY.md](SECURITY.md) for the full model and how to report a
 vulnerability.

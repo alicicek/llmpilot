@@ -12,7 +12,7 @@ import (
 
 // The statusline endpoints exist for ONE property: the cockpit editor's live
 // preview runs the SAME Go renderer as the binary — never a JS mock
-// (preview==production, docs/research/CCSTATUSLINE-TEARDOWN.md).
+// (preview==production).
 
 // now is the daemon's clock (NowFn override or time.Now): the statusline
 // preview parity test and the refresh loop's expiry/backoff math share it.

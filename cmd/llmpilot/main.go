@@ -29,6 +29,7 @@ func rootCmd() *cobra.Command {
 	}
 	root.AddCommand(debugCmd(), switchCmd(), accountCmd(), daemonCmd(),
 		statusCmd(), accountsCmd(), statuslineCmd(), initCmd(),
-		scheduleCmd(), logCmd(), wakeCmd(), openCmd())
+		scheduleCmd(), logCmd(), wakeCmd(), openCmd(), doctorCmd(),
+		tokenCmd())
 	return root
 }

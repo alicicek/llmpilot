@@ -100,9 +100,9 @@ func TestSuggestLabel(t *testing.T) {
 	}
 
 	// an already-registered label always wins — init never renames
-	existing := []store.Account{{ID: "acct-x", Label: "keepcove", Email: "main@example.dev"}}
-	if got := SuggestLabel(byEmail["main@example.dev"], existing); got != "keepcove" {
-		t.Errorf("existing label: got %q, want keepcove", got)
+	existing := []store.Account{{ID: "acct-x", Label: "atlas", Email: "main@example.dev"}}
+	if got := SuggestLabel(byEmail["main@example.dev"], existing); got != "atlas" {
+		t.Errorf("existing label: got %q, want atlas", got)
 	}
 	// custom dirs suggest their suffix
 	if got := SuggestLabel(byEmail["alt@example.dev"], nil); got != "alt" {

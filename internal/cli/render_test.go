@@ -75,11 +75,11 @@ func TestFormatAge(t *testing.T) {
 
 func TestMaskEmail(t *testing.T) {
 	cases := map[string]string{
-		"ali@keepcove.app": "a***@k***",
-		"a@b.c":            "a***@b***",
-		"":                 "***",
-		"nodomain":         "***",
-		"@x":               "***",
+		"ali@example.dev": "a***@e***",
+		"a@b.c":           "a***@b***",
+		"":                "***",
+		"nodomain":        "***",
+		"@x":              "***",
 	}
 	for in, want := range cases {
 		if got := MaskEmail(in); got != want {
@@ -94,7 +94,7 @@ func TestRenderFleet(t *testing.T) {
 		ActiveID: "acct-1",
 		Accounts: []daemon.AccountState{
 			{
-				Account: store.Account{ID: "acct-1", Label: "keep", Email: "ali@keepcove.app"},
+				Account: store.Account{ID: "acct-1", Label: "keep", Email: "ali@example.dev"},
 				Snapshot: &store.UsageSnapshot{
 					AccountID: "acct-1", AsOf: now.Add(-2 * time.Minute),
 					Buckets: []store.Bucket{{Kind: "session", Percent: 23, ResetsAt: &reset}},
@@ -110,14 +110,14 @@ func TestRenderFleet(t *testing.T) {
 	RenderFleet(&sb, st, now, time.UTC)
 	out := sb.String()
 	for _, want := range []string{
-		"* keep", "a***@k***", "5h:23%(14:32)", "~2m",
+		"* keep", "a***@e***", "5h:23%(14:32)", "~2m",
 		"  alt", "no usage data yet", "token expired",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("fleet output missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "keepcove.app") {
+	if strings.Contains(out, "example.dev") {
 		t.Errorf("fleet output leaks a full email:\n%s", out)
 	}
 }

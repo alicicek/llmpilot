@@ -75,6 +75,8 @@ final class CockpitWindowController: NSWindowController, NSWindowDelegate, WKNav
     private var lastLoaded: URL?
     /// Injectable so tests never touch the real Keychain.
     var trialMarker: TrialMarkerStore = KeychainTrialMarker()
+    /// Injectable so the bridge wiring is testable without a webview.
+    var openLogin: () -> Void = { LoginWindowController.shared.open() }
 
     func open(url: URL) {
         origin = (url.host, url.port)
@@ -91,9 +93,12 @@ final class CockpitWindowController: NSWindowController, NSWindowDelegate, WKNav
             win.isReleasedWhenClosed = false
             win.delegate = self
             let config = WKWebViewConfiguration()
-            // The cockpit (NOT the checkout window) may host a message handler:
-            // the web signals a no-card-trial start so the native marker is set.
+            // The cockpit (NOT the checkout window) may host message handlers:
+            // the web signals a no-card-trial start so the native marker is
+            // set, and Add account opens the seamless native login window
+            // instead of the browser+paste fallback.
             config.userContentController.add(self, name: "trialMarker")
+            config.userContentController.add(self, name: "startLogin")
             let web = WKWebView(frame: win.contentView!.bounds, configuration: config)
             web.autoresizingMask = [.width, .height]
             web.navigationDelegate = self
@@ -151,8 +156,19 @@ final class CockpitWindowController: NSWindowController, NSWindowDelegate, WKNav
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        if message.name == "trialMarker", let body = message.body as? String, body == "nocard" {
+        handleScriptMessage(name: message.name, body: message.body)
+    }
+
+    /// The delegate's core, split out because WKScriptMessage cannot be
+    /// constructed in tests.
+    func handleScriptMessage(name: String, body: Any?) {
+        switch name {
+        case "trialMarker" where (body as? String) == "nocard":
             trialMarker.mark()
+        case "startLogin":
+            openLogin()
+        default:
+            break
         }
     }
 

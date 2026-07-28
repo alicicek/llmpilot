@@ -10,8 +10,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/alicicek/llmpilot/internal/anthropic"
 	"github.com/alicicek/llmpilot/internal/claudecfg"
 	"github.com/alicicek/llmpilot/internal/store"
 )
@@ -46,6 +48,7 @@ type swapJournal struct {
 	FromID       string    `json:"from_id"`
 	ToID         string    `json:"to_id"`
 	FromCredHash string    `json:"from_cred_hash"` // sha256 hex of the pre-swap credential
+	ToCredHash   string    `json:"to_cred_hash"`   // sha256 hex of the credential the swap was installing
 	StartedAt    time.Time `json:"started_at"`
 }
 
@@ -93,6 +96,12 @@ type Switcher struct {
 	// claudecfg.KeychainAccount()).
 	KeychainAccount string
 	LockTimeout     time.Duration
+
+	// ScanDirs enumerates the Claude Code config dirs the clone guard checks
+	// for a second live copy of a lineage (nil = this machine's home layout,
+	// see clones.go). Injected by tests so a sandbox can present dirs that do
+	// not live under the real home.
+	ScanDirs func() ([]string, error)
 }
 
 func (s *Switcher) logf(format string, args ...any) {
@@ -129,7 +138,11 @@ func (s *Switcher) backupsLockTimeout() time.Duration {
 }
 
 // SaveBackup captures an account's current credential + identity into
-// llmpilot's own Keychain service.
+// llmpilot's own Keychain service, and records the credential's fingerprint
+// in the index — in the same lock span as the write (every caller holds the
+// backups lock), so classification never consults an index the backups have
+// outrun. An index failure fails the save: a silently unindexed lineage
+// could later be classified foreign and stashed instead of backed up.
 func (s *Switcher) SaveBackup(ctx context.Context, accountID string, cred, oauthAccount json.RawMessage) error {
 	payload, err := json.Marshal(backupPayload{
 		Credential:   cred,
@@ -139,7 +152,10 @@ func (s *Switcher) SaveBackup(ctx context.Context, accountID string, cred, oauth
 	if err != nil {
 		return err
 	}
-	return s.Keychain.Set(ctx, BackupService, accountID, payload)
+	if err := s.Keychain.Set(ctx, BackupService, accountID, payload); err != nil {
+		return err
+	}
+	return s.indexBackup(anthropic.CredFingerprint(cred), accountID)
 }
 
 // LoadBackup reads an account's stored credential + identity.
@@ -242,7 +258,23 @@ func releaseLock(l *mutexLock) {
 //
 // The target's credential must already be in llmpilot's backups (captured at
 // add time or by a previous swap-away). No network happens under the locks.
-func (s *Switcher) Swap(ctx context.Context, target store.Account) (err error) {
+func (s *Switcher) Swap(ctx context.Context, target store.Account) error {
+	return s.swapTo(ctx, target, nil)
+}
+
+// loginInstall is a freshly minted credential (an in-app sign-in) handed to
+// swapTo in memory instead of loaded from backups.
+type loginInstall struct {
+	cred         json.RawMessage
+	oauthAccount json.RawMessage
+}
+
+// swapTo is Swap's core. When login is non-nil the target's credential comes
+// from the exchange result: it is saved to backups UNDER the same locks,
+// ordered AFTER the current-account backup — on a re-login to the active
+// account both writes hit the same backup key, and this order lets the fresh
+// lineage win (the old copy would otherwise clobber it).
+func (s *Switcher) swapTo(ctx context.Context, target store.Account, login *loginInstall) (err error) {
 	if s.Dir.Path() == "" {
 		return errors.New("switcher: no config dir")
 	}
@@ -267,11 +299,14 @@ func (s *Switcher) Swap(ctx context.Context, target store.Account) (err error) {
 	// missing backup. This copy is an existence check ONLY: it is re-loaded
 	// under the locks below, because keep-warm may rotate the backup between
 	// here and the install (the pre-lock copy would be a dead lineage).
-	if _, _, err := s.LoadBackup(ctx, target.ID); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("account %q has no stored credential — run `llmpilot account add` while logged into it first", target.Label)
+	// A login install carries its credential with it — nothing to check.
+	if login == nil {
+		if _, _, err := s.LoadBackup(ctx, target.ID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("account %q has no stored credential — run `llmpilot account add` while logged into it first", target.Label)
+			}
+			return err
 		}
-		return err
 	}
 
 	// From here on the swap must not be killable by a disconnecting caller
@@ -322,9 +357,15 @@ func (s *Switcher) Swap(ctx context.Context, target store.Account) (err error) {
 	} else if j != nil {
 		s.logf("incomplete swap found (started %s, %s → %s) — recovering",
 			j.StartedAt.UTC().Format(time.RFC3339), j.FromID, j.ToID)
-		if curCred != nil && credHash(curCred) != j.FromCredHash {
-			// The keychain write of the dead swap landed: the live credential
-			// is the TARGET's (possibly rotated since). Store it under its
+		liveHash := ""
+		if curCred != nil {
+			liveHash = credHash(curCred)
+		}
+		switch {
+		case liveHash != "" && j.ToCredHash != "" && liveHash == j.ToCredHash:
+			// The target write provably LANDED (exact hash match) — an
+			// incomplete swap never makes the target active, so the target
+			// credential can only be present unrotated. Store it under its
 			// true owner, preserving that owner's identity block.
 			_, toOAuth, lerr := s.LoadBackup(ctx, j.ToID)
 			if lerr != nil {
@@ -333,48 +374,97 @@ func (s *Switcher) Swap(ctx context.Context, target store.Account) (err error) {
 			if err := s.SaveBackup(ctx, j.ToID, curCred, toOAuth); err != nil {
 				return fmt.Errorf("recovery: backing up live credential under %q: %w", j.ToID, err)
 			}
-			s.logf("recovery: live credential attributed to %s by hash — backup updated", j.ToID)
+			s.logf("recovery: live credential matches the target hash — attributed to %s", j.ToID)
 			curID = j.ToID
 			skipBackup = true
-		} else {
-			// Hash unchanged → the dead swap never wrote the keychain. Trust
-			// the journal's attribution over the (editable) config identity.
+		case liveHash == j.FromCredHash:
+			// Unchanged → the dead swap never wrote the keychain. Trust the
+			// journal's attribution over the (editable) config identity.
 			curID = j.FromID
 			s.logf("recovery: live credential still belongs to %s (hash unchanged)", j.FromID)
+		default:
+			// AMBIGUOUS: the live credential matches NEITHER the pre-swap From
+			// hash NOR the target hash — a rotation happened while the swap was
+			// dead and its ownership cannot be proven (a subprocess-error swap
+			// whose write never landed, then the outgoing session refreshed;
+			// or a landed-then-rotated target after a failed rollback). The old
+			// heuristic "!= FromCredHash ⇒ it's the target's" would poison the
+			// target's backup with the outgoing credential (Codex review P1,
+			// 2026-07-25). Never guess: PRESERVE the live credential in the
+			// stash (the answer to unknown-ownership credentials) and
+			// overwrite no existing backup. curID stays "" and skipBackup
+			// suppresses the classify block below.
+			if len(curCred) > 0 {
+				if err := s.stashForeign(ctx, curCred, curOAuth); err != nil {
+					return fmt.Errorf("recovery: preserving an unattributable live credential: %w", err)
+				}
+				s.logf("recovery: live credential matches neither hash — preserved in the stash, no backup overwritten")
+			}
+			skipBackup = true
 		}
 		if err := s.clearJournal(ctx); err != nil {
 			return err
 		}
 	}
 
+	// Classify the outgoing credential before anything overwrites it — under
+	// the same lock span as the whole mutation (a pre-lock read once cloned
+	// one grant into two copies). Identity outranks fingerprint: the email
+	// resolves first, and only an email-less/unregistered credential consults
+	// the fingerprint index (see classify.go). Unknown → append-only stash;
+	// a failed stash write ABORTS the swap with the slot untouched.
 	if curID == "" {
 		curID = s.matchAccountID(curEmail)
+	}
+	if len(curCred) > 0 && !skipBackup { // an empty/absent slot is the empty-alien case: nothing to preserve
 		if curID == "" {
-			curID = "unmatched-" + sanitizeID(curEmail)
-			if curCred != nil {
-				s.logf("current account not in registry — backing up as %q", curID)
+			curID = s.resolveByFingerprint(ctx, curCred)
+			if curID != "" {
+				s.logf("classify: outgoing credential matched %s by fingerprint", curID)
+			}
+		}
+		if curID != "" {
+			if err := s.SaveBackup(ctx, curID, curCred, curOAuth); err != nil {
+				return fmt.Errorf("backing up current account before swap: %w", err)
+			}
+			s.logf("backup saved: %s → %s/%s", orUnknown(curEmail), BackupService, curID)
+		} else {
+			if err := s.stashForeign(ctx, curCred, curOAuth); err != nil {
+				return fmt.Errorf("outgoing credential is not a registered account's and could not be stashed — aborting before any overwrite: %w", err)
 			}
 		}
 	}
-	if curCred != nil && !skipBackup {
-		if err := s.SaveBackup(ctx, curID, curCred, curOAuth); err != nil {
-			return fmt.Errorf("backing up current account before swap: %w", err)
+
+	// Resolve the credential to install. A login install persists its fresh
+	// mint to backups NOW (the very next duty after the exchange) and uses it
+	// directly. Otherwise re-load the target's backup UNDER the locks, AFTER
+	// journal recovery (which may itself have rewritten backups[target] when
+	// the dead swap's target was this one) — between the pre-lock existence
+	// check and here, keep-warm (serialized by the backups lock we now hold)
+	// may have rotated this backup; installing the pre-lock copy would
+	// install a dead refresh-token lineage.
+	var targetCred, targetOAuth json.RawMessage
+	if login != nil {
+		if err := s.SaveBackup(ctx, target.ID, login.cred, login.oauthAccount); err != nil {
+			return fmt.Errorf("persisting the fresh sign-in credential: %w", err)
 		}
-		s.logf("backup saved: %s → %s/%s", orUnknown(curEmail), BackupService, curID)
+		s.logf("fresh sign-in credential persisted: %s/%s (%s)", BackupService, target.ID, redact(login.cred))
+		targetCred, targetOAuth = login.cred, login.oauthAccount
+	} else {
+		targetCred, targetOAuth, err = s.LoadBackup(ctx, target.ID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("account %q has no stored credential — run `llmpilot account add` while logged into it first", target.Label)
+			}
+			return err
+		}
 	}
 
-	// Re-load the target's backup UNDER the locks, AFTER journal recovery
-	// (which may itself have rewritten backups[target] when the dead swap's
-	// target was this one). Between the pre-lock existence check and here,
-	// keep-warm — serialized by the backups lock we now hold — may have
-	// rotated this backup; installing the pre-lock copy would install a dead
-	// refresh-token lineage.
-	targetCred, targetOAuth, err := s.LoadBackup(ctx, target.ID)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("account %q has no stored credential — run `llmpilot account add` while logged into it first", target.Label)
-		}
-		return err
+	// CAS: never install a credential that is empty or does not parse — an
+	// empty overwrite is the #76905 blanking class, and the verify below
+	// must never be able to "pass" on empty==empty.
+	if _, err := anthropic.ParseOAuthCred(targetCred); err != nil {
+		return fmt.Errorf("refusing to install target credential for %q: %w", target.Label, err)
 	}
 
 	// Journal BEFORE the mutation: if we die between the two writes, the
@@ -383,26 +473,58 @@ func (s *Switcher) Swap(ctx context.Context, target store.Account) (err error) {
 		FromID:       curID,
 		ToID:         target.ID,
 		FromCredHash: credHash(curCred),
+		ToCredHash:   credHash(targetCred),
 		StartedAt:    time.Now().UTC(),
 	}); err != nil {
 		return fmt.Errorf("writing swap journal: %w", err)
 	}
 
-	// Install the target credential, then splice the identity.
+	// Install the target credential, cohere the credentials file, then
+	// splice the identity. Each step's failure unwinds the ones before it.
 	if err := s.Keychain.Set(ctx, ccService, s.account(), targetCred); err != nil {
-		_ = s.clearJournal(ctx) // nothing was written; pre-swap state intact
+		// Clear the journal ONLY when the write provably never ran; a
+		// subprocess error may have landed the write before a SIGKILL, so
+		// keep the journal for the next swap's hash-based recovery (review
+		// P2, 2026-07-25).
+		if errors.Is(err, ErrWriteNotAttempted) {
+			_ = s.clearJournal(ctx)
+		}
 		return err
 	}
 	s.logf("credential installed: service %q, %s", ccService, redact(targetCred))
+	prevCredFile, credFileWrote, err := s.spliceCredentialsFile(s.Dir, targetCred)
+	if err != nil {
+		return s.rollback(ctx, ccService, curCred, fmt.Errorf("credentials file splice failed: %w", err))
+	}
 	if err := spliceOAuthAccount(cfgPath, targetOAuth); err != nil {
+		if credFileWrote {
+			if rerr := s.restoreCredentialsFile(s.Dir, prevCredFile); rerr != nil {
+				// The credentials file still holds the TARGET credential while
+				// we are unwinding — do NOT claim coherence or clear the
+				// journal. Roll the keychain back but keep the journal so the
+				// next swap self-recovers (review P2, 2026-07-25).
+				s.logf("rollback: credentials file restore also failed: %v", rerr)
+				var restoreErr error
+				if len(curCred) > 0 { // an empty slot is restored by Delete, not an empty Set (Set's own CAS refuses it)
+					restoreErr = s.Keychain.Set(ctx, ccService, s.account(), curCred)
+				} else {
+					restoreErr = s.Keychain.Delete(ctx, ccService, s.account())
+				}
+				return fmt.Errorf("oauthAccount splice failed: %w; credentials file left holding the target credential and could not be restored (%v); keychain restore err=%v — swap journal kept for recovery", err, rerr, restoreErr)
+			}
+		}
 		return s.rollback(ctx, ccService, curCred, fmt.Errorf("oauthAccount splice failed: %w", err))
 	}
 	s.logf("oauthAccount spliced: %s → %s", orUnknown(curEmail), orUnknown(oauthEmail(targetOAuth)))
 
-	// Verify both writes landed before declaring success.
+	// Verify both writes landed before declaring success. An EMPTY read-back
+	// fails outright — emptiness matching emptiness is not a verification.
 	gotCred, err := s.Keychain.Get(ctx, ccService)
 	if err != nil {
 		return fmt.Errorf("verify: keychain read-back failed (swap journal kept for recovery): %w", err)
+	}
+	if len(gotCred) == 0 {
+		return errors.New("verify: keychain read-back is empty (swap journal kept for recovery)")
 	}
 	if !jsonEqual(gotCred, targetCred) {
 		return errors.New("verify: keychain read-back does not match the installed credential (swap journal kept for recovery)")
@@ -426,7 +548,10 @@ func (s *Switcher) Swap(ctx context.Context, target store.Account) (err error) {
 // failure the journal stays so the next swap recovers attribution by hash.
 func (s *Switcher) rollback(ctx context.Context, ccService string, curCred []byte, cause error) error {
 	var restoreErr error
-	if curCred != nil {
+	// A genuinely empty pre-swap slot is restored by DELETE, not by an empty
+	// Set — the latter is refused by Set's own CAS and would falsely report a
+	// failed rollback (review P2, 2026-07-25).
+	if len(curCred) > 0 {
 		restoreErr = s.Keychain.Set(ctx, ccService, s.account(), curCred)
 	} else {
 		restoreErr = s.Keychain.Delete(ctx, ccService, s.account())
@@ -449,7 +574,11 @@ func (s *Switcher) matchAccountID(email string) string {
 		return ""
 	}
 	for _, a := range accs {
-		if a.Email == email {
+		// Case-insensitive, matching the daemon's own registered check: an
+		// email that differs only in case is the SAME account, and resolving
+		// it to a fresh ID would fork both the registry row and the backup
+		// key.
+		if strings.EqualFold(a.Email, email) {
 			return a.ID
 		}
 	}

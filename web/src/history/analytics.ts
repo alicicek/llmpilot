@@ -87,11 +87,11 @@ export const fixtureAnalytics: Analytics = {
   cells: DAYS.flatMap((day, i) => [
     cell("alex", "llmpilot", "claude-fable-5", day, 2.1 + i * 0.4),
     cell("alex", "llmpilot", "claude-sonnet-5", day, 1.2 + i * 0.15),
-    cell("alex", "keepcove", "claude-opus-4-8", day, 0.8),
+    cell("alex", "atlas", "claude-opus-4-8", day, 0.8),
     cell("kai", "llmpilot", "claude-fable-5", day, 1.4 + i * 0.2),
     cell("kai", "fleet-research", "claude-opus-4-8", day, 0.9),
-    cell("mira", "keepcove", "claude-sonnet-5", day, 0.6),
-    cell("mira", "keepcove", "claude-haiku-4-5", day, 0.3),
+    cell("mira", "atlas", "claude-sonnet-5", day, 0.6),
+    cell("mira", "atlas", "claude-haiku-4-5", day, 0.3),
     cell("", "scratch", "claude-sonnet-5", day, 0.15),
   ]),
 };

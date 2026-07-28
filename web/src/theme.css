@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /*
- * llmpilot tokens — design/DESIGN-SYSTEM.md ("Native Instrument") §Tokens.
+ * llmpilot tokens — the "Native Instrument" design system.
  * Source of truth for every color/size the cockpit uses; the vendored
  * exemplar (design/reference/schedule-mockup.html:24-59) carries the same
  * values. Light is :root, dark swaps the custom properties (FACE-SWAP move:

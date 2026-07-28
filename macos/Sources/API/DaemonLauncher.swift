@@ -4,6 +4,17 @@ import Foundation
 /// find the CLI, `daemon install`, `launchctl bootout` + `bootstrap` —
 /// exactly what the CLI itself prints as the manual path.
 enum DaemonLauncher {
+    /// $HOME-first home resolution, matching the CLI's os.UserHomeDir — on
+    /// macOS 26 both NSHomeDirectory() and homeDirectoryForCurrentUser ignore
+    /// $HOME (verified), so a sandboxed run would otherwise split the plist
+    /// path between the app and `daemon install`.
+    static func userHome() -> String {
+        if let env = ProcessInfo.processInfo.environment["HOME"], !env.isEmpty {
+            return env
+        }
+        return NSHomeDirectory()
+    }
+
     static func findBinary() -> String? {
         if let env = ProcessInfo.processInfo.environment["LLMPILOT_BIN"],
            FileManager.default.isExecutableFile(atPath: env) {
@@ -29,8 +40,8 @@ enum DaemonLauncher {
             return "llmpilot CLI not found — install it first, then relaunch"
         }
         if let err = run(bin, ["daemon", "install"]) { return err }
-        let plist = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/dev.llmpilot.daemon.plist").path
+        let plist = userHome()
+            + "/Library/LaunchAgents/dev.llmpilot.daemon.plist"
         // Legacy `launchctl load` silently no-ops on an already-loaded or
         // disabled agent; bootout (failure ignored — usually just "not
         // loaded") then bootstrap restarts it deterministically.

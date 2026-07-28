@@ -2,6 +2,7 @@ package pilotapi
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -38,6 +39,26 @@ type UsageSnapshot struct {
 	AccountID string    `json:"account_id"`
 	AsOf      time.Time `json:"as_of"`
 	Buckets   []Bucket  `json:"buckets"`
+}
+
+// ErrStashConflict marks an adopt refused because the account already holds
+// a backup of a DIFFERENT (newer) lineage — installing the stash payload
+// over it would destroy the account's only good copy (adversarial review
+// P0, 2026-07-25). Shared here so the daemon can map it to a 409 without
+// importing the switcher.
+var ErrStashConflict = errors.New("stash conflict")
+
+// StashEntry is one preserved foreign credential as served in /v1/state —
+// metadata only, never the payload. A swap that finds an unknown credential
+// in the global slot preserves it here instead of guessing an owner; the
+// user adopts it into the fleet or discards it. Dead marks a lineage the
+// token endpoint has provably rejected: adopting it requires a fresh
+// sign-in, never a silent resurrect.
+type StashEntry struct {
+	Fingerprint string    `json:"fingerprint"`
+	Label       string    `json:"label,omitempty"`
+	StashedAt   time.Time `json:"stashed_at"`
+	Dead        bool      `json:"dead,omitempty"`
 }
 
 // Event is one line in the append-only event log at $LLMPILOT_HOME/

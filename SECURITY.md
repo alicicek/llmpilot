@@ -4,9 +4,11 @@
 
 - llmpilot runs entirely on your Mac.
 - Your Claude tokens never leave the machine. There is no telemetry.
-- The only outbound traffic is to Anthropic's own endpoints (the same ones
-  Claude Code uses), to a licensing worker for Pro (which never sees a Claude
-  token), and one optional version check you can turn off.
+- The only requests llmpilot itself makes are to Anthropic's own endpoints
+  (the same ones Claude Code uses), to the licensing worker for Pro (which
+  never sees a Claude token), and — in the menu bar app only — a Sparkle
+  update check against GitHub. Signing in and buying Pro each open a hosted
+  web page (Anthropic's sign-in, Stripe's checkout) in an app window.
 
 ## What llmpilot touches
 
@@ -14,7 +16,12 @@
   Code already stores. It does so under Claude Code's own lock files, so it
   cooperates with a running `claude` session rather than racing its token
   refresh. Credential writes are lock-first, backed up, and verified, so an
-  interrupted switch cannot corrupt a login.
+  interrupted switch cannot corrupt a login. llmpilot also keeps items of its
+  own in your login keychain: per-account credential backups and kept foreign
+  sign-ins under the `llmpilot-backups` service, and long-lived setup tokens
+  (the `llmpilot token` verbs) under `llmpilot-setup-tokens`. None of these
+  ever leave the machine; the only egress any verb offers is an explicit
+  `token copy` to the clipboard.
 - **`~/.claude.json` and per-account config dirs** — read for identity, written
   only to switch the active account (atomic, tempfile + rename).
 - **Local cache under `$LLMPILOT_HOME`** (default `~/.llmpilot`) — usage
@@ -29,13 +36,16 @@
 | To | Why | Carries a token? |
 |----|-----|------------------|
 | `api.anthropic.com` (usage / profile) | read your usage | your own Claude access token, over TLS |
-| `platform.claude.com` (OAuth token) | keep idle logins fresh (Pro/keep-warm) | your own refresh token, over TLS |
-| the licensing worker | Pro purchase and entitlement | never a Claude token |
-| version check (GET only) | notify you of updates | no |
+| `platform.claude.com` (OAuth token) | refresh a login when something needs it: ~10 min before a switch (yours or the autopilot's), an autopilot revive of a stale account, or an in-app sign-in — never a background loop; at most 2 attempts per account per 24 h, and any 429 pauses all refreshes for 24 h | your own refresh token (or a one-time authorization code), over TLS |
+| `claude.com` (hosted sign-in page) | only when you sign in from the app — you authenticate on Anthropic's own page; llmpilot never sees your password | no |
+| `api.llmpilot.dev` (the licensing worker) | Pro purchase and entitlement | never a Claude token |
+| `checkout.stripe.com` / `llmpilot.dev` (checkout window) | only when you buy Pro — Stripe's hosted checkout in an app window | never a Claude token |
+| `github.com` (menu bar app only) | Sparkle update check (GET) and update downloads | no |
 
 The Anthropic endpoints are the same ones Claude Code itself calls; llmpilot
-sends your credential there and nowhere else. The version check is off in CI and
-can be disabled with `LLMPILOT_NO_UPDATE_CHECK=1`.
+sends your credential there and nowhere else. The sign-in and checkout rows
+are embedded web pages — like any web page, they load what Anthropic's and
+Stripe's pages embed. The CLI and daemon perform no update check.
 
 ## Undocumented surfaces
 

@@ -154,7 +154,7 @@ func TestScanCorruptCacheSelfHeals(t *testing.T) {
 	}
 }
 
-// TestScanPerfThousandFiles is the wave's cache perf gate: ~1k synthetic
+// TestScanPerfThousandFiles is the cache perf gate: ~1k synthetic
 // files, warm scan must reuse every one of them without re-parsing.
 func TestScanPerfThousandFiles(t *testing.T) {
 	cfg := t.TempDir()

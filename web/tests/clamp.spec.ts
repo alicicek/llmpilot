@@ -2,9 +2,8 @@ import { test, expect } from "@playwright/test";
 import { clampMove, canBookAt } from "../src/board/clamp.ts";
 import { MIN_GAP_MIN, DAY_MIN, SNAP_MIN } from "../src/schedule.ts";
 
-// Unit coverage for the 5h15 circular-spacing physics — the enforcement
-// mechanism for a stated wave requirement (verifier P2, 2026-07-10). Pure
-// node tests; no browser.
+// Unit coverage for the 5h15 circular-spacing physics — the mechanism that
+// enforces the minimum spacing between windows. Pure node tests; no browser.
 
 const GAP = MIN_GAP_MIN; // 315
 

@@ -63,8 +63,9 @@ Segments render in config order; anything without data hides honestly.
 `burn`, `fleet`, `rotation`, and `autopilot` are daemon-backed — segments a
 stateless statusline script cannot render.
 
-The honesty rules carry over: a cache older than 2 min gets a dim `~4m`
-age token; past 10 min the live stdin floor replaces the fast windows.
+The honesty rules carry over: the live stdin `rate_limits` always own the
+fast windows they carry (they only exist for the active session); buckets
+rendered from the daemon cache get a dim `~4m` age token past 2 min.
 
 ## Config file
 

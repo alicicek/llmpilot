@@ -12,7 +12,13 @@ import (
 // independently absent — stdin-first data with graceful absence, teardown
 // requiredFields pattern).
 type Payload struct {
-	Model struct {
+	// SessionID is Claude Code's stable per-session identifier ("Unique
+	// session ID", schema re-verified against the 2.1.220 binary + docs,
+	// 2026-07-25). It is the floor guard's key: stdin rate_limits belong to
+	// the SESSION's account, which a global swap can divorce from the config
+	// dir's current identity.
+	SessionID string `json:"session_id"`
+	Model     struct {
 		ID          string `json:"id"`
 		DisplayName string `json:"display_name"`
 	} `json:"model"`

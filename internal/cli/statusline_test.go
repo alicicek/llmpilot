@@ -231,7 +231,7 @@ func TestStatuslineColorPaintsWarningAndDimsAge(t *testing.T) {
 	}
 }
 
-// realisticSetup mirrors the owner's machine: a ~200KB .claude.json and a
+// realisticSetup mirrors a real machine: a ~200KB .claude.json and a
 // four-account fleet, so the benchmark and the 50ms assertion measure the
 // real read+parse cost, not a toy.
 func realisticSetup(t testing.TB) StatuslineOptions {
@@ -264,7 +264,7 @@ func realisticSetup(t testing.TB) StatuslineOptions {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Production shape (verifier P2): the pilot preset exercises the fleet
+	// Production shape: the pilot preset exercises the fleet
 	// segments, width collapse runs, and the daemon-backed sources are wired
 	// (stubs — the E2E budget check covers the real socket).
 	samples := make([]statusline.Sample, 60)
@@ -272,8 +272,14 @@ func realisticSetup(t testing.TB) StatuslineOptions {
 		samples[i] = statusline.Sample{At: now.Add(time.Duration(i-60) * time.Minute), Percent: float64(i)}
 	}
 	pilot := statusline.PresetByID("pilot")
+	// A session_id on stdin puts the P2 floor-guard binding read (one small
+	// file under $LLMPILOT_HOME) on the measured path — the 50ms budget is
+	// proven WITH the guard, not around it.
+	stdin := []byte(fmt.Sprintf(`{"session_id":"bench-sess-1","rate_limits":{"five_hour":{"used_percentage":23,"resets_at":%d}}}`,
+		time.Date(2026, 7, 8, 14, 32, 0, 0, time.UTC).Unix()))
 	return StatuslineOptions{
 		Store: st, Dir: claudecfg.DirAt(dirPath), Now: now, Loc: time.UTC,
+		Stdin:  stdin,
 		Config: pilot.Config, Width: 120,
 		History:  func(_, _, _ string) []statusline.Sample { return samples },
 		DaemonUp: func() bool { return true },

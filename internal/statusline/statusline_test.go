@@ -472,3 +472,39 @@ func TestCommandSegmentPreviewNeverExecutes(t *testing.T) {
 		t.Errorf("preview should show the command placeholder: %q", got)
 	}
 }
+
+// TestStdinFloorOutranksFreshCache pins the active-account priority: the
+// official stdin rate_limits own the windows they carry even when the
+// endpoint cache is FRESH — the cache only fills in the buckets the floor
+// doesn't know (the scoped weekly), with no age token while young.
+func TestStdinFloorOutranksFreshCache(t *testing.T) {
+	ctx := fixtureCtx(t, TierPlain)
+	// Fresh cache that DISAGREES with stdin on the fast window.
+	buckets := proofBuckets()
+	buckets[0].Percent = 99 // cache says the session window is nearly gone
+	if err := ctx.Store.SaveSnapshot(&store.UsageSnapshot{
+		AccountID: "acct-2", AsOf: now.Add(-30 * time.Second), Buckets: buckets,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, age := usageBuckets(ctx)
+	var five *store.Bucket
+	scoped := false
+	for i := range got {
+		switch got[i].Kind {
+		case "five_hour", "session":
+			five = &got[i]
+		case "weekly_scoped":
+			scoped = true
+		}
+	}
+	if five == nil || five.Percent != 23 {
+		t.Fatalf("fast window = %+v, want the stdin floor's 23%% over the cache's 99%%", five)
+	}
+	if !scoped {
+		t.Fatal("cache-exclusive scoped weekly must still render alongside the floor")
+	}
+	if age != "" {
+		t.Fatalf("age token = %q, want none for a 30s-old cache", age)
+	}
+}

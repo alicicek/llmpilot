@@ -55,3 +55,40 @@ func TestWriteLaunchAgentRejectsRelativeBinary(t *testing.T) {
 		t.Fatal("relative binary path accepted")
 	}
 }
+
+// The sandbox env pinning is gated on LLMPILOT_TEST: test runs embed the
+// redirections (a launchd daemon gets a clean env otherwise and would
+// resolve the real home), production plists carry no env block at all.
+func TestWriteLaunchAgentPinsSandboxEnvOnlyUnderTest(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.plist")
+
+	t.Setenv("LLMPILOT_TEST", "1")
+	t.Setenv("LLMPILOT_HOME", "/tmp/sandbox-home")
+	if err := WriteLaunchAgent(path, "/usr/local/bin/llmpilot", dir); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "EnvironmentVariables") ||
+		!strings.Contains(string(b), "/tmp/sandbox-home") {
+		t.Fatalf("test-mode plist missing sandbox env pinning:\n%s", b)
+	}
+	if out, err := exec.Command("plutil", "-lint", path).CombinedOutput(); err != nil {
+		t.Fatalf("plutil -lint: %v\n%s", err, out)
+	}
+
+	t.Setenv("LLMPILOT_TEST", "")
+	if err := WriteLaunchAgent(path, "/usr/local/bin/llmpilot", dir); err != nil {
+		t.Fatal(err)
+	}
+	b, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "EnvironmentVariables") {
+		t.Fatalf("production plist must not embed environment:\n%s", b)
+	}
+}

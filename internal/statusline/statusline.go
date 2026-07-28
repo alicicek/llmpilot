@@ -2,8 +2,7 @@
 // a registry of renderable segments, display tiers (plain/16/256/truecolor),
 // width-aware collapse, and the statusline.json config that drives both the
 // binary and the cockpit editor. The daemon's GET /v1/statusline/preview runs
-// this exact renderer — preview==production is the trust property
-// (docs/research/CCSTATUSLINE-TEARDOWN.md, adopt list).
+// this exact renderer — preview==production is the trust property.
 //
 // The zero-config default renders the classic line byte-for-byte; a config
 // file only ever adds.
@@ -40,7 +39,7 @@ type Config struct {
 // same stdin Claude Code sends us and prints its output ABOVE the llmpilot
 // line (Claude Code renders multi-line statuslines). Set by
 // `llmpilot statusline install --keep`; ecosystem precedent: ccstatusline's
-// custom-command widget wrapping ccusage (docs/research/STATUSLINE-UX.md).
+// custom-command widget wrapping ccusage.
 type KeepConfig struct {
 	Command string `json:"command"`
 }

@@ -128,6 +128,13 @@ func spliceOAuthAccount(path string, oauthAccount json.RawMessage) error {
 		return err
 	}
 	if oauthAccount == nil {
+		// CAS: a nil splice over a live identity would blank .claude.json's
+		// oauthAccount — and the swap's verify (empty==empty) would then pass
+		// over the hole. A backup that carries no identity block must not
+		// erase one; the identity keeps describing whoever was last known.
+		if cur, ok := doc["oauthAccount"]; ok && len(cur) > 0 && string(cur) != "null" {
+			return errors.New("splice: refusing to blank a non-empty oauthAccount with an identity-less target")
+		}
 		delete(doc, "oauthAccount")
 	} else {
 		doc["oauthAccount"] = oauthAccount

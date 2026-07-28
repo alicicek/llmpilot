@@ -26,6 +26,11 @@ var guardedRoutes = []struct {
 	{http.MethodPost, "/v1/license/recover", `{"email":"a@example.com"}`},
 	{http.MethodPost, "/v1/license/recover/claim", `{"token":"tok"}`},
 	{http.MethodPost, "/v1/license/marker", `{"present":true}`},
+	{http.MethodPost, "/v1/login/start", `{}`},
+	{http.MethodPost, "/v1/login/complete", `{"code":"c","state":"s"}`},
+	{http.MethodPost, "/v1/login/browser", `{}`},
+	{http.MethodPost, "/v1/stash/adopt", `{"fingerprint":"sha256:x"}`},
+	{http.MethodPost, "/v1/stash/discard", `{"fingerprint":"sha256:x"}`},
 }
 
 func doAuthed(t *testing.T, method, url, body, token string) (*http.Response, string) {

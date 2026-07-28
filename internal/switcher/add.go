@@ -121,27 +121,34 @@ func (s *Switcher) AddAccount(ctx context.Context, dir claudecfg.Dir, label stri
 		ConfigDir:       dir.Path(),
 		KeychainService: dir.KeychainService(),
 	}
-	if s.Registry != nil {
-		accs, err := s.Registry.Accounts()
-		if err != nil {
-			return nil, err
-		}
-		replaced := false
-		for i, a := range accs {
-			if a.ID == id {
-				accs[i] = res.Account
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			accs = append(accs, res.Account)
-		}
-		if err := s.Registry.SaveAccounts(accs); err != nil {
-			return nil, err
-		}
+	if err := s.registerAccount(res.Account); err != nil {
+		return nil, err
 	}
 	return res, nil
+}
+
+// registerAccount upserts one account into the registry by ID. A nil
+// registry (throwaway test switchers) is a no-op.
+func (s *Switcher) registerAccount(acct store.Account) error {
+	if s.Registry == nil {
+		return nil
+	}
+	accs, err := s.Registry.Accounts()
+	if err != nil {
+		return err
+	}
+	replaced := false
+	for i, a := range accs {
+		if a.ID == acct.ID {
+			accs[i] = acct
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		accs = append(accs, acct)
+	}
+	return s.Registry.SaveAccounts(accs)
 }
 
 func labelFromEmail(email string) string {

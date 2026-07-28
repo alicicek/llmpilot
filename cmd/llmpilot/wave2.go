@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -39,6 +39,24 @@ func sandboxUsageURL() string {
 		return ""
 	}
 	return os.Getenv("LLMPILOT_USAGE_URL")
+}
+
+// sandboxLoginTokenURL / sandboxProfileURL let sandbox runs point the in-app
+// sign-in's exchange and identity fetch at fixture servers. Honored ONLY
+// under LLMPILOT_TEST (the anthropic adapter additionally refuses its
+// production hosts under LLMPILOT_TEST — two independent layers).
+func sandboxLoginTokenURL() string {
+	if os.Getenv("LLMPILOT_TEST") == "" {
+		return ""
+	}
+	return os.Getenv("LLMPILOT_TOKEN_URL")
+}
+
+func sandboxProfileURL() string {
+	if os.Getenv("LLMPILOT_TEST") == "" {
+		return ""
+	}
+	return os.Getenv("LLMPILOT_PROFILE_URL")
 }
 
 // entitlementBaseURL is the entitlement worker origin. Production hits the
@@ -213,7 +231,7 @@ func accountCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Fprintf(out, "no refresh for %s: %s (token %s)\n",
-				target.Label, res.Skipped, fmtExpiry(before))
+				target.Label, refreshSkipReason(res.Skipped), fmtExpiry(before))
 			return nil
 		},
 	}
@@ -263,21 +281,6 @@ func newDaemon(st *store.Store) *daemon.Daemon {
 		Expiry: func(ctx context.Context, a store.Account) (time.Time, error) {
 			return daemonExpirySource(sw, a, activeEmail()).Expiry(ctx)
 		},
-		Refresh: func(ctx context.Context, a store.Account) error {
-			// Delegated: run `claude auth status` under the ACCOUNT'S config
-			// dir — CLAUDE_CONFIG_DIR steers which keychain entry the CLI
-			// touches. Read-only in CC 2.1.205 — refreshIdle verifies the
-			// expiry moved and surfaces an honest note when it didn't.
-			cmd := exec.CommandContext(ctx, "claude", "auth", "status", "--json")
-			if a.ConfigDir != "" {
-				// strip any inherited pin first: getenv takes the FIRST
-				// duplicate, so append-only env could refresh the wrong
-				// account (review P1-1, same trap as the trigger fire path).
-				cmd.Env = append(envWithout(os.Environ(), "CLAUDE_CONFIG_DIR"),
-					"CLAUDE_CONFIG_DIR="+a.ConfigDir)
-			}
-			return cmd.Run()
-		},
 		Active: func(context.Context) string {
 			email := activeEmail()
 			if email == "" {
@@ -317,45 +320,55 @@ func newDaemon(st *store.Store) *daemon.Daemon {
 	if swErr == nil {
 		sw.Out = os.Stderr // swap transcripts go to the daemon log, not the API
 		kwOpts := keepWarmOpts(ver)
-		d.Switch = func(ctx context.Context, id string) error {
-			target, err := findAccount(st, id)
+		// ONE switch implementation, two closures: the user's (reserve 0) and
+		// the autopilot's (reserve 1). Reserve belongs to the CALLER's intent,
+		// not to one code path — before P4 only the revive closure set it, so
+		// the autopilot's non-stale rotations still spent the user's slots.
+		swapFn := func(ctx context.Context, a store.Account) error { return sw.Swap(ctx, a) }
+		d.Switch = switchCloser(st, sw.KeepWarm, swapFn, d.QuarantineDeadLineage, kwOpts, 0)
+		d.AutoSwitch = switchCloser(st, sw.KeepWarm, swapFn, d.QuarantineDeadLineage, kwOpts, 1)
+		d.MovedDirs = sw.MovedDirs
+		d.MoveIntoFleet = func(ctx context.Context, det detect.Detected, label string) (daemon.MoveResult, error) {
+			res, err := sw.MoveIntoFleet(ctx, det.Dir, label)
 			if err != nil {
-				return err
+				return daemon.MoveResult{}, err
 			}
-			// Switch-time freshen: if the target's stored token is already
-			// near expiry, refresh it now so the switch lands a live
-			// credential. A TRANSIENT failure never blocks the switch (the
-			// engine no-ops when the token is fresh, and Swap re-reads the
-			// backup under its locks either way). A DEAD lineage does block
-			// it: installing a credential we know cannot refresh would strand
-			// the user on an unauthorized session — and becoming active would
-			// clear the honest "sign-in expired" note (Codex P2, 2026-07-16).
-			if _, err := sw.KeepWarm(ctx, target, kwOpts); err != nil {
-				if errors.Is(err, switcher.ErrLineageDead) {
-					return fmt.Errorf("account %q: sign-in expired — log in to it again, then `llmpilot account add`", target.Label)
-				}
-				slog.Warn("switch-time freshen", "account", target.ID, "err", err)
-			}
-			return sw.Swap(ctx, target)
+			return daemon.MoveResult{
+				Account:      res.Account,
+				CloneSuspect: res.Outcome == switcher.MoveCloneSuspect,
+				Note:         res.Note,
+			}, nil
 		}
+		d.Revive = reviveSwitch(
+			func(id string) (store.Account, error) { return findAccount(st, id) },
+			sw.KeepWarm,
+			func(ctx context.Context, a store.Account) error { return sw.Swap(ctx, a) },
+			d.QuarantineDeadLineage,
+			kwOpts,
+		)
 		d.Freshen = func(ctx context.Context, a store.Account) (bool, error) {
 			return sw.FreshenBackup(ctx, switcher.Identity{ID: a.ID, Email: a.Email})
 		}
-		d.KeepWarm = func(ctx context.Context, a store.Account) (daemon.KeepWarmStatus, error) {
-			res, err := sw.KeepWarm(ctx, a, kwOpts)
-			if errors.Is(err, switcher.ErrLineageDead) {
-				return daemon.KeepWarmStatus{Dead: true, Fingerprint: res.Fingerprint, Expiry: res.Expiry}, nil
-			}
+		d.StartupSweep = sw.SweepLegacyUnmatched
+		d.StashList = func(context.Context) ([]pilotapi.StashEntry, error) {
+			entries, err := sw.StashEntries()
 			if err != nil {
-				return daemon.KeepWarmStatus{}, err
+				return nil, err
 			}
-			return daemon.KeepWarmStatus{Rotated: res.Rotated, Fingerprint: res.Fingerprint, Expiry: res.Expiry}, nil
+			out := make([]pilotapi.StashEntry, 0, len(entries))
+			for _, e := range entries {
+				out = append(out, pilotapi.StashEntry{Fingerprint: e.Fingerprint, Label: e.Label, StashedAt: e.StashedAt})
+			}
+			return out, nil
 		}
-		d.Fingerprint = func(ctx context.Context, a store.Account) (string, error) {
-			return sw.Fingerprint(ctx, a)
-		}
+		d.StashAdopt = sw.AdoptStash
+		d.StashDiscard = sw.DiscardStash
 		d.Pinned = accountIsPinned
+		wireLogin(d, st, sw, ver)
 	}
+	// The health sweep's local readers — the same gatherer `llmpilot doctor`
+	// uses when no daemon answers, so both surfaces report one truth.
+	d.DoctorReaders = doctorReaders(st, sw)
 	// Autopilot rotation: ON by default, tuned by config.json. A corrupt
 	// config is surfaced loudly and falls back to defaults — the brain never
 	// dies over a settings file. The engine itself is build-selected: source
@@ -445,17 +458,6 @@ func activeEmail() string {
 	return acct.EmailAddress
 }
 
-// envWithout returns env minus every entry for key.
-func envWithout(env []string, key string) []string {
-	kept := make([]string, 0, len(env))
-	for _, e := range env {
-		if !strings.HasPrefix(e, key+"=") {
-			kept = append(kept, e)
-		}
-	}
-	return kept
-}
-
 func tokenSourceFor(a store.Account) anthropic.TokenSource {
 	svc := a.KeychainService
 	if svc == "" {
@@ -523,13 +525,116 @@ func daemonExpirySource(sw *switcher.Switcher, a store.Account, activeEmail stri
 	return expirySourceFor(a)
 }
 
+// freshenSkippedMessage is the honest budget/breaker-skip event line. Present
+// tense — the event is appended before Swap runs and must not claim a switch
+// that may still fail.
+func freshenSkippedMessage(reason string) string {
+	return "Switching on the stored sign-in — " + reason
+}
+
+// refreshSkipIsNews reports whether a withheld freshen is worth an event.
+// The benign "not near expiry" no-op is not; a paused breaker, a spent
+// budget, and BOTH clone-guard refusals are — the guard accepts a
+// false-positive class by design, so a silent skip is how a fleet goes
+// quietly cold. Matching rides the engine's stable Reason* constants.
+func refreshSkipIsNews(skipped string) bool {
+	for _, r := range []string{
+		switcher.ReasonRefreshPaused,
+		switcher.ReasonBudgetExhausted,
+		switcher.ReasonLineageElsewhere,
+		switcher.ReasonCloneSuspect,
+		switcher.ReasonRecordUnreadable,
+	} {
+		if strings.Contains(skipped, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// refreshSkipReason rewrites the engine's skip strings into caller-neutral
+// user copy: no caller-specific consequence clauses, no raw Go durations
+// (24h0m0s) — VOICE.md binds every surface these strings reach (review P3
+// P1-1). Matching rides the engine's stable Reason* constants, never full
+// rendered strings.
+func refreshSkipReason(skipped string) string {
+	switch {
+	case strings.Contains(skipped, switcher.ReasonBudgetExhausted):
+		return "its refresh budget is spent for now"
+	case strings.Contains(skipped, switcher.ReasonRefreshPaused):
+		return "refreshes are paused after a rate limit"
+	case strings.Contains(skipped, switcher.ReasonLineageElsewhere):
+		return "it is signed in in another folder too, and refreshing one copy would end the other"
+	case strings.Contains(skipped, switcher.ReasonCloneSuspect):
+		return "a second copy of this sign-in may still exist — sign in to the account again to clear it"
+	case strings.Contains(skipped, switcher.ReasonRecordUnreadable):
+		return "llmpilot cannot read its own record of this account right now"
+	default:
+		return skipped
+	}
+}
+
+// reviveSwitch builds d.Revive: the strict autopilot switch for STALE
+// targets. Unlike d.Switch's best-effort freshen, the refresh runs with a
+// FORCED lead — the target's token is known-expired or 401-suspect, so "not
+// near expiry" is meaningless and the account must be proven live or dead,
+// never installed on looks — and the swap proceeds ONLY on a proven
+// rotation. Skips (budget exhausted, breaker open, no refresh token) and
+// transient failures return daemon.ErrReviveNotProven so the rotation holds;
+// dead lineage quarantines and rotation-not-persisted aborts, exactly like
+// the best-effort path. Budget and breaker still govern the forced POST —
+// the lead override widens WHEN a refresh is due, never WHETHER it may run.
+func reviveSwitch(
+	find func(id string) (store.Account, error),
+	keepWarm func(ctx context.Context, a store.Account, opts switcher.KeepWarmOpts) (switcher.KeepWarmResult, error),
+	swap func(ctx context.Context, a store.Account) error,
+	quarantine func(ctx context.Context, id, fingerprint string),
+	base switcher.KeepWarmOpts,
+) daemon.Switcher {
+	return func(ctx context.Context, id string) error {
+		target, err := find(id)
+		if err != nil {
+			return err
+		}
+		opts := base
+		opts.RefreshLead = 1000 * time.Hour // forced: attempt regardless of how far off expiry is
+		// An unattended revive must never spend the user's last refresh slot
+		// (re-review NEW-1): reserve one, so at most 1 of the 2/24h POSTs is
+		// ever autopilot-spent and the user's own switch-time freshen keeps
+		// a slot.
+		opts.BudgetReserve = 1
+		res, err := keepWarm(ctx, target, opts)
+		if err != nil {
+			if errors.Is(err, switcher.ErrLineageDead) {
+				quarantine(ctx, target.ID, res.Fingerprint)
+				return fmt.Errorf("account %q: sign-in expired — log in to it again, then `llmpilot account add`", target.Label)
+			}
+			if errors.Is(err, switcher.ErrRotationNotPersisted) {
+				return fmt.Errorf("account %q: its token was refreshed but the result could not be stored — switch aborted so a stale credential is never installed; retry in a moment: %w", target.Label, err)
+			}
+			return fmt.Errorf("%w: %v", daemon.ErrReviveNotProven, err)
+		}
+		if !res.Rotated {
+			// The budget-class skip needs revive-specific copy: with the
+			// reserve, "exhausted" here means the AUTOPILOT's share is spent
+			// — the user's own switch can still refresh (review N2).
+			why := refreshSkipReason(res.Skipped)
+			if strings.Contains(res.Skipped, switcher.ReasonBudgetExhausted) {
+				why = "its autopilot refresh slot is spent for now — switching to it yourself can still refresh it"
+			}
+			return fmt.Errorf("%w: %s", daemon.ErrReviveNotProven, why)
+		}
+		return swap(ctx, target)
+	}
+}
+
 // keepWarmOpts builds the direct-refresh options: a RefreshClient that speaks
 // the OAuth token endpoint (confined to internal/anthropic) with the same
 // User-Agent the usage poller sends. The endpoint/client_id live in the
 // adapter; here we only inject the call.
 func keepWarmOpts(ver string) switcher.KeepWarmOpts {
 	return switcher.KeepWarmOpts{
-		RefreshLead: daemon.DefaultRefreshLead,
+		RefreshLead: daemon.SwitchRefreshLead,
 		Refresh: func(ctx context.Context, refreshToken string) (anthropic.RefreshResult, error) {
 			rc := &anthropic.RefreshClient{
 				BaseURL:   sandboxRefreshURL(),
@@ -596,6 +701,12 @@ func daemonCmd() *cobra.Command {
 			if errors.Is(err, context.Canceled) {
 				return nil
 			}
+			if errors.Is(err, daemon.ErrAlreadyRunning) {
+				// Exit 0: under launchd's KeepAlive SuccessfulExit=false a
+				// non-zero exit here would respawn-loop the losing copy.
+				fmt.Fprintln(cmd.OutOrStdout(), "daemon already running — nothing to do")
+				return nil
+			}
 			return err
 		},
 	}
@@ -628,4 +739,172 @@ func daemonCmd() *cobra.Command {
 	}
 	cmd.AddCommand(run, install, daemonStatusCmd())
 	return cmd
+}
+
+// switchCloser builds a daemon switch closure. reserve is how many of the
+// account's 2/24h refresh slots the switch-time freshen must leave alone: 0
+// for a user-initiated switch, 1 for an unattended autopilot rotation.
+func switchCloser(
+	st *store.Store,
+	keepWarm func(ctx context.Context, a store.Account, opts switcher.KeepWarmOpts) (switcher.KeepWarmResult, error),
+	swap func(ctx context.Context, a store.Account) error,
+	quarantine func(ctx context.Context, id, fingerprint string),
+	base switcher.KeepWarmOpts,
+	reserve int,
+) daemon.Switcher {
+	kwOpts := base
+	kwOpts.BudgetReserve = reserve
+	return func(ctx context.Context, id string) error {
+		target, err := findAccount(st, id)
+		if err != nil {
+			return err
+		}
+		// A pinned account can never be swapped into the global slot (Swap
+		// refuses it — one grant cloned into two live copies kills both on
+		// the next rotation). Refuse BEFORE the freshen below: a provably
+		// doomed switch must spend no refresh budget and take no dir lock.
+		if accountIsPinned(target) {
+			return fmt.Errorf("%s signs in from its own folder (%s), so llmpilot watches it instead of switching to it — move it into the fleet to make it switchable",
+				target.Label, target.ConfigDir)
+		}
+		// Switch-time freshen: if the target's stored token is already
+		// near expiry, refresh it now so the switch lands a live
+		// credential. It runs BEFORE Swap takes the CC dir locks — no
+		// network under the global dir's CC locks on the swap path; Swap
+		// re-reads the backup under them. Failure classes split three
+		// ways (Codex P2 2026-07-16 + P2 finding #8):
+		//   - TRANSIENT (429/network/5xx) → proceed un-freshened.
+		//   - DEAD lineage → quarantine + block (installing a credential
+		//     that provably cannot refresh strands the user).
+		//   - ROTATED-BUT-NOT-STORED → ABORT: the server-side rotation
+		//     made the stored token stale; installing it while reporting
+		//     "switched" is the worst outcome.
+		// Budget/breaker skips surface as res.Skipped — the swap always
+		// proceeds, honestly un-freshened.
+		res, kwErr := keepWarm(ctx, target, kwOpts)
+		if kwErr != nil {
+			if errors.Is(kwErr, switcher.ErrLineageDead) {
+				// The switch-time freshen and the autopilot revive are the
+				// only places a dead lineage is discoverable: record it so
+				// polls skip the account and autopilot stops re-nominating
+				// it every rotation cooldown.
+				quarantine(ctx, target.ID, res.Fingerprint)
+				return fmt.Errorf("account %q: sign-in expired — log in to it again, then `llmpilot account add`", target.Label)
+			}
+			if errors.Is(kwErr, switcher.ErrRotationNotPersisted) {
+				return fmt.Errorf("account %q: its token was refreshed but the result could not be stored — switch aborted so a stale credential is never installed; retry in a moment: %w", target.Label, kwErr)
+			}
+		}
+		// A skipped/failed freshen still proceeds — even on an expired
+		// access token: the refresh LINEAGE is live (dead lineage aborted
+		// above) and Claude Code refreshes the installed credential on
+		// first use, outside llmpilot's budget (TOKEN-KEEP-WARM.md). The
+		// P3 re-review reverted a hard refusal here (NEW-1: it turned a
+		// single 429 or a drained budget into a 24h lockout of the user's
+		// own switch); the budget drain itself is prevented at the source
+		// instead — the revive reserves the user's last slot
+		// (KeepWarmOpts.BudgetReserve).
+		if kwErr != nil {
+			slog.Warn("switch-time freshen failed (transient) — proceeding un-freshened", "account", target.ID, "err", kwErr)
+		} else if res.Skipped != "" {
+			slog.Info("switch-time freshen skipped", "account", target.ID, "reason", res.Skipped)
+			// The budget/breaker withheld the freshen — the swap still
+			// proceeds on the stored token, but say so honestly (the
+			// ledger's "honest note") so a paused breaker is visible in the
+			// fleet feed, not only the daemon log. Switches are
+			// user-initiated and infrequent, so one event per skip is not
+			// noise; only the paused/exhausted classes surface — the benign
+			// "not near expiry" skip is the common no-op.
+			if refreshSkipIsNews(res.Skipped) {
+				// Present tense on purpose: this lands BEFORE Swap runs,
+				// and the swap can still fail — the event must never
+				// claim a switch that hasn't happened (P3 audit nit).
+				if err := st.AppendEvent(store.Event{Kind: "freshen_skipped", AccountID: target.ID,
+					Message: freshenSkippedMessage(refreshSkipReason(res.Skipped))}); err != nil {
+					slog.Warn("append freshen_skipped event", "err", err)
+				}
+			}
+		}
+		return swap(ctx, target)
+	}
+}
+
+// wireLogin wires the in-app sign-in surface (POST /v1/login/*). The daemon
+// keeps the PKCE verifier; the exchange + identity fetch run BEFORE
+// InstallLogin so no network ever happens under the credential locks.
+func wireLogin(d *daemon.Daemon, st *store.Store, sw *switcher.Switcher, ver string) {
+	// The new account lands on the GLOBAL dir
+	// (swappable) through the same switcher every other write uses.
+	d.LoginMint = func() (state, verifier, challenge string, err error) {
+		pk, err := anthropic.NewPKCE()
+		if err != nil {
+			return "", "", "", err
+		}
+		st, err := anthropic.NewLoginState()
+		if err != nil {
+			return "", "", "", err
+		}
+		return st, pk.Verifier, pk.Challenge, nil
+	}
+	d.LoginURL = func(challenge, state, redirectURI string) (string, error) {
+		if redirectURI == "" {
+			redirectURI = anthropic.LoginRedirectURI // hosted callback (webview / paste)
+		}
+		return anthropic.AuthorizeURL(challenge, state, redirectURI)
+	}
+	d.LoginComplete = func(ctx context.Context, code, state, verifier, redirectURI string) (store.Account, error) {
+		if redirectURI == "" {
+			redirectURI = anthropic.LoginRedirectURI
+		}
+		lc := &anthropic.LoginClient{
+			TokenBaseURL:   sandboxLoginTokenURL(),
+			ProfileBaseURL: sandboxProfileURL(),
+			UserAgent:      "claude-code/" + ver,
+		}
+		res, err := lc.Exchange(ctx, code, state, verifier, redirectURI)
+		if err != nil {
+			// A 429 is the token endpoint rate-limiting refreshes/exchanges
+			// (transient, not a bad code) — surface it as such instead of a
+			// raw "HTTP 429" so the UI can say "wait a moment and retry".
+			var ee *anthropic.ExchangeError
+			if errors.As(err, &ee) && ee.StatusCode == 429 {
+				// Feed the refresh breaker: an exchange 429 is a
+				// token-endpoint 429 observation (scope unverified, so
+				// freshens pause globally). Read-only — the login flow's
+				// own behavior is unchanged.
+				sw.NoteTokenEndpoint429(ctx)
+				return store.Account{}, errors.New("the sign-in server is rate-limited right now — wait a minute and try again")
+			}
+			return store.Account{}, err
+		}
+		// Identity: the profile endpoint is the CLI's own source; the
+		// exchange response's account block is the fallback. Without
+		// either, fail closed — a blank fleet entry helps nobody, and
+		// the discarded lineage costs only a repeated sign-in.
+		ident := struct {
+			AccountUUID      string `json:"accountUuid"`
+			EmailAddress     string `json:"emailAddress"`
+			OrganizationUUID string `json:"organizationUuid,omitempty"`
+			DisplayName      string `json:"displayName,omitempty"`
+		}{}
+		if p, perr := lc.FetchProfile(ctx, res.AccessToken); perr == nil {
+			ident.AccountUUID, ident.EmailAddress = p.AccountUUID, p.EmailAddress
+			ident.OrganizationUUID, ident.DisplayName = p.OrgUUID, p.DisplayName
+		} else if res.Identity.EmailAddress != "" {
+			slog.Warn("profile fetch failed — using the exchange identity", "err", perr)
+			ident.AccountUUID, ident.EmailAddress = res.Identity.AccountUUID, res.Identity.EmailAddress
+			ident.OrganizationUUID = res.Identity.OrgUUID
+		} else {
+			return store.Account{}, fmt.Errorf("signed in, but the account identity could not be read: %w", perr)
+		}
+		cred, err := anthropic.MintOAuthCred(res)
+		if err != nil {
+			return store.Account{}, err
+		}
+		oauthRaw, err := json.Marshal(ident)
+		if err != nil {
+			return store.Account{}, err
+		}
+		return sw.InstallLogin(ctx, cred, oauthRaw)
+	}
 }

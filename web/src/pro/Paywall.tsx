@@ -147,8 +147,9 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
     <section className="mx-auto mt-14 w-[460px] max-w-[92vw]">
       <h2 className="text-[16px] font-semibold">{copy.headline}</h2>
       <p className="mt-2 text-[12.5px] leading-relaxed text-sec">
-        The autopilot switches accounts before you hit a wall, keeps idle windows fresh, and fires
-        your scheduled nudges — so you never lose your place mid-thought.
+        The autopilot switches accounts before you hit a wall, revives a stale account once a
+        refresh proves it live, and fires your scheduled nudges — so you never lose your place
+        mid-thought.
       </p>
 
       <div className="mt-4 rounded-[11px] border border-hair bg-panel p-4">

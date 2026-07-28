@@ -2,7 +2,7 @@ package daemon
 
 // Demo mode (LLMPILOT_DEMO=1) serves a masked, launch-quality fleet so
 // onboarding can show the product working before any account is registered, and
-// so W9 README media and W10 site media render from ONE source. It is read-only:
+// so README media and site media render from ONE source. It is read-only:
 // no Keychain, no network, no launchd — the daemon seeds a throwaway store and
 // leaves Fetch/Switch/Wake nil.
 

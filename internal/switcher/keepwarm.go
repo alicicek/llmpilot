@@ -1,11 +1,11 @@
 package switcher
 
-// Keep-warm: proactively refresh an IDLE account's OAuth token in place so the
-// dashboard keeps polling its usage and the autopilot can fail over to it —
+// Keep-warm: refresh an account's OAuth token in place — at switch lead time
+// or when the autopilot revives a stale account, never on a timer — so the
+// dashboard can keep reading its usage and the autopilot can fail over to it,
 // without ever making a model call (no 5h-window advance) and without racing
-// Claude Code's own refresh. It is the credential-write half of Wave 8.3;
-// docs/research/TOKEN-KEEP-WARM.md is the ground truth for the endpoint and
-// the rotation/clobber hazard.
+// Claude Code's own refresh. The endpoint's behaviour and the rotation/clobber
+// hazard below were verified against live captures.
 //
 // The refresh token ROTATES on every successful POST — the old one dies
 // server-side. So rotation + persist must be atomic against every other
@@ -94,6 +94,11 @@ type KeepWarmOpts struct {
 	Refresh     TokenRefresher
 	RefreshLead time.Duration    // refresh only when the token expires within this
 	Now         func() time.Time // nil = time.Now
+	// BudgetReserve is how many of the account's refresh slots this caller
+	// leaves untouched. Unattended callers (the autopilot revive) pass 1 so
+	// they can never spend the user's last slot; user-initiated callers
+	// leave it 0.
+	BudgetReserve int
 }
 
 func (o KeepWarmOpts) now() time.Time {
@@ -208,8 +213,16 @@ func (s *Switcher) keepWarmBackup(ctx context.Context, acct store.Account, opts 
 	if live != nil && anthropic.CredFingerprint(live) == fp {
 		return skipResult("backup is the live credential", fp, time.Time{}), nil
 	}
+	// Clone guard (attribute-only, clones.go): a lineage signed into a config
+	// dir outside the fleet — or one a partial retirement could not prove
+	// gone — must never be rotated, because the rotation would kill the copy
+	// we cannot see. The global-live check above only covers the fleet's own
+	// slot; this covers every other dir on the machine.
+	if reason, skip := s.lineageLiveElsewhere(ctx, acct); skip {
+		return skipResult(reason, fp, time.Time{}), nil
+	}
 
-	res, _, err := s.rotate(ctx, cred, fp, opts,
+	res, _, err := s.rotate(ctx, acct.ID, cred, fp, opts,
 		func(ctx context.Context, spliced []byte) error {
 			return s.SaveBackup(ctx, acct.ID, spliced, oauthRaw)
 		},
@@ -285,7 +298,7 @@ func (s *Switcher) keepWarmPinned(ctx context.Context, acct store.Account, opts 
 		got, _, err := s.readPinnedFrom(ctx, dir, service, fromFile)
 		return got, err
 	}
-	res, spliced, err := s.rotate(ctx, blob, fp, opts, write, verify)
+	res, spliced, err := s.rotate(ctx, acct.ID, blob, fp, opts, write, verify)
 	if err != nil || !res.Rotated {
 		return res, err
 	}
@@ -307,10 +320,14 @@ func (s *Switcher) keepWarmPinned(ctx context.Context, acct store.Account, opts 
 }
 
 // rotate is the refresh core shared by both modes: re-check expiry under the
-// caller's lock, POST, splice preserving unknown fields, persist via write,
-// verify the read-back. write/verify target the mode's canonical copy.
+// caller's lock, charge the refresh budget, POST, splice preserving unknown
+// fields, persist via write, verify the read-back. write/verify target the
+// mode's canonical copy. Budget + breaker live HERE so every caller — swap
+// freshen, CLI `account refresh`, future autopilot — is governed by
+// construction, never by each call site remembering to check.
 func (s *Switcher) rotate(
 	ctx context.Context,
+	accountID string,
 	blob []byte,
 	fp string,
 	opts KeepWarmOpts,
@@ -321,6 +338,7 @@ func (s *Switcher) rotate(
 	if err != nil {
 		return KeepWarmResult{Fingerprint: fp}, nil, err
 	}
+	// Early returns: no POST is issued, so none of these charge the budget.
 	if cur.ExpiresAt.IsZero() {
 		return skipResult("no stored expiry", fp, time.Time{}), nil, nil
 	}
@@ -331,9 +349,26 @@ func (s *Switcher) rotate(
 		return skipResult("no refresh token", fp, cur.ExpiresAt), nil, nil
 	}
 
+	// Budget + breaker gate, charged only when a POST will actually go out.
+	// An exhausted budget or open breaker is a SKIP, never an error — the
+	// swap proceeds un-freshened with an honest note.
+	reason, allowed, err := s.chargeRefreshAttempt(ctx, accountID, opts.now(), opts.BudgetReserve)
+	if err != nil {
+		return KeepWarmResult{Fingerprint: fp, Expiry: cur.ExpiresAt}, nil, err
+	}
+	if !allowed {
+		return skipResult(reason, fp, cur.ExpiresAt), nil, nil
+	}
+
 	res, err := opts.Refresh(ctx, cur.RefreshToken)
 	if err != nil {
 		var re *anthropic.RefreshError
+		if errors.As(err, &re) && re.StatusCode == 429 {
+			// Throttle scope is unverified (lineage vs account vs IP): trip
+			// GLOBALLY — pausing every account costs nothing, probing a
+			// forming machine-level throttle can cost an account.
+			s.NoteTokenEndpoint429(ctx)
+		}
 		if errors.As(err, &re) && re.Permanent() {
 			return KeepWarmResult{Fingerprint: fp, Expiry: cur.ExpiresAt}, nil,
 				fmt.Errorf("%w: %v", ErrLineageDead, err)
@@ -341,22 +376,24 @@ func (s *Switcher) rotate(
 		return KeepWarmResult{Fingerprint: fp, Expiry: cur.ExpiresAt}, nil, err
 	}
 
+	// From here the server has ALREADY rotated: the old refresh token is
+	// dead server-side, so any failure to store the result leaves the
+	// stored token known-stale — the ErrRotationNotPersisted class the
+	// switch path must abort on.
 	spliced, err := anthropic.SpliceOAuthCred(blob, res)
 	if err != nil {
-		return KeepWarmResult{Fingerprint: fp}, nil, err
+		return KeepWarmResult{Fingerprint: fp}, nil, fmt.Errorf("%w: splice: %v", ErrRotationNotPersisted, err)
 	}
 	if err := write(ctx, spliced); err != nil {
-		// The server already rotated; if the write failed the stored token is
-		// now stale and the next pass will surface invalid_grant honestly.
-		return KeepWarmResult{Fingerprint: fp}, nil, fmt.Errorf("keep-warm persist: %w", err)
+		return KeepWarmResult{Fingerprint: fp}, nil, fmt.Errorf("%w: persist: %v", ErrRotationNotPersisted, err)
 	}
 	got, err := verify(ctx)
 	if err != nil {
-		return KeepWarmResult{Fingerprint: fp}, nil, fmt.Errorf("keep-warm verify read-back: %w", err)
+		return KeepWarmResult{Fingerprint: fp}, nil, fmt.Errorf("%w: verify read-back: %v", ErrRotationNotPersisted, err)
 	}
 	gotCred, err := anthropic.ParseOAuthCred(got)
 	if err != nil || gotCred.AccessToken != res.AccessToken {
-		return KeepWarmResult{Fingerprint: fp}, nil, errors.New("keep-warm verify: read-back does not match the rotated credential")
+		return KeepWarmResult{Fingerprint: fp}, nil, fmt.Errorf("%w: read-back does not match the rotated credential", ErrRotationNotPersisted)
 	}
 	return KeepWarmResult{
 		Rotated:     true,

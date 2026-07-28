@@ -11,16 +11,31 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/alicicek/llmpilot/internal/analytics"
 	"github.com/alicicek/llmpilot/internal/claudecfg"
 	"github.com/alicicek/llmpilot/internal/detect"
 	"github.com/alicicek/llmpilot/internal/store"
+	"github.com/alicicek/llmpilot/internal/switcher"
+	"github.com/alicicek/llmpilot/pilotapi"
 )
 
 // SocketPath is the unix socket under one llmpilot home.
 func SocketPath(home string) string { return filepath.Join(home, "daemon.sock") }
+
+// LockFilePath is the single-instance flock file under one llmpilot home.
+// The file is created once and never unlinked — removing a locked path would
+// let a later starter lock a fresh inode and serve alongside the holder.
+func LockFilePath(home string) string { return filepath.Join(home, "daemon.lock") }
+
+// ErrAlreadyRunning reports a start against a home whose exclusive lock a
+// live daemon already holds. Callers treat it as success (exit 0): the
+// launchd KeepAlive SuccessfulExit=false contract must not respawn-loop a
+// second copy, and both the app-bundled agent and `daemon install` funnel
+// through this same guard.
+var ErrAlreadyRunning = errors.New("daemon already running")
 
 // PortFilePath is where the daemon persists its 127.0.0.1 port.
 func PortFilePath(home string) string { return filepath.Join(home, "daemon.port") }
@@ -37,8 +52,16 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/schedules", d.handleScheduleCreate)
 	mux.HandleFunc("PUT /v1/schedules/{id}", d.handleScheduleUpdate)
 	mux.HandleFunc("DELETE /v1/schedules/{id}", d.handleScheduleDelete)
+	mux.HandleFunc("GET /v1/doctor", d.handleDoctor)
 	mux.HandleFunc("GET /v1/detect", d.handleDetect)
 	mux.HandleFunc("POST /v1/adopt", d.handleAdopt)
+	mux.HandleFunc("POST /v1/adopt/move", d.handleAdoptMove)
+	mux.HandleFunc("POST /v1/stash/adopt", d.handleStashAdopt)
+	mux.HandleFunc("POST /v1/stash/discard", d.handleStashDiscard)
+	mux.HandleFunc("POST /v1/login/start", d.handleLoginStart)
+	mux.HandleFunc("POST /v1/login/complete", d.handleLoginComplete)
+	mux.HandleFunc("POST /v1/login/browser", d.handleLoginBrowser)
+	mux.HandleFunc("GET /v1/login/browser/status", d.handleLoginBrowserStatus)
 	mux.HandleFunc("GET /v1/config", d.handleConfigGet)
 	mux.HandleFunc("PUT /v1/config", d.handleConfigPut)
 	mux.HandleFunc("GET /v1/history", d.handleHistory)
@@ -89,6 +112,12 @@ func requireJSON(w http.ResponseWriter, r *http.Request) bool {
 		httpError(w, http.StatusUnsupportedMediaType, errors.New("Content-Type must be application/json"))
 		return false
 	}
+	// Bound the request body: every JSON body this daemon accepts is small
+	// (an id, a fingerprint, a schedule). 64KiB is generous headroom without
+	// letting a local caller stream an unbounded body into a Decode (review
+	// note: the daemon had no MaxBytesReader anywhere). Loopback + token
+	// guarded, so this is defense-in-depth, not a security boundary.
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	return true
 }
 
@@ -159,12 +188,195 @@ func (d *Daemon) handleSwitch(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, errors.New(`body must be {"account_id": "<id>"}`))
 		return
 	}
+	// Refuse a pinned target HERE, before d.Switch runs its switch-time
+	// freshen: the swap is provably doomed (Swap refuses pinned accounts
+	// outright), and a doomed action must spend no refresh budget and take no
+	// config-dir lock. The copy states what the account is for — keeping an
+	// account in its own folder is a choice, not a mistake.
+	if d.Pinned != nil {
+		if acct, ok := d.accountByID(req.AccountID); ok && d.Pinned(acct) {
+			httpError(w, http.StatusConflict, fmt.Errorf(
+				"%s signs in from its own folder (%s), so llmpilot watches it instead of switching to it — move it into the fleet to make it switchable",
+				acct.Label, acct.ConfigDir))
+			return
+		}
+	}
 	if err := d.Switch(r.Context(), req.AccountID); err != nil {
 		httpError(w, http.StatusConflict, err)
 		return
 	}
+	// A swap may have preserved an unknown credential — surface it as an
+	// event before the state push carries the new stash entry.
+	d.noteNewStashEntries(r.Context())
 	d.notify(r.Context())
 	writeJSON(w, http.StatusOK, map[string]string{"switched_to": req.AccountID})
+}
+
+// accountByID looks one registered account up by ID.
+func (d *Daemon) accountByID(id string) (store.Account, bool) {
+	accs, err := d.Store.Accounts()
+	if err != nil {
+		d.Log.Warn("load accounts", "err", err)
+		return store.Account{}, false
+	}
+	for _, a := range accs {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return store.Account{}, false
+}
+
+// baselineStash records the current stash fingerprints WITHOUT events —
+// entries that already existed when the daemon started are not news.
+func (d *Daemon) baselineStash(ctx context.Context) {
+	if d.StashList == nil {
+		return
+	}
+	entries, err := d.StashList(ctx)
+	if err != nil {
+		return
+	}
+	d.mu.Lock()
+	d.knownStash = map[string]bool{}
+	for _, e := range entries {
+		d.knownStash[e.Fingerprint] = true
+	}
+	d.mu.Unlock()
+}
+
+// noteNewStashEntries appends one event per stash entry not seen before
+// (kind=stash) and refreshes the known set. Runs after a switch and after
+// the startup sweep — the two stash producers.
+func (d *Daemon) noteNewStashEntries(ctx context.Context) {
+	if d.StashList == nil {
+		return
+	}
+	entries, err := d.StashList(ctx)
+	if err != nil {
+		d.Log.Warn("read stash", "err", err)
+		return
+	}
+	d.mu.Lock()
+	if d.knownStash == nil {
+		d.knownStash = map[string]bool{}
+	}
+	var fresh []pilotapi.StashEntry
+	seen := map[string]bool{}
+	for _, e := range entries {
+		seen[e.Fingerprint] = true
+		if !d.knownStash[e.Fingerprint] {
+			fresh = append(fresh, e)
+		}
+	}
+	d.knownStash = seen
+	d.mu.Unlock()
+	for _, e := range fresh {
+		who := e.Label
+		if who == "" {
+			who = "an unknown account"
+		}
+		msg := fmt.Sprintf("Preserved %s's sign-in from the switched-away slot — adopt or discard it in the cockpit.", who)
+		if err := d.Store.AppendEvent(store.Event{Kind: "stash", Message: msg}); err != nil {
+			d.Log.Warn("append stash event", "err", err)
+		}
+	}
+}
+
+// handleStashAdopt registers a stashed credential as a switchable account.
+// Auth-guarded: a mutation of the fleet from the loopback port needs the
+// session token. A quarantined (dead) lineage is refused HERE — adopt must
+// surface "needs a fresh sign-in", never silently resurrect.
+func (d *Daemon) handleStashAdopt(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
+	if d.StashAdopt == nil {
+		httpError(w, http.StatusNotImplemented, errors.New("stash not wired"))
+		return
+	}
+	if !requireJSON(w, r) {
+		return
+	}
+	var req struct {
+		Fingerprint string `json:"fingerprint"`
+		Label       string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Fingerprint == "" {
+		httpError(w, http.StatusBadRequest, errors.New(`body must be {"fingerprint": "<fp>", "label": "<optional>"}`))
+		return
+	}
+	if len(req.Label) > 200 { // a label is an email-scale display string, not free storage
+		httpError(w, http.StatusBadRequest, errors.New("label too long"))
+		return
+	}
+	if d.IsLineageDead(req.Fingerprint) {
+		httpError(w, http.StatusConflict, errors.New("this sign-in has expired (dead — needs login) — log in to the account again, then add it"))
+		return
+	}
+	acct, err := d.StashAdopt(r.Context(), req.Fingerprint, req.Label)
+	if err != nil {
+		// Conflict (the account already holds a newer lineage — review P0)
+		// is the caller's decision to make, not a server fault.
+		if errors.Is(err, pilotapi.ErrStashConflict) {
+			httpError(w, http.StatusConflict, err)
+			return
+		}
+		if errors.Is(err, switcher.ErrNotFound) {
+			httpError(w, http.StatusNotFound, errors.New("no stashed sign-in with that fingerprint"))
+			return
+		}
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	d.mu.Lock()
+	delete(d.knownStash, req.Fingerprint)
+	d.mu.Unlock()
+	if err := d.Store.AppendEvent(store.Event{Kind: "stash_adopt", AccountID: acct.ID,
+		Message: fmt.Sprintf("Adopted %s from the stash — it is switchable now.", acct.Label)}); err != nil {
+		d.Log.Warn("append adopt event", "err", err)
+	}
+	d.notify(r.Context())
+	writeJSON(w, http.StatusCreated, acct)
+}
+
+// handleStashDiscard removes a stash entry — payload and index. The
+// user-visible way out of append-only retention.
+func (d *Daemon) handleStashDiscard(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
+	if d.StashDiscard == nil {
+		httpError(w, http.StatusNotImplemented, errors.New("stash not wired"))
+		return
+	}
+	if !requireJSON(w, r) {
+		return
+	}
+	var req struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Fingerprint == "" {
+		httpError(w, http.StatusBadRequest, errors.New(`body must be {"fingerprint": "<fp>"}`))
+		return
+	}
+	if err := d.StashDiscard(r.Context(), req.Fingerprint); err != nil {
+		if errors.Is(err, switcher.ErrNotFound) {
+			httpError(w, http.StatusNotFound, errors.New("no stashed sign-in with that fingerprint"))
+			return
+		}
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	d.mu.Lock()
+	delete(d.knownStash, req.Fingerprint)
+	d.mu.Unlock()
+	if err := d.Store.AppendEvent(store.Event{Kind: "stash_discard",
+		Message: "Discarded a stashed sign-in — its stored credential is deleted."}); err != nil {
+		d.Log.Warn("append discard event", "err", err)
+	}
+	d.notify(r.Context())
+	writeJSON(w, http.StatusOK, map[string]string{"discarded": req.Fingerprint})
 }
 
 // syncTriggers mirrors scheds into launchd before they are persisted; a
@@ -358,12 +570,28 @@ func (d *Daemon) handleScheduleDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"removed": id})
 }
 
-// alreadyRegistered reports whether a detected config dir is already
-// registered — matched by config dir OR email, since either one identifies
-// the same real-world account.
+// alreadyRegistered reports whether a detected config dir's ACCOUNT is
+// already registered. Identity is the email, never the dir.
+//
+// The dir-match this used to also do was wrong in the swappable model: every
+// global-swappable account's ConfigDir IS the global dir, so once ANY account
+// was registered the global dir always reported registered — and a NEW
+// account signed into ~/.claude could never be adopted from either GUI
+// (handleAdopt 409'd), while `llmpilot init` adopted it fine. The daemon's
+// own "logged in but not registered" event then told the user to run a
+// terminal command BECAUSE the GUI could not do it.
 func alreadyRegistered(det detect.Detected, existing []store.Account) bool {
 	for _, a := range existing {
-		if a.ConfigDir == det.Dir.Path() || a.Email == det.Account.EmailAddress {
+		if a.Email != "" {
+			if strings.EqualFold(a.Email, det.Account.EmailAddress) {
+				return true
+			}
+			continue
+		}
+		// A row with NO email carries no identity to compare, so the dir is
+		// the only thing that can link it to this account. Adopting over it
+		// would fork a second registry row for one account.
+		if a.ConfigDir != "" && a.ConfigDir == det.Dir.Path() {
 			return true
 		}
 	}
@@ -385,10 +613,36 @@ func (d *Daemon) handleDetect(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
+	// A dir whose sign-in was MOVED into the fleet still carries its
+	// oauthAccount block (llmpilot never blanks a foreign dir's identity), so
+	// it keeps looking logged in. The retirement record is how we tell the
+	// truth about it without reading a Keychain item outside the fleet.
+	// `moved` is re-verified against CURRENT state, not read from the record:
+	// a folder someone signed back into must stop claiming it was moved, or
+	// the cockpit says "already moved into the fleet" and offers nothing to
+	// resolve the new sign-in while the clone guard pauses that account's
+	// refreshes (Codex review P2).
+	moved := map[string]bool{}
+	if d.MovedDirs != nil {
+		if m, err := d.MovedDirs(r.Context()); err == nil {
+			moved = m
+		} else {
+			d.Log.Warn("revalidate retirements", "err", err)
+		}
+	} else if rec, err := d.Store.Retirements(); err == nil {
+		for _, dir := range rec.Dirs {
+			if dir.Complete {
+				moved[dir.ConfigDir] = true
+			}
+		}
+	} else {
+		d.Log.Warn("read retirements", "err", err)
+	}
 	type detectedOut struct {
 		ConfigDir  string `json:"config_dir"`
 		Email      string `json:"email"`
 		Registered bool   `json:"registered"`
+		Moved      bool   `json:"moved"`
 	}
 	out := make([]detectedOut, 0, len(detected))
 	for _, det := range detected {
@@ -396,6 +650,7 @@ func (d *Daemon) handleDetect(w http.ResponseWriter, r *http.Request) {
 			ConfigDir:  det.Dir.Path(),
 			Email:      det.Account.EmailAddress,
 			Registered: alreadyRegistered(det, existing),
+			Moved:      moved[det.Dir.Path()],
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -449,6 +704,87 @@ func (d *Daemon) handleAdopt(w http.ResponseWriter, r *http.Request) {
 	}
 	d.notify(r.Context())
 	writeJSON(w, http.StatusCreated, acct)
+}
+
+// handleAdoptMove migrates a sign-in out of its own config dir into the
+// swappable fleet and RETIRES the source copy.
+//
+// Auth-guarded, unlike POST /v1/adopt: registration is additive, deletion is
+// not. Adopt stays open because it is the shipped first-run funnel and a
+// cockpit opened without a token must still be able to run it; this endpoint
+// deletes a sign-in from a folder outside the fleet, so it takes the session
+// token like every other P2 mutation.
+func (d *Daemon) handleAdoptMove(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
+	if !requireJSON(w, r) {
+		return
+	}
+	if d.Detect == nil || d.MoveIntoFleet == nil {
+		httpError(w, http.StatusNotImplemented, errors.New("move not wired"))
+		return
+	}
+	var req struct {
+		ConfigDir string `json:"config_dir"`
+		Label     string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ConfigDir == "" {
+		httpError(w, http.StatusBadRequest, errors.New(`body must be {"config_dir": "<path>", "label": "<optional>"}`))
+		return
+	}
+	if len(req.Label) > 200 {
+		httpError(w, http.StatusBadRequest, errors.New("label too long"))
+		return
+	}
+	detected, err := d.Detect(r.Context())
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	var match *detect.Detected
+	for i := range detected {
+		if detected[i].Dir.Path() == req.ConfigDir {
+			match = &detected[i]
+			break
+		}
+	}
+	if match == nil {
+		httpError(w, http.StatusNotFound, fmt.Errorf("no signed-in Claude account at %q", req.ConfigDir))
+		return
+	}
+	res, err := d.MoveIntoFleet(r.Context(), *match, req.Label)
+	if err != nil {
+		switch {
+		// A refusal is a DECISION the user can act on (the fleet's own folder,
+		// nothing signed in there, the identity changed under us, a second
+		// live sign-in for this account) — 409, never a 500.
+		case errors.Is(err, pilotapi.ErrStashConflict), errors.Is(err, switcher.ErrMoveRefused):
+			httpError(w, http.StatusConflict, err)
+		case errors.Is(err, switcher.ErrNotFound):
+			httpError(w, http.StatusNotFound, err)
+		default:
+			httpError(w, http.StatusInternalServerError, err)
+		}
+		return
+	}
+	msg := fmt.Sprintf("Moved %s into the fleet — llmpilot can switch to it now.", res.Account.Label)
+	if res.CloneSuspect {
+		msg = res.Note
+	}
+	if err := d.Store.AppendEvent(store.Event{Kind: "adopt_move", AccountID: res.Account.ID, Message: msg}); err != nil {
+		d.Log.Warn("append move event", "err", err)
+	}
+	d.notify(r.Context())
+	outcome := "complete"
+	if res.CloneSuspect {
+		outcome = "clone_suspect"
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"account": res.Account,
+		"outcome": outcome,
+		"note":    res.Note,
+	})
 }
 
 func (d *Daemon) handleConfigGet(w http.ResponseWriter, r *http.Request) {
@@ -636,8 +972,29 @@ func (d *Daemon) Serve(ctx context.Context) error {
 		return err
 	}
 
+	// Single-instance interlock: an exclusive advisory flock acquired BEFORE
+	// any socket work and held for the daemon's lifetime (the kernel releases
+	// it on death, so there is no staleness window). Only the lock holder may
+	// remove a stale socket and bind — a check-then-act probe alone is TOCTOU
+	// and two racing cold starts would both steal the socket and both write
+	// credentials, the #1 hazard class.
+	lock, err := os.OpenFile(LockFilePath(home), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	if flockErr := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); flockErr != nil {
+		_ = lock.Close()
+		if errors.Is(flockErr, syscall.EWOULDBLOCK) {
+			return ErrAlreadyRunning
+		}
+		// Any other errno is an environment failure, not a duplicate — a
+		// non-zero exit lets launchd's KeepAlive retry it.
+		return fmt.Errorf("single-instance lock: %w", flockErr)
+	}
+	defer func() { _ = lock.Close() }() // close drops the flock
+
 	sock := SocketPath(home)
-	_ = os.Remove(sock) // stale socket from a dead daemon
+	_ = os.Remove(sock) // stale socket from a dead daemon; we hold the lock
 	ul, err := net.Listen("unix", sock)
 	if err != nil {
 		return fmt.Errorf("unix socket: %w", err)
@@ -674,6 +1031,20 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	errc := make(chan error, 2)
 	go func() { errc <- srv.Serve(ul) }()
 	go func() { errc <- srv.Serve(tl) }()
+
+	// Baseline the stash BEFORE the sweep so entries the sweep migrates are
+	// surfaced as events while pre-existing ones stay quiet across restarts.
+	d.baselineStash(ctx)
+	if d.StartupSweep != nil {
+		go func() {
+			if err := d.StartupSweep(ctx); err != nil {
+				d.Log.Warn("legacy backup sweep failed — will retry next start", "err", err)
+				return
+			}
+			d.noteNewStashEntries(ctx)
+			d.notify(ctx)
+		}()
+	}
 
 	runErr := d.Run(ctx) // blocks until ctx done
 	shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

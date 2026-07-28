@@ -16,7 +16,12 @@ cd "$(dirname "$0")/.."
 
 TAG=${1:?usage: release-local.sh <tag>}
 VERSION="${TAG#test-}"; VERSION="${VERSION#v}"
-BUILD_NUM=$(git rev-list --count HEAD)
+# Date-based build number: monotonic across repos and machines, so a release
+# cut from a fresh public clone can never rank below a private dev build (the
+# 86-vs-17 Sparkle downgrade fork). Caveats: two builds in the same UTC minute
+# collide (Sparkle sees "no update"), and this switch is ONE-WAY — reverting
+# to a commit count would ship a permanent downgrade to every user.
+BUILD_NUM=$(date -u +%Y%m%d%H%M)
 IDENTITY="Developer ID Application"
 PROFILE="llmpilot-notary"
 # shellcheck source=scripts/sparkle-fetch.sh
@@ -33,8 +38,46 @@ if [ ! -f go.work ] || [ ! -d ../llmpilot-pro ]; then
   exit 1
 fi
 
+# Release notes come from CHANGELOG.md, extracted up front so a missing
+# section fails BEFORE the hour of building and notarizing. --generate-notes
+# would render only the sync commit on the public repo. test-v* prereleases
+# never reach users or the tap, so they keep --generate-notes.
+NOTES="$DD/notes.md"
+case "$TAG" in
+  v*|test-*) ;;
+  *) echo "ERROR: unrecognized tag shape '$TAG' — expected v* or test-v*" >&2; exit 1 ;;
+esac
+case "$TAG" in
+  v*)
+    awk -v ver="$VERSION" '
+      BEGIN {gsub(/\./, "\\.", ver)}
+      $0 ~ "^## \\[" ver "\\]" {on=1; next}
+      /^## \[/ {on=0}
+      on {print}
+    ' CHANGELOG.md >"$NOTES"
+    if [ ! -s "$NOTES" ] || ! grep -q '[^[:space:]]' "$NOTES"; then
+      echo "ERROR: CHANGELOG.md has no '## [$VERSION]' section — write the" >&2
+      echo "release notes there first; refusing to release without them." >&2
+      exit 1
+    fi
+    echo "== release notes ($VERSION, from CHANGELOG.md) =="
+    cat "$NOTES"
+    ;;
+esac
+
+# Every published git object (release tag, tap commits) must carry the GitHub
+# noreply identity, never a personal address. Exported here so every git write
+# below inherits it.
+GH_ID=$(gh api user --jq .id)
+GH_LOGIN=$(gh api user --jq .login)
+GH_NAME=$(gh api user --jq '.name // .login')
+NOREPLY="${GH_ID}+${GH_LOGIN}@users.noreply.github.com"
+export GIT_AUTHOR_NAME="$GH_NAME" GIT_AUTHOR_EMAIL="$NOREPLY"
+export GIT_COMMITTER_NAME="$GH_NAME" GIT_COMMITTER_EMAIL="$NOREPLY"
+echo "git identity for tag + tap: $GH_NAME <$NOREPLY>"
+
 echo "== build (version $VERSION, build $BUILD_NUM) =="
-(cd web && pnpm build) # the daemon binary embeds the real cockpit (go:embed)
+(cd web && pnpm install --frozen-lockfile && pnpm build) # a fresh clone has no node_modules; the daemon embeds the built cockpit (go:embed)
 xcodebuild -project macos/llmpilot.xcodeproj -scheme llmpilot \
   -configuration Release -derivedDataPath "$DD/dd" \
   CODE_SIGN_IDENTITY="$IDENTITY" DEVELOPMENT_TEAM=6UUS5FCSJ3 \
@@ -100,13 +143,31 @@ create-dmg \
 spctl -a -t open --context context:primary-signature -v "$DD/llmpilot.dmg"
 
 echo "== tag + GitHub release =="
-git tag -a "$TAG" -m "llmpilot $VERSION" 2>/dev/null || echo "tag $TAG exists locally"
+# A pre-existing local tag keeps whatever identity it was made with — verify
+# it is already noreply rather than silently publishing the old tagger.
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+  TAGGER=$(git for-each-ref --format='%(taggeremail)' "refs/tags/$TAG")
+  case "$TAGGER" in
+    *users.noreply.github.com*) echo "tag $TAG exists locally, tagger $TAGGER (noreply — ok)" ;;
+    *) echo "ERROR: tag $TAG exists with tagger $TAGGER — delete it (git tag -d $TAG)" >&2
+       echo "so it is re-created with the noreply identity." >&2; exit 1 ;;
+  esac
+else
+  git tag -a "$TAG" -m "llmpilot $VERSION"
+fi
 git push origin "refs/tags/$TAG"
-PRERELEASE=""
-case "$TAG" in test-*) PRERELEASE="--prerelease" ;; esac
-gh release create "$TAG" $PRERELEASE --title "llmpilot $VERSION" \
-  --generate-notes "$DD/updates/llmpilot-$VERSION.zip" "$DD/updates/appcast.xml" \
-  "$DD/llmpilot.dmg"
+case "$TAG" in
+  test-*)
+    gh release create "$TAG" --prerelease --title "llmpilot $VERSION" \
+      --generate-notes "$DD/updates/llmpilot-$VERSION.zip" \
+      "$DD/updates/appcast.xml" "$DD/llmpilot.dmg"
+    ;;
+  *)
+    gh release create "$TAG" --title "llmpilot $VERSION" \
+      --notes-file "$NOTES" "$DD/updates/llmpilot-$VERSION.zip" \
+      "$DD/updates/appcast.xml" "$DD/llmpilot.dmg"
+    ;;
+esac
 
 # CLI archives via goreleaser, then both tap files. goreleaser can no longer
 # emit either tap artifact itself (brews: is deprecated and fails our

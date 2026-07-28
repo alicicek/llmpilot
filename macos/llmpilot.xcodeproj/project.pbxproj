@@ -11,16 +11,22 @@
 		14758478B797F59CFA7ACFF0 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D7101FC348F4D0F5A5A20CD /* MenuBarView.swift */; };
 		252306E439AEC6401D5B2779 /* FormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60DD5B8F2791EEAD33662102 /* FormatTests.swift */; };
 		373D6BF3C4A83AC36D278A1A /* FleetViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F145734CB66F81A06F5E9A62 /* FleetViewModelTests.swift */; };
+		3D0C3305200505ECE8CCED02 /* LoginWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECCFA3ACE41DDB958674597B /* LoginWindow.swift */; };
 		3D2A191FD2515A599781956F /* FleetViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 832D6CB2B46A2E0E9E6C08A3 /* FleetViewModel.swift */; };
 		3EB8D3B163E377DF36FCD179 /* RunwayBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2501E07E5E08AC68E1ED4C6E /* RunwayBar.swift */; };
+		4B50BF9E04BEE069C9E6146F /* LoginFlowModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1C0822722B47B44C3B1D97E /* LoginFlowModel.swift */; };
 		5491A718B01CD0E3A00A8C96 /* DaemonLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91EBE1758BF5088559041005 /* DaemonLauncher.swift */; };
+		54C54D4D60E7FE61A3EC63B4 /* dev.llmpilot.daemon.plist in CopyFiles */ = {isa = PBXBuildFile; fileRef = 9E409B850E1909A108F0BE86 /* dev.llmpilot.daemon.plist */; };
 		5B3572A3BC79AE4CA4C87B73 /* MenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08837C38A931F867D09A8BA7 /* MenuBarLabel.swift */; };
 		61ACC28A93CD5C41AEE46564 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 83EB5985CA63239D661C9293 /* AppIcon.icon */; };
+		62690073E71D294803477D5E /* EnsureRunningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD38D37D98A58A8AEFFDC446 /* EnsureRunningTests.swift */; };
+		6E7343DA9B90E2501458C330 /* LoginFlowModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50072230D8B4CDF3F15F104E /* LoginFlowModelTests.swift */; };
 		949073F9ADB1BCFCE4F8B32C /* DaemonClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68868CA442D6B4783E52574B /* DaemonClient.swift */; };
 		94EC15362B065F3BA7AF9060 /* CockpitWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D2C9FD0DD642E709B21C55C /* CockpitWindow.swift */; };
 		A68C2EA86A5DBE72B45C0164 /* DecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A92599E52DF40F6D82DC68 /* DecodingTests.swift */; };
 		A8FC211EB811F20EBC69887B /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 540EA8D2C6CF625B97EE521B /* Theme.swift */; };
 		ACDDFF8EDDE5A4E85681C84A /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298F79108B7529E8A2B51599 /* Models.swift */; };
+		C59C2BA7C9C6D696B33D851E /* LoginItems.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5218C8C5DA9A1B00D31411 /* LoginItems.swift */; };
 		CE0F3D2EBA34674E7A979B40 /* Format.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109CE6394902AF4D2464EBB8 /* Format.swift */; };
 		E1E93DFED475926FD1BDC905 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D50EBC3C5DB39F3EE971ECF5 /* Assets.xcassets */; };
 		ED78413C9CE9CD066CCC60D5 /* LLMPilotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB37742EE077E02EFE176E1 /* LLMPilotApp.swift */; };
@@ -37,6 +43,19 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		ECDF11BA3036251FDD18012C /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
+			files = (
+				54C54D4D60E7FE61A3EC63B4 /* dev.llmpilot.daemon.plist in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		08837C38A931F867D09A8BA7 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
 		0B070A1CBD84AD69CFB17F2C /* llmpilot.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = llmpilot.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -46,6 +65,7 @@
 		24B54C26175A44616808D0D2 /* StubAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubAPI.swift; sourceTree = "<group>"; };
 		2501E07E5E08AC68E1ED4C6E /* RunwayBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunwayBar.swift; sourceTree = "<group>"; };
 		298F79108B7529E8A2B51599 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		50072230D8B4CDF3F15F104E /* LoginFlowModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginFlowModelTests.swift; sourceTree = "<group>"; };
 		540EA8D2C6CF625B97EE521B /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		60DD5B8F2791EEAD33662102 /* FormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormatTests.swift; sourceTree = "<group>"; };
 		68868CA442D6B4783E52574B /* DaemonClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonClient.swift; sourceTree = "<group>"; };
@@ -54,8 +74,13 @@
 		83EB5985CA63239D661C9293 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		91A92599E52DF40F6D82DC68 /* DecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecodingTests.swift; sourceTree = "<group>"; };
 		91EBE1758BF5088559041005 /* DaemonLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonLauncher.swift; sourceTree = "<group>"; };
+		9E409B850E1909A108F0BE86 /* dev.llmpilot.daemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = dev.llmpilot.daemon.plist; sourceTree = "<group>"; };
+		AD38D37D98A58A8AEFFDC446 /* EnsureRunningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnsureRunningTests.swift; sourceTree = "<group>"; };
+		C1C0822722B47B44C3B1D97E /* LoginFlowModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginFlowModel.swift; sourceTree = "<group>"; };
+		CC5218C8C5DA9A1B00D31411 /* LoginItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItems.swift; sourceTree = "<group>"; };
 		D50EBC3C5DB39F3EE971ECF5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		DAB37742EE077E02EFE176E1 /* LLMPilotApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMPilotApp.swift; sourceTree = "<group>"; };
+		ECCFA3ACE41DDB958674597B /* LoginWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginWindow.swift; sourceTree = "<group>"; };
 		F145734CB66F81A06F5E9A62 /* FleetViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetViewModelTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -74,6 +99,7 @@
 		107A1C8E4EC93873B5813B62 = {
 			isa = PBXGroup;
 			children = (
+				5EB4A80E270052E77F1B0136 /* LaunchAgents */,
 				20F14EFEB541D0E23D6EE8D9 /* Sources */,
 				B6D38E0A54ED063A256AECA3 /* Tests */,
 				2776B87BA76FB267EA47193E /* Products */,
@@ -103,10 +129,19 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		5EB4A80E270052E77F1B0136 /* LaunchAgents */ = {
+			isa = PBXGroup;
+			children = (
+				9E409B850E1909A108F0BE86 /* dev.llmpilot.daemon.plist */,
+			);
+			path = LaunchAgents;
+			sourceTree = "<group>";
+		};
 		77FED49C30DC5499D4FFF930 /* Views */ = {
 			isa = PBXGroup;
 			children = (
 				0D2C9FD0DD642E709B21C55C /* CockpitWindow.swift */,
+				ECCFA3ACE41DDB958674597B /* LoginWindow.swift */,
 				08837C38A931F867D09A8BA7 /* MenuBarLabel.swift */,
 				7D7101FC348F4D0F5A5A20CD /* MenuBarView.swift */,
 				2501E07E5E08AC68E1ED4C6E /* RunwayBar.swift */,
@@ -119,6 +154,7 @@
 			children = (
 				68868CA442D6B4783E52574B /* DaemonClient.swift */,
 				91EBE1758BF5088559041005 /* DaemonLauncher.swift */,
+				CC5218C8C5DA9A1B00D31411 /* LoginItems.swift */,
 				298F79108B7529E8A2B51599 /* Models.swift */,
 			);
 			path = API;
@@ -128,6 +164,7 @@
 			isa = PBXGroup;
 			children = (
 				832D6CB2B46A2E0E9E6C08A3 /* FleetViewModel.swift */,
+				C1C0822722B47B44C3B1D97E /* LoginFlowModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -136,8 +173,10 @@
 			isa = PBXGroup;
 			children = (
 				91A92599E52DF40F6D82DC68 /* DecodingTests.swift */,
+				AD38D37D98A58A8AEFFDC446 /* EnsureRunningTests.swift */,
 				F145734CB66F81A06F5E9A62 /* FleetViewModelTests.swift */,
 				60DD5B8F2791EEAD33662102 /* FormatTests.swift */,
+				50072230D8B4CDF3F15F104E /* LoginFlowModelTests.swift */,
 				24B54C26175A44616808D0D2 /* StubAPI.swift */,
 			);
 			path = Tests;
@@ -161,6 +200,7 @@
 			buildPhases = (
 				469A17C8A754A89D0B121122 /* Sources */,
 				FFA8717E7EBE0E261DAF56CF /* Resources */,
+				ECDF11BA3036251FDD18012C /* CopyFiles */,
 				297F5406DF69530B418E20C0 /* Frameworks */,
 			);
 			buildRules = (
@@ -253,6 +293,9 @@
 				3D2A191FD2515A599781956F /* FleetViewModel.swift in Sources */,
 				CE0F3D2EBA34674E7A979B40 /* Format.swift in Sources */,
 				ED78413C9CE9CD066CCC60D5 /* LLMPilotApp.swift in Sources */,
+				4B50BF9E04BEE069C9E6146F /* LoginFlowModel.swift in Sources */,
+				C59C2BA7C9C6D696B33D851E /* LoginItems.swift in Sources */,
+				3D0C3305200505ECE8CCED02 /* LoginWindow.swift in Sources */,
 				5B3572A3BC79AE4CA4C87B73 /* MenuBarLabel.swift in Sources */,
 				14758478B797F59CFA7ACFF0 /* MenuBarView.swift in Sources */,
 				ACDDFF8EDDE5A4E85681C84A /* Models.swift in Sources */,
@@ -266,8 +309,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				A68C2EA86A5DBE72B45C0164 /* DecodingTests.swift in Sources */,
+				62690073E71D294803477D5E /* EnsureRunningTests.swift in Sources */,
 				373D6BF3C4A83AC36D278A1A /* FleetViewModelTests.swift in Sources */,
 				252306E439AEC6401D5B2779 /* FormatTests.swift in Sources */,
+				6E7343DA9B90E2501458C330 /* LoginFlowModelTests.swift in Sources */,
 				F18348926E13F630628A69CD /* StubAPI.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

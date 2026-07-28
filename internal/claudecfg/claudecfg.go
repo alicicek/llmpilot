@@ -192,7 +192,7 @@ func ExecRunner(ctx context.Context, name string, args ...string) ([]byte, error
 }
 
 // FallbackVersion is the Claude Code CLI version assumed when detection
-// fails. Pinned against the owner's installed CLI, as-of 2026-07-08.
+// fails. Pinned against a real installed CLI, as-of 2026-07-08.
 const FallbackVersion = "2.1.205"
 
 var versionRe = regexp.MustCompile(`^\d+\.\d+\.\d+`)

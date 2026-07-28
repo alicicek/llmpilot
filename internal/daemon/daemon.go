@@ -1,7 +1,12 @@
 // Package daemon is llmpilot's always-on brain: it polls every registered
-// account's usage buckets, keeps snapshots cached under $LLMPILOT_HOME,
-// proactively refreshes idle tokens before they expire, and serves state to
-// every surface over a unix socket and 127.0.0.1.
+// account's usage buckets, keeps snapshots cached under $LLMPILOT_HOME, and
+// serves state to every surface over a unix socket and 127.0.0.1.
+//
+// The daemon NEVER refreshes an idle account's token on a timer (Anthropic's
+// refresh throttle makes background refresh self-destructive — issue #38248;
+// design pillar 4). An idle account whose stored token expired is served from
+// its last-known snapshot with an honest stale marker; it wakes the moment
+// the user uses or switches to it (the switch path freshens the target).
 //
 // All fragile-surface knowledge stays in internal/anthropic and
 // internal/claudecfg; the daemon composes injectable functions so tests and
@@ -25,47 +30,35 @@ import (
 	"github.com/alicicek/llmpilot/pilotapi"
 )
 
-// MinPollInterval is the endpoint-etiquette floor: never more than one usage
-// GET per account per 300s.
-const MinPollInterval = 300 * time.Second
+// DefaultPollInterval is the steady-state cadence and the serve freshness
+// target: a snapshot older than ~180s is worth refreshing. 20 GETs/hour at
+// steady state — well inside HourlyPollBudget, leaving headroom for reset
+// pulls and switch fast-polls.
+const DefaultPollInterval = 180 * time.Second
 
-// DefaultRefreshLead is how long before token expiry the idle refresh kicks
-// in. Claude Code's own refresh fires near expiry; leading by an hour keeps
-// idle accounts warm without racing it.
-const DefaultRefreshLead = time.Hour
+// MinPollGap is the absolute per-account floor between two usage GETs.
+// Special polls (a switch fast-poll, a post-reset pull) may pull the
+// schedule in, but never below this spacing.
+const MinPollGap = 120 * time.Second
+
+// HourlyPollBudget caps one account's usage GETs per rolling 60 minutes
+// (~28–30/60min/token is the researched safe envelope for the experimental
+// endpoint). When the window is spent, the next poll waits for the oldest
+// request to age out — the budget is a hard ceiling, not a target.
+const HourlyPollBudget = 28
+
+// SwitchRefreshLead is how long before token expiry the SWITCH-TIME freshen
+// kicks in (the switcher's keep-warm engine, run only at activation — never
+// on a timer). 10 minutes = ~2× Claude Code's own buffer, so the freshened
+// target still outlives CC's post-switch re-read while draining the 2/day
+// refresh budget far slower than the keep-warm-era 1h lead did.
+const SwitchRefreshLead = 10 * time.Minute
 
 // Fetcher fetches one account's current buckets.
 type Fetcher func(ctx context.Context, acct store.Account) ([]store.Bucket, error)
 
 // Switcher performs a full account swap to the target account ID.
 type Switcher func(ctx context.Context, targetID string) error
-
-// Refresher refreshes one account's token by delegation to `claude auth
-// status` under the account's CLAUDE_CONFIG_DIR. It is the FALLBACK path when
-// the direct keep-warm refresh fails transiently (verified read-only in CC
-// 2.1.211 — refreshIdle checks whether the expiry actually moved).
-type Refresher func(ctx context.Context, acct store.Account) error
-
-// KeepWarmStatus reports the outcome of one direct keep-warm refresh.
-// Fingerprint is the credential's refresh-token lineage identity; the daemon
-// keys its quarantine on it so a re-login (new lineage) auto-clears.
-type KeepWarmStatus struct {
-	Rotated     bool
-	Dead        bool // the token endpoint permanently rejected the grant
-	Fingerprint string
-	Expiry      time.Time
-}
-
-// KeepWarmer refreshes one idle account's token directly against the OAuth
-// endpoint (internal/switcher keep-warm engine). A permanent invalid_grant
-// comes back as Dead=true with a nil error; transient failures return an
-// error. nil = keep-warm off (delegation-only).
-type KeepWarmer func(ctx context.Context, acct store.Account) (KeepWarmStatus, error)
-
-// Fingerprinter returns the refresh-token lineage fingerprint of an account's
-// stored credential — no network. The daemon uses it to notice a quarantined
-// account was re-logged-in (its lineage changed) so it can retry.
-type Fingerprinter func(ctx context.Context, acct store.Account) (string, error)
 
 // ExpiryFn reports when an account's stored access token expires.
 type ExpiryFn func(ctx context.Context, acct store.Account) (time.Time, error)
@@ -108,28 +101,33 @@ type EntitlementValidation struct {
 // single coalescing background worker after successful usage network traffic.
 type EntitlementRevalidator func(ctx context.Context) (EntitlementValidation, error)
 
+// MoveResult reports one "Move into the fleet" migration. CloneSuspect means
+// the source copy could not be proven gone: the account is registered and
+// safe, but llmpilot will not rotate it until a human resolves the second
+// copy. Note carries the honest explanation for that state.
+type MoveResult struct {
+	Account      store.Account
+	CloneSuspect bool
+	Note         string
+}
+
+// MoveFn performs the migration for POST /v1/adopt/move.
+type MoveFn func(ctx context.Context, d detect.Detected, label string) (MoveResult, error)
+
 // AdoptFn registers the account at a detected config dir exactly like
 // `llmpilot init` (same ID/label derivation) and returns the registered
 // account (POST /v1/adopt).
 type AdoptFn func(ctx context.Context, d detect.Detected, label string) (store.Account, error)
 
-// Daemon owns the poll loop, the refresh loop, and the state served to
-// surfaces. Zero-value fields get safe defaults in Run.
+// Daemon owns the poll loop and the state served to surfaces. Zero-value
+// fields get safe defaults in Run.
 type Daemon struct {
-	Store   *store.Store
-	Fetch   Fetcher
-	Switch  Switcher
-	Refresh Refresher
-	Expiry  ExpiryFn
-	Active  ActiveFn
-	Log     *slog.Logger
-
-	// KeepWarm is the direct OAuth refresh for idle accounts (the Wave 8.3
-	// pillar). Fingerprint reads an account's lineage identity for the
-	// quarantine self-heal. Both nil = keep-warm off; refreshIdle falls back
-	// to the Refresh delegation alone.
-	KeepWarm    KeepWarmer
-	Fingerprint Fingerprinter
+	Store  *store.Store
+	Fetch  Fetcher
+	Switch Switcher
+	Expiry ExpiryFn
+	Active ActiveFn
+	Log    *slog.Logger
 
 	// Pinned reports whether an account lives in its own config dir. Pinned
 	// accounts are never swap targets (Swap refuses them — installing one
@@ -142,6 +140,34 @@ type Daemon struct {
 	Pilot       pilotapi.Policy
 	NotifyUser  UserNotifier
 	ActiveEmail ActiveEmailFn
+
+	// AutoSwitch is the UNATTENDED counterpart of Switch, used for every
+	// autopilot-initiated rotation of a non-stale target. Same swap, same
+	// switch-time freshen — but built with a refresh-budget RESERVE, so a
+	// rotation the user never asked for can never spend their last 2/24h
+	// refresh slot. nil = fall back to Switch (the pre-P4 behaviour), so an
+	// engine-absent or partially wired build keeps rotating.
+	AutoSwitch Switcher
+
+	// MovedDirs reports which config dirs a move retired AND that still hold
+	// no sign-in — the honest input for /v1/detect's `moved` flag. nil falls
+	// back to the retirement record alone, which is what a daemon without a
+	// switcher (tests, engine-absent builds) can know.
+	MovedDirs func(ctx context.Context) (map[string]bool, error)
+
+	// MoveIntoFleet migrates a sign-in out of its own config dir into the
+	// swappable fleet and retires the source copy (POST /v1/adopt/move; nil =
+	// 501). Injected like Adopt — the daemon never touches the Keychain or a
+	// config dir itself.
+	MoveIntoFleet MoveFn
+
+	// Revive is the STRICT switch for stale targets (Decision.Revive): it
+	// must PROVE a live credential — a forced-lead refresh that actually
+	// rotated — before installing anything; a skip or transient failure
+	// returns ErrReviveNotProven and the fleet holds. nil = revive unwired;
+	// a revive decision then holds rather than falling back to the
+	// best-effort Switch (never install a token known to be expired).
+	Revive Switcher
 
 	// EntitlementAllowed is the offline action gate. EntitlementDue and
 	// Revalidate implement opportunistic weekly status refresh without adding
@@ -173,13 +199,32 @@ type Daemon struct {
 	// /login clobbers make un-freshened backups die silently.
 	Freshen func(ctx context.Context, acct store.Account) (bool, error)
 
+	// StartupSweep runs once when Serve starts (nil = off): the one-time
+	// migration of legacy unmatched-* backup items into the stash. Failure
+	// is logged, never fatal — the sweep retries on the next daemon start.
+	StartupSweep func(ctx context.Context) error
+
+	// Stash* wire the foreign-credential stash (all nil = 501, stash not
+	// wired — sandboxed daemon tests inject fakes like every other
+	// Keychain-touching field). List feeds /v1/state; Adopt and Discard back
+	// the requireAuth-guarded mutation endpoints. The daemon refuses adopt
+	// on a quarantined (dead) fingerprint BEFORE calling StashAdopt.
+	StashList    func(ctx context.Context) ([]pilotapi.StashEntry, error)
+	StashAdopt   func(ctx context.Context, fingerprint, label string) (store.Account, error)
+	StashDiscard func(ctx context.Context, fingerprint string) error
+
 	// WebFS is the embedded cockpit (web.Dist()); nil = API only.
 	WebFS fs.FS
 
 	// NowFn overrides the daemon's clock (nil = time.Now): the statusline
-	// preview render AND the refresh loop's expiry/backoff math read it, so a
-	// test can pin token expiry deterministically without sleeping.
+	// preview render and the login-attempt TTL read it, so a test can pin
+	// time deterministically without sleeping.
 	NowFn func() time.Time
+
+	// DoctorReaders supplies the health sweep's filesystem/Keychain readers
+	// (GET /v1/doctor). Zero value = those checks report NOT CHECKED rather
+	// than passing; the daemon itself never scans a config dir or a Keychain.
+	DoctorReaders DoctorLocal
 
 	// Detect lists config dirs with a logged-in account for GET /v1/detect
 	// (nil = 501, detect not wired). Adopt registers one of those dirs for
@@ -189,12 +234,17 @@ type Daemon struct {
 	Detect DetectFn
 	Adopt  AdoptFn
 
-	// PollInterval is clamped up to MinPollInterval unless AllowFastPoll
+	// LoginMint/LoginURL/LoginComplete wire the in-app sign-in (POST
+	// /v1/login/*; all nil = 501). See login.go — the PKCE verifier lives only
+	// in this process, keyed by CSRF state in loginAttempts.
+	LoginMint     LoginMintFn
+	LoginURL      LoginURLFn
+	LoginComplete LoginCompleteFn
+
+	// PollInterval is clamped up to DefaultPollInterval unless AllowFastPoll
 	// (tests only) is set.
 	PollInterval  time.Duration
 	AllowFastPoll bool
-	RefreshLead   time.Duration
-	RefreshCheck  time.Duration // how often the refresh loop scans
 
 	// schedMu serializes schedule mutations (read set → launchd sync → save):
 	// two concurrent cockpit writes would otherwise lose one caller's change
@@ -206,36 +256,64 @@ type Daemon struct {
 	// schedules.json fresh on every State call either way).
 	schedMu sync.Mutex
 
-	mu             sync.Mutex
-	nextPoll       map[string]time.Time
-	lastPolled     map[string]time.Time
-	tokenNotes     map[string]string
-	quarantine     map[string]string // accountID → dead lineage fingerprint
-	lastSwitch     time.Time         // last rotation ATTEMPT — cooldown covers failures too
-	lastActive     string            // last observed active account (fast-poll on change)
-	lastUnknown    string            // last unregistered email surfaced (once per email)
-	lastRotateFail string            // last failure event text — repeats log, not spam
-	licenseStatus  string            // last online status projection; no token/id/PII
-	licenseError   string            // last terminal licensing refusal code, "" when none
-	// shared 429 backoff: no account polls before this instant.
-	pausedUntil time.Time
-	attempt     int
-	// shared OAuth-refresh-endpoint 429 backoff (separate budget from usage).
-	refreshPausedUntil time.Time
-	refreshAttempt     int
+	mu         sync.Mutex
+	nextPoll   map[string]time.Time
+	lastPolled map[string]time.Time
+	// pollTimes is the per-account rolling window of usage-GET timestamps
+	// backing HourlyPollBudget (attempts count — a 429'd GET spent budget
+	// too). In-memory only: a restart forgets the window, and the steady
+	// cadence re-fills it far below the ceiling.
+	pollTimes  map[string][]time.Time
+	tokenNotes map[string]string
+	// quarantine marks accounts with a provably dead refresh-token lineage
+	// (accountID → dead lineage fingerprint). Phase 1 never populates it —
+	// dead lineages are only discoverable by an activation attempt (the
+	// switch path), which repopulates it in Phase 2. The poll skip and the
+	// autopilot target filter keep honoring it meanwhile.
+	quarantine map[string]string
+	// stale marks accounts whose stored token expired (or 401'd): their
+	// last-known snapshot is served with this honest flag, and no network
+	// call runs for them until the stored credential CHANGES (the user uses
+	// or switches to the account). The value is the stored expiry observed
+	// when the account went stale — the clear condition is the expiry moving
+	// forward, never "the expiry looks valid" (a 401 arrives precisely when
+	// it looks valid, and clearing on looks would flap and re-hammer).
+	stale map[string]time.Time
+	// knownStash tracks stash fingerprints already surfaced (or present at
+	// start) so each preserved credential events exactly once.
+	knownStash map[string]bool
+	// quarantinePersistMu serializes the quarantine snapshot+rename so two
+	// concurrent persists cannot commit out of order (see persistQuarantine).
+	quarantinePersistMu sync.Mutex
+	lastSwitch          time.Time            // last rotation ATTEMPT — cooldown covers failures too
+	lastActive          string               // last observed active account (fast-poll on change)
+	lastUnknown         string               // last unregistered email surfaced (once per email)
+	lastRotateFail      string               // last failure event text — repeats log, not spam
+	lastHold            string               // last autopilot_hold text — one event per distinct reason
+	licenseStatus       string               // last online status projection; no token/id/PII
+	licenseError        string               // last terminal licensing refusal code, "" when none
+	cooldown            map[string]coolState // per-account 429 gate (usage+refresh share Anthropic's limit)
 
 	// history is the in-memory burn-rate ring per (account, bucket kind+
 	// scope) — GET /v1/history. Deliberately NOT persisted: a restart is an
 	// honestly empty sparkline, never a fabricated one.
 	history map[string][]HistorySample
 
+	// loginResults tracks each browser-flow attempt's outcome (keyed by the
+	// same CSRF state the attempt table uses — the client already receives
+	// it inside authorize_url, so returning it as the attempt id exposes
+	// nothing new). GET /v1/login/browser/status reads it, so the cockpit
+	// ties completion to ITS attempt instead of inferring from fleet size.
+	loginResults map[string]loginResult
+
+	// loginMu guards loginAttempts (state → pending sign-in), separate from
+	// mu — a login mutation must never contend with the poll path.
+	loginMu       sync.Mutex
+	loginAttempts map[string]loginAttempt
+
 	events       *broadcaster
 	once         sync.Once
 	revalidateCh chan struct{}
-	// refreshNudge coalesces a "refresh now" request from the poll path (an
-	// idle account 401'd — its token lapsed between refresh passes) so the
-	// refresh loop heals it in seconds instead of at the next 10-minute tick.
-	refreshNudge chan struct{}
 
 	// authToken guards license reveal/mutation (see auth.go). Set once in
 	// init, read-only afterwards — no lock needed.
@@ -256,15 +334,20 @@ func (d *Daemon) init() {
 	d.once.Do(func() {
 		d.nextPoll = map[string]time.Time{}
 		d.lastPolled = map[string]time.Time{}
+		d.pollTimes = map[string][]time.Time{}
 		d.tokenNotes = map[string]string{}
 		d.quarantine = map[string]string{}
+		d.stale = map[string]time.Time{}
+		d.cooldown = map[string]coolState{}
+		d.loginAttempts = map[string]loginAttempt{}
+		d.loginResults = map[string]loginResult{}
 		d.history = map[string][]HistorySample{}
 		d.events = newBroadcaster()
 		d.revalidateCh = make(chan struct{}, 1)
-		d.refreshNudge = make(chan struct{}, 1)
 		if d.Log == nil {
 			d.Log = slog.Default()
 		}
+		d.loadQuarantine()
 		if tok, err := newAuthToken(); err == nil {
 			d.authToken = tok
 		} else {
@@ -273,26 +356,22 @@ func (d *Daemon) init() {
 			// refuses to start at all rather than run without a token file.
 			d.Log.Error("auth token generation failed — license actions disabled", "err", err)
 		}
-		if d.PollInterval < MinPollInterval && !d.AllowFastPoll {
-			d.PollInterval = MinPollInterval
-		}
-		if d.RefreshLead == 0 {
-			d.RefreshLead = DefaultRefreshLead
-		}
-		if d.RefreshCheck == 0 {
-			d.RefreshCheck = 10 * time.Minute
+		if d.PollInterval < DefaultPollInterval && !d.AllowFastPoll {
+			d.PollInterval = DefaultPollInterval
 		}
 	})
 }
 
 // AccountState is one account plus its latest cached snapshot. TokenNote is
-// a human-readable warning when the stored token is expiring and the
-// delegated refresh had no effect — surfaced honestly, never papered over
-// (`claude auth status` is read-only in CC 2.1.205).
+// a human-readable warning surfaced honestly, never papered over. Stale
+// means the account's stored token has expired while idle: Snapshot is the
+// last-known truth, frozen until the user wakes the account — surfaces
+// render it with an explicit stale badge, never as live data.
 type AccountState struct {
 	store.Account
 	Snapshot  *store.UsageSnapshot `json:"snapshot,omitempty"`
 	TokenNote string               `json:"token_note,omitempty"`
+	Stale     bool                 `json:"stale,omitempty"`
 }
 
 // State is the full document served at GET /v1/state and pushed over SSE.
@@ -300,11 +379,14 @@ type AccountState struct {
 // Schedules is never null — an empty fleet still renders an empty array on
 // every surface that decodes this JSON.
 type State struct {
-	Accounts  []AccountState   `json:"accounts"`
-	ActiveID  string           `json:"active_id,omitempty"`
-	Events    []store.Event    `json:"events,omitempty"`
-	Schedules []store.Schedule `json:"schedules"`
-	License   string           `json:"license_status,omitempty"`
+	Accounts []AccountState `json:"accounts"`
+	ActiveID string         `json:"active_id,omitempty"`
+	Events   []store.Event  `json:"events,omitempty"`
+	// Stash is never null — the empty case must decode on every surface
+	// (the accounts:null wire kill).
+	Stash     []pilotapi.StashEntry `json:"stash"`
+	Schedules []store.Schedule      `json:"schedules"`
+	License   string                `json:"license_status,omitempty"`
 	// LicenseError is the last terminal licensing refusal code
 	// (seat_limit_reached, trial_email_used, ...) — a machine code only.
 	LicenseError string    `json:"license_error,omitempty"`
@@ -318,7 +400,10 @@ func (d *Daemon) State(ctx context.Context) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	st := State{AsOf: time.Now().UTC()}
+	// Accounts is never null either — a FRESH install (zero accounts) must
+	// decode on every surface; a nil slice marshals as JSON null and killed
+	// the whole menu-bar state decode (found by the first-run e2e).
+	st := State{Accounts: []AccountState{}, AsOf: time.Now().UTC()}
 	d.mu.Lock()
 	st.License = d.licenseStatus
 	st.LicenseError = d.licenseError
@@ -334,11 +419,34 @@ func (d *Daemon) State(ctx context.Context) (State, error) {
 		}
 		d.mu.Lock()
 		note := d.tokenNotes[a.ID]
+		_, stale := d.stale[a.ID]
 		d.mu.Unlock()
-		st.Accounts = append(st.Accounts, AccountState{Account: a, Snapshot: snap, TokenNote: note})
+		// Pinned is DERIVED here, never read from the registry file: an
+		// account is pinned when it lives in its own config dir, which is the
+		// engine's own rule (Swap refuses such a target). Nothing writes the
+		// stored field for real accounts, so a surface that gated its switch
+		// verb on it would offer a verb the engine refuses. `a` is a loop
+		// copy — this never writes back to accounts.json.
+		if d.Pinned != nil && d.Pinned(a) {
+			a.Pinned = true
+		}
+		st.Accounts = append(st.Accounts, AccountState{Account: a, Snapshot: snap, TokenNote: note, Stale: stale})
 	}
 	if d.Active != nil {
 		st.ActiveID = d.Active(ctx)
+	}
+	// Stash: metadata only, [] when empty or unwired, dead lineages flagged
+	// so surfaces can say "needs a fresh sign-in" before an adopt attempt.
+	st.Stash = []pilotapi.StashEntry{}
+	if d.StashList != nil {
+		entries, err := d.StashList(ctx)
+		if err != nil {
+			d.Log.Warn("read stash", "err", err)
+		}
+		for _, e := range entries {
+			e.Dead = d.IsLineageDead(e.Fingerprint)
+			st.Stash = append(st.Stash, e)
+		}
 	}
 	// Events are auxiliary: an unreadable log degrades state, never kills it.
 	evs, err := d.Store.Events(20)
@@ -360,7 +468,7 @@ func (d *Daemon) State(ctx context.Context) (State, error) {
 	return st, nil
 }
 
-// Run drives the poll and refresh loops until ctx is done.
+// Run drives the poll loop until ctx is done.
 func (d *Daemon) Run(ctx context.Context) error {
 	d.init()
 	if d.Revalidate != nil {
@@ -368,12 +476,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
-	// The refresh loop runs on its OWN goroutine, not this select: a keep-warm
-	// refresh holds credential locks across an ~8s network POST, and it must
-	// never stall usage polling or wake arming.
-	if (d.KeepWarm != nil || d.Refresh != nil) && d.Expiry != nil {
-		go d.refreshLoop(ctx)
-	}
 	var wakeTick <-chan time.Time
 	if d.WakeSync != nil {
 		wt := time.NewTicker(time.Minute)
@@ -392,36 +494,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case <-wakeTick:
 			d.wakeSync(ctx)
 		}
-	}
-}
-
-// refreshLoop drives the idle-token keep-warm on its own goroutine so a
-// lock-holding, network-bound refresh never blocks the poll select. Runs one
-// pass immediately (a fresh daemon may inherit already-stale idle tokens),
-// then every RefreshCheck. Passes never overlap — the ticker waits out a slow
-// pass rather than stacking refreshes on the same account.
-func (d *Daemon) refreshLoop(ctx context.Context) {
-	t := time.NewTicker(d.RefreshCheck)
-	defer t.Stop()
-	d.refreshIdle(ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			d.refreshIdle(ctx)
-		case <-d.refreshNudge:
-			d.refreshIdle(ctx)
-		}
-	}
-}
-
-// nudgeRefresh asks the refresh loop to run a pass now (coalesced). Non-
-// blocking: a nudge already queued is enough.
-func (d *Daemon) nudgeRefresh() {
-	select {
-	case d.refreshNudge <- struct{}{}:
-	default:
 	}
 }
 
@@ -447,26 +519,212 @@ func (d *Daemon) pollDue(ctx context.Context) {
 	now := time.Now()
 	d.fastPollOnSwitch(ctx, now)
 	d.checkUnregistered(ctx, accs)
+	active := ""
+	if d.Active != nil {
+		active = d.Active(ctx)
+	}
 	for _, a := range accs {
+		if a.ID == active {
+			// Claude Code refreshes the active credential on use, so an
+			// observed-active account cannot have a dead lineage: lift any
+			// quarantine (and its note) here — the one lift that needs no
+			// switch or re-poll (a user recovering a quarantined account by
+			// re-logging-in makes it active, and nothing else may touch it).
+			d.mu.Lock()
+			_, wasQuarantined := d.quarantine[a.ID]
+			delete(d.quarantine, a.ID)
+			if wasQuarantined && d.tokenNotes[a.ID] == deadLineageNote {
+				delete(d.tokenNotes, a.ID)
+			}
+			d.mu.Unlock()
+			if wasQuarantined {
+				d.persistQuarantine() // the lift must survive a restart too
+				d.notify(ctx)
+			}
+		}
 		d.mu.Lock()
-		// The 429 pause is shared: one throttled account silences the whole
-		// fleet, including later accounts in the same pass.
-		paused := now.Before(d.pausedUntil)
+		// The 429 cooldown is per-account: a throttled account skips its own
+		// poll but never silences the rest of the fleet.
+		cooling := d.cooling(a.ID, now)
 		due := now.After(d.nextPoll[a.ID]) || d.nextPoll[a.ID].IsZero()
 		// A quarantined account has a provably dead refresh token: polling it
 		// only draws a 401 every pass. Skip it — the dashboard already shows
-		// the honest "sign-in expired" note; the refresh loop lifts the
-		// quarantine the moment the user re-logs-in.
+		// the honest note; the lift above runs when the user re-logs-in.
 		_, quarantined := d.quarantine[a.ID]
 		d.mu.Unlock()
-		if paused {
-			return
+		if cooling || !due || quarantined {
+			continue
 		}
-		if !due || quarantined {
+		if d.staleIdle(ctx, a, now) {
+			continue
+		}
+		// The rolling budget is the last gate before the network: a spent
+		// window pushes this account's next poll to when a slot frees up.
+		d.mu.Lock()
+		wait := d.budgetWait(a.ID, now)
+		if wait > 0 {
+			if until := now.Add(wait); d.nextPoll[a.ID].Before(until) {
+				d.nextPoll[a.ID] = until
+			}
+		}
+		d.mu.Unlock()
+		if wait > 0 {
+			d.Log.Warn("usage poll budget spent — waiting for a slot", "account", a.ID, "wait", wait.Round(time.Second))
 			continue
 		}
 		d.pollOne(ctx, a)
 	}
+}
+
+// budgetWait reports how long account id must wait before its next usage GET
+// under HourlyPollBudget (0 = a slot is free). Caller holds d.mu.
+func (d *Daemon) budgetWait(id string, now time.Time) time.Duration {
+	times := d.pollTimes[id]
+	cut := now.Add(-time.Hour)
+	for len(times) > 0 && !times[0].After(cut) {
+		times = times[1:]
+	}
+	if len(times) < HourlyPollBudget {
+		return 0
+	}
+	return times[len(times)-HourlyPollBudget].Add(time.Hour).Sub(now)
+}
+
+// recordPoll notes one usage GET in the rolling budget window, pruning aged
+// entries. Caller holds d.mu.
+func (d *Daemon) recordPoll(id string, now time.Time) {
+	times := d.pollTimes[id]
+	cut := now.Add(-time.Hour)
+	kept := times[:0]
+	for _, t := range times {
+		if t.After(cut) {
+			kept = append(kept, t)
+		}
+	}
+	d.pollTimes[id] = append(kept, now)
+}
+
+// pollGap is the per-account floor between two usage GETs: MinPollGap in
+// production, the configured interval when a test runs faster than that.
+func (d *Daemon) pollGap() time.Duration {
+	if d.AllowFastPoll && d.PollInterval < MinPollGap {
+		return d.PollInterval
+	}
+	return MinPollGap
+}
+
+// resetPull returns the post-reset poll time when some bucket resets in the
+// future: a beat after the earliest reset, jittered so a fleet sharing a
+// reset instant doesn't stampede the endpoint, floored at pollGap from now.
+func (d *Daemon) resetPull(buckets []store.Bucket, now time.Time) (time.Time, bool) {
+	var earliest time.Time
+	for _, b := range buckets {
+		if b.ResetsAt == nil || !b.ResetsAt.After(now) {
+			continue
+		}
+		if earliest.IsZero() || b.ResetsAt.Before(earliest) {
+			earliest = *b.ResetsAt
+		}
+	}
+	if earliest.IsZero() {
+		return time.Time{}, false
+	}
+	pull := earliest.Add(10*time.Second + time.Duration(rand.Int63n(int64(20*time.Second)))) //nolint:gosec // schedule jitter, not crypto
+	if floor := now.Add(d.pollGap()); pull.Before(floor) {
+		pull = floor
+	}
+	return pull, true
+}
+
+// staleIdle is the read-only stale gate, run only when a poll is due (at most
+// once per PollInterval per account — Expiry reads the locally stored
+// credential, no network). A stored token past expiry means a poll would only
+// 401, and a background refresh would arm Anthropic's refresh throttle
+// (#38248) — so the account goes stale instead: last-known snapshot, honest
+// badge, zero network. The stored expiry moving forward — the user used or
+// switched to the account, so Claude Code refreshed it — reopens the gate on
+// the next due pass. Applies to the active account too: an all-night-idle
+// active account is just as expired, and gating it beats 401-hammering.
+// The autopilot's strict revive is the one sanctioned waker besides the
+// user: a single budget-governed, proven refresh at switch time (P3) —
+// still never a periodic refresh loop.
+func (d *Daemon) staleIdle(ctx context.Context, a store.Account, now time.Time) bool {
+	if d.Expiry == nil {
+		return false
+	}
+	exp, err := d.Expiry(ctx, a)
+	if err != nil || exp.IsZero() {
+		return false // expiry unknown — poll and let the server answer
+	}
+	d.mu.Lock()
+	recorded, isStale := d.stale[a.ID]
+	d.mu.Unlock()
+	if isStale {
+		if !exp.Equal(recorded) {
+			// The stored credential CHANGED since the account went stale —
+			// the user woke it. Any change counts, not just a later expiry:
+			// a re-login can mint a token expiring EARLIER than the old
+			// recorded timestamp, and gating on "later" would freeze that
+			// recovered account forever. Reopen; the next poll proves it.
+			if d.clearStale(a.ID) {
+				d.notify(ctx)
+			}
+			return false
+		}
+		// Same credential as when it went stale (whether it expired locally
+		// or the server 401'd a valid-looking one): hold, zero network.
+		// "Expiry looks valid" is NOT a clear condition — a 401 arrives
+		// precisely then, and clearing on looks would flap and re-hammer.
+		d.mu.Lock()
+		d.nextPoll[a.ID] = now.Add(d.PollInterval) // re-check at poll cadence
+		d.mu.Unlock()
+		return true
+	}
+	if !now.After(exp) {
+		return false
+	}
+	d.mu.Lock()
+	d.nextPoll[a.ID] = now.Add(d.PollInterval) // re-check the expiry at poll cadence
+	d.mu.Unlock()
+	if d.markStale(a.ID, exp) {
+		d.Log.Info("account went stale — token expired while idle", "account", a.ID)
+		d.notify(ctx)
+	}
+	return true
+}
+
+// markStale flags an account stale with the honest note, recording the
+// stored expiry observed at mark time (zero = unknown) so staleIdle can
+// detect the credential actually changing. Reports whether visible state
+// changed.
+func (d *Daemon) markStale(id string, exp time.Time) bool {
+	d.mu.Lock()
+	prev, was := d.stale[id]
+	if was && exp.IsZero() && !prev.IsZero() {
+		// A failed expiry re-read must never clobber a known baseline: zero
+		// would make the next successful read look like a credential change
+		// and re-open the flap the baseline exists to prevent.
+		exp = prev
+	}
+	d.stale[id] = exp
+	d.mu.Unlock()
+	noteChanged := d.setTokenNote(id, staleNote)
+	return !was || noteChanged
+}
+
+// clearStale lifts the stale flag and its note (never another path's note),
+// reporting whether visible state changed.
+func (d *Daemon) clearStale(id string) bool {
+	d.mu.Lock()
+	_, was := d.stale[id]
+	delete(d.stale, id)
+	changed := was
+	if d.tokenNotes[id] == staleNote {
+		delete(d.tokenNotes, id)
+		changed = true
+	}
+	d.mu.Unlock()
+	return changed
 }
 
 // fastPollOnSwitch notices the active account changing (a manual /login, our
@@ -488,7 +746,7 @@ func (d *Daemon) fastPollOnSwitch(ctx context.Context, now time.Time) {
 	if first {
 		return
 	}
-	earliest := d.lastPolled[cur].Add(d.PollInterval)
+	earliest := d.lastPolled[cur].Add(d.pollGap())
 	if earliest.Before(now) {
 		// already past the floor — make it due THIS pass (the due check is
 		// a strict now.After).
@@ -503,7 +761,7 @@ func (d *Daemon) fastPollOnSwitch(ctx context.Context, now time.Time) {
 // the registry (a manual /login to a new account): one event + notification
 // per distinct email — honest surfacing with a one-command adopt, never a
 // silent auto-registration (the daemon must not start polling an account
-// the owner never told it about).
+// the user never told it about).
 func (d *Daemon) checkUnregistered(ctx context.Context, accs []store.Account) {
 	if d.ActiveEmail == nil {
 		return
@@ -538,7 +796,10 @@ func (d *Daemon) checkUnregistered(ctx context.Context, accs []store.Account) {
 			}
 		}
 	}
-	msg := email + " is logged in but not registered — `llmpilot init` adopts it"
+	// The GUIs can adopt this now (P4 made adopt resolve by identity, so a
+	// new sign-in in the global dir is adoptable there) — the old copy sent
+	// the user to a terminal because the cockpit's adopt used to 409.
+	msg := email + " is signed in but not in the fleet — add it from Add account in the cockpit"
 	if err := d.Store.AppendEvent(store.Event{Kind: "unregistered", Message: msg}); err != nil {
 		d.Log.Error("append event", "err", err)
 	}
@@ -555,34 +816,67 @@ func (d *Daemon) pollOne(ctx context.Context, a store.Account) {
 
 	d.mu.Lock()
 	d.lastPolled[a.ID] = now
+	d.recordPoll(a.ID, now)
 	// jitter ±10% so a fleet of accounts doesn't fire in lockstep.
 	jitter := time.Duration(rand.Int63n(int64(d.PollInterval) / 5)) //nolint:gosec // schedule jitter, not crypto
-	d.nextPoll[a.ID] = now.Add(d.PollInterval - d.PollInterval/10 + jitter)
+	next := now.Add(d.PollInterval - d.PollInterval/10 + jitter)
+	// Reset-aware pull-in: when a bucket resets sooner than the steady
+	// cadence, poll just after the reset so the freed headroom shows up
+	// promptly instead of a stale near-limit reading lingering a full
+	// interval. Only ever pulls EARLIER; the budget and pollGap still floor it.
+	if err == nil {
+		if pull, ok := d.resetPull(buckets, now); ok && pull.Before(next) {
+			next = pull
+		}
+	}
+	d.nextPoll[a.ID] = next
 	if err != nil {
 		var se *anthropic.StatusError
-		nudge := false
+		unauthorized := false
+		rateLimited := false
 		switch {
-		case errors.As(err, &se) && (se.StatusCode == 429 || se.StatusCode >= 500):
-			d.pausedUntil = now.Add(anthropic.Backoff(d.attempt))
-			d.attempt++
-			d.Log.Warn("usage poll backing off", "account", a.ID, "status", se.StatusCode, "until", d.pausedUntil)
+		case errors.As(err, &se) && se.StatusCode == 429:
+			until := d.noteRateLimited(a.ID, se.RetryAfter, now)
+			rateLimited = true
+			d.Log.Warn("usage poll rate-limited — cooling down", "account", a.ID, "until", until)
+		case errors.As(err, &se) && se.StatusCode >= 500:
+			d.noteServerError(a.ID, now)
+			d.Log.Warn("usage poll backing off", "account", a.ID, "status", se.StatusCode)
 		case errors.As(err, &se) && se.StatusCode == 401:
-			// The access token lapsed (an idle account whose token expired
-			// between refresh passes). Ask the refresh loop to heal it now
-			// rather than 401-ing every poll until the next 10-minute tick.
-			nudge = true
-			d.Log.Warn("usage poll unauthorized — nudging refresh", "account", a.ID)
+			// The token lapsed under us (the stored expiry looked fine, the
+			// server disagreed). Same honest treatment as the local stale
+			// gate: freeze at last-known, no background refresh — the account
+			// wakes when the user uses or switches to it.
+			unauthorized = true
+			d.Log.Warn("usage poll unauthorized — marking stale", "account", a.ID)
 		default:
 			d.Log.Error("usage poll", "account", a.ID, "err", err)
 		}
 		d.mu.Unlock()
-		if nudge {
-			d.nudgeRefresh()
+		// setTokenNote/markStale lock d.mu themselves — apply AFTER the
+		// unlock above, never double-lock.
+		if rateLimited {
+			d.setTokenNote(a.ID, rateLimitedNote)
+		}
+		if unauthorized {
+			// Record the stored expiry as-of the 401 so staleIdle only
+			// reopens the gate when the credential actually changes (an
+			// unknown expiry records zero: any learned expiry counts as
+			// change, and polls keep probing at cadence meanwhile).
+			var exp time.Time
+			if d.Expiry != nil {
+				if e, eerr := d.Expiry(ctx, a); eerr == nil {
+					exp = e
+				}
+			}
+			if d.markStale(a.ID, exp) {
+				d.notify(ctx)
+			}
 		}
 		return
 	}
-	d.attempt = 0
-	d.mu.Unlock() // released before store I/O and notify (State re-locks)
+	d.clearCooldown(a.ID) // a proven success clears THIS account's 429 gate
+	d.mu.Unlock()         // released before store I/O and notify (State re-locks)
 	d.enqueueEntitlementCheck(now)
 
 	prev, _ := d.Store.Snapshot(a.ID)
@@ -595,10 +889,17 @@ func (d *Daemon) pollOne(ctx context.Context, a store.Account) {
 		d.appendHistory(historyKey(a.ID, b.Kind, b.Scope), HistorySample{At: now.UTC(), Percent: b.Percent})
 	}
 	d.checkThresholds(ctx, a, prev, snap)
-	if prev == nil || !reflect.DeepEqual(prev.Buckets, snap.Buckets) {
+	// A proven success is live data: any stale flag or note (rate-limit,
+	// stale) is over — nothing else clears them for an idle account.
+	staleCleared := d.clearStale(a.ID)
+	noteCleared := d.setTokenNote(a.ID, "")
+	if prev == nil || !reflect.DeepEqual(prev.Buckets, snap.Buckets) || staleCleared || noteCleared {
 		d.notify(ctx)
 	}
-	if d.Freshen != nil && d.Active != nil && d.Active(ctx) == a.ID {
+	d.mu.Lock()
+	cooling := d.cooling(a.ID, now)
+	d.mu.Unlock()
+	if !cooling && d.Freshen != nil && d.Active != nil && d.Active(ctx) == a.ID {
 		if changed, err := d.Freshen(ctx, a); err != nil {
 			d.Log.Warn("freshen backup", "account", a.ID, "err", err)
 		} else if changed {
@@ -648,185 +949,76 @@ func (d *Daemon) entitlementLoop(ctx context.Context) {
 	}
 }
 
-// quarantineNote is the honest surface for a dead refresh-token lineage: a
-// plain re-login is the only recovery (unlike an expiring-but-live token,
-// which any claude session refreshes). Rendered by the menu bar and cockpit.
-const quarantineNote = "sign-in expired — log in to this account again, then run `llmpilot account add`"
+// rateLimitedNote is the honest surface for a SHORT-transient usage-poll 429:
+// the read-only usage GET is throttled but the stored token is still valid, so
+// the next poll self-clears — no user action needed. Rendered by the menu bar
+// and cockpit.
+const rateLimitedNote = "rate-limited by Anthropic — llmpilot will refresh it automatically once the limit clears"
 
-// refreshIdle keeps every idle account's token fresh — the Wave 8.3 pillar.
-// For each account within RefreshLead of expiry (and NOT the active account,
-// which Claude Code owns), it tries a direct OAuth refresh; a permanent
-// invalid_grant quarantines the account with an honest note; a transient
-// failure falls back to the `claude auth status` delegation, and if THAT
-// didn't move the expiry either, an honest expiring/expired note. A dead
-// lineage self-heals: once the user re-logs-in its fingerprint changes and
-// the next pass retries.
-func (d *Daemon) refreshIdle(ctx context.Context) {
-	accs, err := d.Store.Accounts()
-	if err != nil {
-		d.Log.Error("load accounts", "err", err)
-		return
-	}
-	active := ""
-	if d.Active != nil {
-		active = d.Active(ctx)
-	}
-	now := d.now()
-	changed := false
-	for _, a := range accs {
-		if a.ID == active {
-			// Claude Code owns the active account's credential (refreshes on
-			// use, caches ~30s). Racing it is the clobber hazard — never. But
-			// the active account is healthy BY DEFINITION, so clear any stale
-			// quarantine/note here: a user who re-logs-in to recover a
-			// quarantined account makes it active, and this is the only place
-			// that can lift the quarantine once it is (poll skips it, and the
-			// idle branches below never run for the active account).
-			if d.clearAccountNote(a.ID) {
-				changed = true
-			}
-			continue
-		}
-		exp, err := d.Expiry(ctx, a)
-		if err != nil || exp.IsZero() {
-			continue // no expiry known — nothing to lead on
-		}
-		if exp.Sub(now) > d.RefreshLead {
-			if d.clearAccountNote(a.ID) {
-				changed = true
-			}
-			continue
-		}
-		// Quarantined dead lineage: skip the network entirely until the user
-		// re-logs-in (the stored credential's fingerprint then changes).
-		if d.quarantined(ctx, a) {
-			if d.setTokenNote(a.ID, quarantineNote) {
-				changed = true
-			}
-			continue
-		}
-		if d.tryKeepWarm(ctx, a, exp, now) {
-			changed = true
-		}
-	}
-	if changed {
-		d.notify(ctx)
-	}
-}
+// staleNote is the honest surface for a stale account: its stored token
+// expired while idle, and a background refresh would arm Anthropic's refresh
+// throttle (issue #38248) — so the data is frozen at last-known until the
+// account is woken. Wakers: the user (open/switch), or the autopilot's
+// strict revive — one budget-governed, proven refresh at switch time, never
+// a periodic loop (P3). Rendered by the menu bar and cockpit.
+const staleNote = "usage may be out of date — open this account in Claude Code, or switch to it here, to refresh"
 
-// tryKeepWarm runs one refresh attempt for a near-expiry idle account and
-// records the resulting note/quarantine. Returns whether visible state
-// changed.
-func (d *Daemon) tryKeepWarm(ctx context.Context, a store.Account, exp, now time.Time) bool {
-	// Re-check the shared refresh-endpoint pause per account (NOT once per
-	// pass): a 429 on the first account must stop the rest of the fleet in the
-	// same pass, or a fleet of near-expiry accounts hammers the endpoint.
-	d.mu.Lock()
-	refreshPaused := now.Before(d.refreshPausedUntil)
-	d.mu.Unlock()
-	if d.KeepWarm != nil && !refreshPaused {
-		status, err := d.KeepWarm(ctx, a)
-		switch {
-		case err == nil && status.Rotated:
-			d.Log.Info("idle refresh done", "account", a.ID, "expires", status.Expiry)
-			d.mu.Lock()
-			d.refreshAttempt = 0 // a success clears the endpoint-backoff ratchet
-			d.mu.Unlock()
-			return d.clearAccountNote(a.ID)
-		case err == nil && status.Dead:
-			d.Log.Warn("idle refresh: refresh token dead — quarantined", "account", a.ID)
-			d.setQuarantine(a.ID, status.Fingerprint)
-			return d.setTokenNote(a.ID, quarantineNote)
-		case err != nil:
-			d.noteRefreshFailure(err, now)
-			d.Log.Warn("idle refresh (direct)", "account", a.ID, "err", err)
-			// fall through to the delegation fallback below
-		default:
-			// The engine skipped (e.g. CC already refreshed under its lock, or
-			// no refresh token) — fall through to re-verify expiry honestly.
-		}
-	}
-	// Fallback: the read-only delegation, then verify the expiry actually
-	// moved (it usually will not in current Claude Code — hence the note).
-	if d.Refresh != nil {
-		if err := d.Refresh(ctx, a); err != nil {
-			d.Log.Warn("idle refresh (delegated)", "account", a.ID, "err", err)
-		}
-	}
-	after, err := d.Expiry(ctx, a)
-	note := ""
-	switch {
-	case err == nil && after.After(exp):
-		d.Log.Info("idle refresh done (delegated)", "account", a.ID, "expires", after)
-	case now.After(exp):
-		note = "token expired — run any claude session on this account to refresh"
-	default:
-		note = "token expiring " + exp.Sub(now).Round(time.Minute).String() +
-			" — run any claude session on this account to refresh"
-	}
-	return d.setTokenNote(a.ID, note)
-}
+// deadLineageNote is the honest surface for a provably dead refresh-token
+// lineage (the token endpoint rejected the grant at switch time): a re-login
+// is the only recovery. Rendered by the menu bar and cockpit.
+const deadLineageNote = "sign-in expired — log in to this account again to recover it"
 
-// noteRefreshFailure records a shared OAuth-endpoint backoff on a 429 so the
-// daemon does not hammer the token endpoint across the fleet.
-func (d *Daemon) noteRefreshFailure(err error, now time.Time) {
-	var re *anthropic.StatusError
-	var rfe *anthropic.RefreshError
-	is429 := (errors.As(err, &re) && re.StatusCode == 429) ||
-		(errors.As(err, &rfe) && rfe.StatusCode == 429)
-	if !is429 {
-		return
-	}
-	d.mu.Lock()
-	d.refreshPausedUntil = now.Add(anthropic.Backoff(d.refreshAttempt))
-	d.refreshAttempt++
-	d.mu.Unlock()
-}
-
-// quarantined reports whether an account's lineage is a known-dead one that
-// has NOT changed (a re-login would change the fingerprint and lift the
-// quarantine). Reads the stored fingerprint (no network).
-func (d *Daemon) quarantined(ctx context.Context, a store.Account) bool {
-	d.mu.Lock()
-	dead := d.quarantine[a.ID]
-	d.mu.Unlock()
-	if dead == "" {
-		return false
-	}
-	if d.Fingerprint == nil {
-		return true // can't check for a re-login; stay quarantined (honest)
-	}
-	fp, err := d.Fingerprint(ctx, a)
-	if err != nil || fp == "" {
-		return true
-	}
-	if fp != dead {
-		// Re-login: the lineage changed. Lift the quarantine and let the next
-		// step retry the refresh.
-		d.mu.Lock()
-		delete(d.quarantine, a.ID)
-		d.mu.Unlock()
-		return false
-	}
-	return true
-}
-
-func (d *Daemon) setQuarantine(id, fingerprint string) {
+// QuarantineDeadLineage marks an account's refresh-token lineage provably
+// dead. Only an activation attempt can discover this (the switch-time
+// freshen or the autopilot revive getting invalid_grant — the daemon still
+// runs no periodic refresh); both writers funnel through this method. The
+// poll loop skips the account, autopilot stops nominating it, and the
+// quarantine lifts when the account is next observed ACTIVE (the user
+// re-logged-in; see pollDue).
+func (d *Daemon) QuarantineDeadLineage(ctx context.Context, id, fingerprint string) {
+	d.init()
 	d.mu.Lock()
 	d.quarantine[id] = fingerprint
 	d.mu.Unlock()
+	d.persistQuarantine() // survives a daemon restart (see quarantine.go)
+	d.setTokenNote(id, deadLineageNote)
+	d.Log.Warn("refresh-token lineage dead — quarantined until re-login", "account", id)
+	d.notify(ctx)
 }
 
-// clearAccountNote clears any token note AND any quarantine for an account,
-// reporting whether visible state changed.
-func (d *Daemon) clearAccountNote(id string) bool {
-	d.mu.Lock()
-	_, wasQuarantined := d.quarantine[id]
-	delete(d.quarantine, id)
-	d.mu.Unlock()
-	noteChanged := d.setTokenNote(id, "")
-	return noteChanged || wasQuarantined
+// coolState is one account's rate-limit gate: no usage poll runs for the
+// account before until; attempt ratchets the backoff.
+type coolState struct {
+	until   time.Time
+	attempt int
 }
+
+// cooling reports whether account id is inside its rate-limit cooldown.
+// Caller holds d.mu.
+func (d *Daemon) cooling(id string, now time.Time) bool { return now.Before(d.cooldown[id].until) }
+
+// noteRateLimited records a 429 for id (retryAfter from the header, 0 if none)
+// and returns the new cool-until. Caller holds d.mu.
+func (d *Daemon) noteRateLimited(id string, retryAfter time.Duration, now time.Time) time.Time {
+	cs := d.cooldown[id]
+	cs.until = now.Add(anthropic.RateLimitBackoff(cs.attempt, retryAfter))
+	cs.attempt++
+	d.cooldown[id] = cs
+	return cs.until
+}
+
+// noteServerError records a transient 5xx (short backoff, same per-account
+// gate). Caller holds d.mu.
+func (d *Daemon) noteServerError(id string, now time.Time) {
+	cs := d.cooldown[id]
+	cs.until = now.Add(anthropic.Backoff(cs.attempt))
+	cs.attempt++
+	d.cooldown[id] = cs
+}
+
+// clearCooldown resets id's gate after a proven success (only THIS account).
+// Caller holds d.mu.
+func (d *Daemon) clearCooldown(id string) { delete(d.cooldown, id) }
 
 // setTokenNote records a token warning and reports whether it changed.
 func (d *Daemon) setTokenNote(id, note string) bool {

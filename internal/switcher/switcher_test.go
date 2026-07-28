@@ -83,6 +83,18 @@ func (f *fakeKeychain) run(_ context.Context, stdin []byte, name string, args ..
 		svc, acct := flagVal(args, "-s"), flagVal(args, "-a")
 		delete(f.items, svc+"\x00"+acct)
 		return nil, nil
+	case strings.HasPrefix(joined, "dump-keychain"):
+		// Attribute-only dump in the real tool's block format — the List
+		// parser is exercised against this shape (the e2e runs the real one).
+		var b strings.Builder
+		for k := range f.items {
+			parts := strings.SplitN(k, "\x00", 2)
+			fmt.Fprintf(&b, "keychain: \"/tmp/fake-throwaway.keychain-db\"\n")
+			fmt.Fprintf(&b, "class: \"genp\"\nattributes:\n")
+			fmt.Fprintf(&b, "    \"acct\"<blob>=%q\n", parts[1])
+			fmt.Fprintf(&b, "    \"svce\"<blob>=%q\n", parts[0])
+		}
+		return []byte(b.String()), nil
 	}
 	return nil, fmt.Errorf("unhandled security call: %s", joined)
 }
@@ -145,7 +157,10 @@ func sandbox(t *testing.T) (*Switcher, *fakeKeychain, claudecfg.Dir, *bytes.Buff
 	}
 
 	var out bytes.Buffer
-	sw := &Switcher{Dir: dir, Keychain: kc, Registry: st, Out: &out, KeychainAccount: "tester"}
+	// The clone guard's default scan reads the machine's real home layout —
+	// hermetic tests must never depend on the developer's own ~/.claude.
+	sw := &Switcher{Dir: dir, Keychain: kc, Registry: st, Out: &out, KeychainAccount: "tester",
+		ScanDirs: func() ([]string, error) { return nil, nil }}
 	// seed b's backup (as `llmpilot account add` would have)
 	if err := sw.SaveBackup(context.Background(), "acct-b", credJSON("token-b-STORED"), oauthJSON("b@example.dev")); err != nil {
 		t.Fatal(err)

@@ -18,8 +18,7 @@ and demo overlay are client-hydrated React islands with Motion.
 - **@astrojs/sitemap** — `sitemap-index.xml` at build.
 
 Design tokens are the cockpit's `-dark` twins verbatim (`src/styles/tokens.css`),
-sourced from `../design/DESIGN.md` + `../design/DESIGN-landing.md` — one source
-of truth, no drift with the app.
+— one source of truth, no drift with the app.
 
 ## Develop
 
@@ -59,7 +58,7 @@ Cloudflare's and Astro's current recommendation for new static sites.)
 - Product imagery only from `public/assets/product/` (masked demo accounts).
   The full cockpit-history PNG was deliberately removed — its Projects card
   named a real sibling repo. Only the cropped burn-rate card ships.
-- Voice = `../design/DESIGN.md` §Voice (dispatcher; sentence case; no "!";
+- Voice: dispatcher register; sentence case; no "!";
   "switched" not "rotated"; banned-word list). Color is meaning, one gradient
   budget (zero CSS gradients here), one typeface, tabular numerals, rotation 0°.
 - The hero demo slot stays an honest empty frame until the real recording

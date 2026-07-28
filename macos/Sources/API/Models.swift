@@ -7,6 +7,9 @@ struct DaemonState: Decodable, Equatable {
     var accounts: [AccountState]
     var activeID: String?
     var schedules: [Schedule]
+    /// Preserved foreign credentials awaiting adopt/discard (metadata only —
+    /// the payload never rides the wire). Empty array when none.
+    var stash: [StashEntry]
     /// license_status: the daemon's projection — trialing | lifetime | lapsed |
     /// revoked; absent (nil) means no entitlement yet. The menu bar reads this
     /// to show Pro state without a second request (it rides /v1/state + SSE).
@@ -17,8 +20,33 @@ struct DaemonState: Decodable, Equatable {
         case accounts
         case activeID = "active_id"
         case schedules
+        case stash
         case license = "license_status"
         case asOf = "as_of"
+    }
+
+    init(accounts: [AccountState], activeID: String?, schedules: [Schedule],
+         stash: [StashEntry] = [], license: String? = nil, asOf: Date)
+    {
+        self.accounts = accounts
+        self.activeID = activeID
+        self.schedules = schedules
+        self.stash = stash
+        self.license = license
+        self.asOf = asOf
+    }
+
+    /// Go marshals nil slices as JSON null; a fresh install has zero
+    /// accounts, and that state must decode — never kill the whole fleet
+    /// view (the web side normalizes the same way).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        accounts = try c.decodeIfPresent([AccountState].self, forKey: .accounts) ?? []
+        activeID = try c.decodeIfPresent(String.self, forKey: .activeID)
+        schedules = try c.decodeIfPresent([Schedule].self, forKey: .schedules) ?? []
+        stash = try c.decodeIfPresent([StashEntry].self, forKey: .stash) ?? []
+        license = try c.decodeIfPresent(String.self, forKey: .license)
+        asOf = try c.decode(Date.self, forKey: .asOf)
     }
 
     /// A trialing or lifetime grant is the only "Pro is on" state.
@@ -32,9 +60,12 @@ struct AccountState: Decodable, Equatable, Identifiable {
     var pinned: Bool
     var snapshot: UsageSnapshot?
     var tokenNote: String?
+    /// The daemon's authoritative stale mark: the stored token expired while
+    /// idle, so `snapshot` is frozen at last-known until the account wakes.
+    var stale: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, label, email, pinned, snapshot
+        case id, label, email, pinned, snapshot, stale
         case tokenNote = "token_note"
     }
 }
@@ -77,6 +108,24 @@ struct Bucket: Decodable, Equatable {
     }
 }
 
+/// One preserved foreign credential (a swap found an unknown account's
+/// sign-in in the global slot and kept it instead of guessing an owner).
+/// `dead` marks a lineage the token endpoint has rejected — adopting it
+/// needs a fresh sign-in.
+struct StashEntry: Decodable, Equatable, Identifiable {
+    var fingerprint: String
+    var label: String?
+    var stashedAt: Date
+    var dead: Bool?
+
+    var id: String { fingerprint }
+
+    enum CodingKeys: String, CodingKey {
+        case fingerprint, label, dead
+        case stashedAt = "stashed_at"
+    }
+}
+
 struct Schedule: Decodable, Equatable, Identifiable {
     var id: String
     var accountID: String
@@ -93,12 +142,31 @@ struct DetectedDir: Decodable, Equatable, Identifiable {
     var configDir: String
     var email: String
     var registered: Bool
+    /// A migration has already moved this dir into the fleet. Older daemons
+    /// predate the field — absence decodes to false, never fails the row
+    /// (a field the emitter omits must still decode).
+    var moved: Bool
 
     var id: String { configDir }
 
     enum CodingKeys: String, CodingKey {
         case configDir = "config_dir"
-        case email, registered
+        case email, registered, moved
+    }
+
+    init(configDir: String, email: String, registered: Bool, moved: Bool = false) {
+        self.configDir = configDir
+        self.email = email
+        self.registered = registered
+        self.moved = moved
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        configDir = try c.decode(String.self, forKey: .configDir)
+        email = try c.decodeIfPresent(String.self, forKey: .email) ?? ""
+        registered = try c.decodeIfPresent(Bool.self, forKey: .registered) ?? false
+        moved = try c.decodeIfPresent(Bool.self, forKey: .moved) ?? false
     }
 }
 

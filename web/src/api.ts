@@ -39,12 +39,28 @@ export interface DaemonEvent {
 export interface AccountState extends Account {
   snapshot?: UsageSnapshot;
   token_note?: string;
+  /** the daemon's authoritative stale mark: the stored token expired while
+   * idle, so `snapshot` is frozen at last-known until the account wakes. */
+  stale?: boolean;
+}
+
+/** One preserved foreign credential (a swap found an unknown sign-in in the
+ * global slot and kept it instead of guessing an owner). Metadata only —
+ * the credential itself never rides the wire. `dead` marks a lineage the
+ * token endpoint has rejected: adopting needs a fresh sign-in. */
+export interface StashEntry {
+  fingerprint: string;
+  label?: string;
+  stashed_at: string;
+  dead?: boolean;
 }
 
 export interface State {
   accounts: AccountState[];
   active_id: string;
   events: DaemonEvent[];
+  /** preserved sign-ins awaiting adopt/discard; [] when none (never null). */
+  stash?: StashEntry[];
   as_of: string;
   /** rides State once the daemon serves it; SSE keeps it live. */
   schedules?: import("./schedule.ts").Schedule[];
@@ -74,6 +90,9 @@ export interface DetectedDir {
   config_dir: string;
   email: string;
   registered: boolean;
+  /** this dir's sign-in was already migrated into the fleet (its source
+   *  copy retired) — informational only, never offer a verb on it. */
+  moved: boolean;
 }
 
 export async function fetchConfig(): Promise<Config> {
@@ -112,6 +131,128 @@ export async function adoptAccount(configDir: string): Promise<void> {
   }
 }
 
+/** Outcome of moving a detected sign-in into the fleet. `clone_suspect` means
+ *  the move completed but a second copy of the credential may still exist —
+ *  `note` explains why llmpilot will hold off switching to it. */
+export interface AdoptMoveResult {
+  account: Account;
+  outcome: "complete" | "clone_suspect";
+  note: string;
+}
+
+/** Move a detected sign-in into the fleet: copies the credential into
+ *  llmpilot's own storage, registers the account switchable, and DELETES the
+ *  sign-in from the source config dir. Destructive; auth-guarded exactly like
+ *  stash adopt below. */
+export async function adoptMove(configDir: string, label?: string): Promise<AdoptMoveResult> {
+  const res = await fetch("/v1/adopt/move", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(label ? { config_dir: configDir, label } : { config_dir: configDir }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `move: HTTP ${res.status}`);
+  }
+  return (await res.json()) as AdoptMoveResult;
+}
+
+/** Adopt a stashed sign-in into the fleet. Auth-guarded mutation. */
+export async function adoptStash(fingerprint: string, label?: string): Promise<void> {
+  const res = await fetch("/v1/stash/adopt", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(label ? { fingerprint, label } : { fingerprint }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `adopt: HTTP ${res.status}`);
+  }
+}
+
+/** Discard a stashed sign-in — deletes its stored credential. */
+export async function discardStash(fingerprint: string): Promise<void> {
+  const res = await fetch("/v1/stash/discard", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ fingerprint }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `discard: HTTP ${res.status}`);
+  }
+}
+
+export interface LoginStart {
+  authorize_url: string;
+  state: string;
+}
+
+/** Begin an in-app sign-in: the daemon mints PKCE+state and returns the
+ *  approval URL. The verifier never reaches this page. */
+export async function startLogin(): Promise<LoginStart> {
+  const res = await fetch("/v1/login/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: "{}",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `sign-in start: HTTP ${res.status}`);
+  }
+  return (await res.json()) as LoginStart;
+}
+
+/** Begin the zero-paste browser sign-in: the daemon starts a loopback
+ *  listener and returns the approval URL to open in the real browser plus an
+ *  attempt id. The daemon completes the exchange itself when the browser
+ *  redirects back — the caller polls fetchBrowserLoginStatus for THIS attempt
+ *  (fleet-size inference never completes on a re-login). */
+export async function startBrowserLogin(): Promise<{ authorize_url: string; attempt_id: string }> {
+  const res = await fetch("/v1/login/browser", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: "{}",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `sign-in start: HTTP ${res.status}`);
+  }
+  return (await res.json()) as { authorize_url: string; attempt_id: string };
+}
+
+export interface BrowserLoginStatus {
+  status: "pending" | "done" | "failed";
+  error?: string;
+  account_id?: string;
+}
+
+/** One browser sign-in attempt's outcome. */
+export async function fetchBrowserLoginStatus(attemptId: string): Promise<BrowserLoginStatus> {
+  const res = await fetch(`/v1/login/browser/status?attempt=${encodeURIComponent(attemptId)}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `sign-in status: HTTP ${res.status}`);
+  }
+  return (await res.json()) as BrowserLoginStatus;
+}
+
+/** Finish the sign-in with the code+state from the approval page. */
+export async function completeLogin(code: string, state: string): Promise<Account> {
+  const res = await fetch("/v1/login/complete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ code, state }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `sign-in: HTTP ${res.status}`);
+  }
+  return (await res.json()) as Account;
+}
+
 // Go marshals nil slices as null — normalize so the UI never guards.
 export function normalizeState(raw: State): State {
   return {
@@ -130,6 +271,73 @@ export async function fetchState(): Promise<State> {
   const res = await fetch("/v1/state");
   if (!res.ok) throw new Error(`state: HTTP ${res.status}`);
   return normalizeState((await res.json()) as State);
+}
+
+// --- doctor (GET /v1/doctor — the read-only health sweep) -----------------
+
+/** The remedy verbs the daemon emits. Each maps to a control that already
+ *  exists here; "none" means there is nothing to press, said out loud. */
+export type DoctorVerb =
+  | "none"
+  | "move_into_fleet"
+  | "sign_in_again"
+  | "switch"
+  | "review_stash"
+  | "install_daemon"
+  | "install_statusline"
+  | "register_account";
+
+export interface DoctorRemedy {
+  verb: DoctorVerb;
+  label: string;
+  target?: string;
+  command?: string;
+}
+
+export interface DoctorFinding {
+  id: string;
+  check: string;
+  severity: "critical" | "warning" | "info";
+  title: string;
+  detail: string;
+  accounts: string[];
+  remedy: DoctorRemedy;
+}
+
+/** A check that could NOT run reports "not_checked" with a reason. It must
+ *  never render as passing — a partial sweep is not a clean bill. */
+export interface DoctorCheck {
+  id: string;
+  title: string;
+  state: "ok" | "finding" | "not_checked";
+  why?: string;
+}
+
+export interface DoctorReport {
+  as_of: string;
+  clean: boolean;
+  problems: number;
+  findings: DoctorFinding[];
+  checks: DoctorCheck[];
+}
+
+export async function fetchDoctor(): Promise<DoctorReport> {
+  const res = await fetch("/v1/doctor");
+  if (!res.ok) throw new Error(`doctor: HTTP ${res.status}`);
+  const raw = (await res.json()) as DoctorReport;
+  // A sweep always runs a fixed list of checks, so a document with none is not
+  // a health report — rendering it would print "all 0 checks ran", which says
+  // nothing about the fleet while looking like an answer.
+  if (!Array.isArray(raw.checks) || raw.checks.length === 0) {
+    throw new Error("the daemon answered without a single health check");
+  }
+  // Defensive, same reason as normalizeState: a null list must not crash a
+  // panel whose whole job is telling the truth about the fleet.
+  return {
+    ...raw,
+    findings: (raw.findings ?? []).map((f) => ({ ...f, accounts: f.accounts ?? [] })),
+    checks: raw.checks,
+  };
 }
 
 // --- statusline editor (internal/statusline mirrors) ---------------------

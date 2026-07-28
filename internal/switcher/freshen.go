@@ -32,6 +32,20 @@ func (s *Switcher) FreshenBackup(ctx context.Context, acct Identity) (bool, erro
 	}
 	defer releaseLock(bl)
 
+	// A leftover swap journal means the config identity may NOT describe the
+	// live credential (a swap died mid-mutation) — and the config identity is
+	// this function's ONLY attribution. Stand down entirely and let the next
+	// swap run its hash-based recovery first; capturing here would destroy
+	// the very state the journal exists to recover (adversarial review P1,
+	// 2026-07-25: freshen ran every poll and clobbered the backup before any
+	// swap could read the journal).
+	if j, jerr := s.readJournal(ctx); jerr != nil {
+		return false, jerr
+	} else if j != nil {
+		s.logf("freshen: swap journal pending (%s → %s) — standing down until the next swap recovers", j.FromID, j.ToID)
+		return false, nil
+	}
+
 	oauthRaw, err := oauthAccountRaw(s.Dir.ConfigJSONPath())
 	if err != nil {
 		return false, err
@@ -45,6 +59,19 @@ func (s *Switcher) FreshenBackup(ctx context.Context, acct Identity) (bool, erro
 			return false, nil
 		}
 		return false, err
+	}
+	// Anti-poisoning (review P1): if the live credential verifiably belongs
+	// to a DIFFERENT registered account (its fingerprint matches that
+	// account's current backup), a stale Claude Code session of the previous
+	// account has written its credential into the slot after a swap —
+	// capturing it under acct.ID would destroy acct's good backup. RESIDUAL,
+	// stated honestly: if that stale session ROTATED first, the fingerprint
+	// matches no backup and is indistinguishable from acct's own rotation —
+	// no local signal exists; the classify-on-next-swap path preserves the
+	// credential either way (stash, never overwrite).
+	if other := s.resolveByFingerprint(ctx, cred); other != "" && other != acct.ID {
+		s.logf("freshen: live credential belongs to %s, not %s — not captured", other, acct.ID)
+		return false, nil
 	}
 	old, _, err := s.LoadBackup(ctx, acct.ID)
 	if err != nil && !errors.Is(err, ErrNotFound) {

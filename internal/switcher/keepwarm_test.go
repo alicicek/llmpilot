@@ -391,7 +391,7 @@ func TestKeepWarmPinnedVsCCRefreshRace(t *testing.T) {
 	}
 }
 
-// TestSwapRefusesPinnedTarget pins the owner decision: a per-dir account is
+// TestSwapRefusesPinnedTarget pins the product decision: a per-dir account is
 // never installed into the global slot.
 func TestSwapRefusesPinnedTarget(t *testing.T) {
 	sw, fk, _, _ := sandbox(t)

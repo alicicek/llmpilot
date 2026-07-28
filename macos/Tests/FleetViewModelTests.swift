@@ -3,14 +3,24 @@ import XCTest
 
 @MainActor
 final class FleetViewModelTests: XCTestCase {
+    private var testDefaults: UserDefaults!
+
     private func makeModel(_ api: StubAPI) -> FleetViewModel {
-        FleetViewModel(api: api, autostart: false)
+        let model = FleetViewModel(api: api, autostart: false)
+        // Keep the first-launch flag and window opener out of the real
+        // environment — these tests exercise other behavior.
+        model.defaults = testDefaults
+        model.openWindow = { _ in }
+        model.loginItems = FakeLoginItems()
+        return model
     }
 
     override func setUp() {
         super.setUp()
         UserDefaults.standard.removeObject(forKey: "privacyMode")
         UserDefaults.standard.removeObject(forKey: "iconMode")
+        testDefaults = UserDefaults(suiteName: "FleetViewModelTests")
+        testDefaults.removePersistentDomain(forName: "FleetViewModelTests")
     }
 
     func testRefreshGoesLiveWithFleet() async throws {
@@ -133,35 +143,75 @@ final class FleetViewModelTests: XCTestCase {
         XCTAssertEqual(api.adopted, ["/Users/x/.claude"])
     }
 
-    func testStartDaemonSurfacesLauncherError() async {
+    /// The bug this closes: once the first account was adopted, every OTHER
+    /// Claude sign-in on the Mac went invisible forever because detect only
+    /// ran while the fleet was empty and got cleared once it wasn't. Detect
+    /// must keep running, and `detected` must survive a non-empty fleet.
+    func testDetectSurvivesNonEmptyFleet() async throws {
+        let api = StubAPI()
+        api.stateResult = .success(Fixtures.twoAccounts())
+        api.detectResult = [
+            DetectedDir(configDir: "/Users/x/.claude-other", email: "c@example.dev",
+                        registered: false)
+        ]
+        let model = makeModel(api)
+        try await model.refresh()
+        XCTAssertFalse(model.accounts.isEmpty)
+        XCTAssertEqual(model.detected.map(\.configDir), ["/Users/x/.claude-other"])
+        XCTAssertEqual(model.unadoptedDetectedCount, 1)
+
+        // A second refresh with the same non-empty fleet must not clear it.
+        try await model.refresh()
+        XCTAssertEqual(model.detected.map(\.configDir), ["/Users/x/.claude-other"])
+    }
+
+    func testUnadoptedDetectedCountExcludesAlreadyRegistered() async throws {
+        let api = StubAPI()
+        api.stateResult = .success(Fixtures.twoAccounts())
+        api.detectResult = [
+            DetectedDir(configDir: "/Users/x/.claude-a", email: "a@example.dev", registered: true),
+            DetectedDir(configDir: "/Users/x/.claude-b", email: "b@example.dev", registered: false),
+        ]
+        let model = makeModel(api)
+        try await model.refresh()
+        XCTAssertEqual(model.unadoptedDetectedCount, 1)
+    }
+
+    func testEnsureRunningSurfacesLauncherError() async {
         let api = StubAPI()
         api.stateResult = .failure(DaemonError.down)
         let model = makeModel(api)
+        model.legacyPlistPresent = { true }
+        model.bundleLocationBlocked = { false }
         model.launch = { "llmpilot CLI not found — install it first, then relaunch" }
-        await model.startDaemon()
+        await model.ensureRunning()
         XCTAssertEqual(model.lastError,
                        "llmpilot CLI not found — install it first, then relaunch")
     }
 
-    func testStartDaemonTimeoutSetsError() async {
+    func testEnsureRunningTimeoutSetsError() async {
         let api = StubAPI()
         api.stateResult = .failure(DaemonError.down)
         let model = makeModel(api)
+        model.legacyPlistPresent = { true }
+        model.bundleLocationBlocked = { false }
         model.launch = { nil }
-        model.startupProbeNanos = 1_000_000 // keep the 10-probe loop fast
-        await model.startDaemon()
+        model.startupProbeNanos = 1_000_000 // keep the probe loop fast
+        await model.ensureRunning()
         XCTAssertEqual(model.status, .down)
         let err = model.lastError ?? ""
         XCTAssertTrue(err.contains("never became reachable"), err)
     }
 
-    func testStartDaemonClearsErrorOnceReachable() async {
+    func testEnsureRunningClearsErrorOnceReachable() async {
         let api = StubAPI()
         api.stateResult = .success(Fixtures.twoAccounts())
         let model = makeModel(api)
+        model.legacyPlistPresent = { true }
+        model.bundleLocationBlocked = { false }
         model.launch = { nil }
         model.startupProbeNanos = 1_000_000
-        await model.startDaemon()
+        await model.ensureRunning()
         XCTAssertNil(model.lastError)
         XCTAssertEqual(model.status, .live)
     }
@@ -193,6 +243,8 @@ final class FleetViewModelTests: XCTestCase {
         api.stateResult = .success(Fixtures.twoAccounts())
         let marker = StubTrialMarker(present: true)
         let model = FleetViewModel(api: api, trialMarker: marker, autostart: false)
+        model.defaults = testDefaults
+        model.openWindow = { _ in }
         try await model.refresh()
         try await model.refresh() // one-shot — a second refresh must not re-report
         XCTAssertEqual(api.markerReports, [true])

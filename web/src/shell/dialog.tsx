@@ -13,10 +13,10 @@ export function ShellDialog(props: {
   return (
     <Dialog.Root open={props.open} onOpenChange={props.onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/25" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/25" />
         <Dialog.Content
           style={{ width: props.width ?? 440 }}
-          className="fixed top-1/2 left-1/2 max-h-[88vh] max-w-[92vw] -translate-x-1/2 -translate-y-1/2
+          className="fixed top-1/2 left-1/2 z-50 max-h-[88vh] max-w-[92vw] -translate-x-1/2 -translate-y-1/2
             overflow-y-auto rounded-[11px] border border-hair bg-win p-5 shadow-window focus:outline-none"
         >
           <Dialog.Title className="text-[15px] font-bold tracking-[-0.01em]">

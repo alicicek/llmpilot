@@ -53,6 +53,14 @@ func (p Params) Fresh(now time.Time, snap *UsageSnapshot) bool {
 type Candidate struct {
 	Account  Account
 	Snapshot *UsageSnapshot
+	// Stale marks an account whose stored token expired while idle (the
+	// daemon's stale gate froze its snapshot). Its frozen utilization is an
+	// UPPER bound — idle usage only falls as windows reset — so the policy
+	// may nominate it for a REVIVE, never for a normal switch. Residual,
+	// stated honestly: the same subscription used from another machine can
+	// raise real usage above the frozen number; the post-switch first poll
+	// reveals it and threshold rotation moves away again.
+	Stale bool
 }
 
 // Decision says who rotates where and why. Reason is the human line that
@@ -61,6 +69,19 @@ type Decision struct {
 	From   Account
 	To     Account
 	Reason string
+	// Revive marks a stale target: the switch must PROVE a live credential
+	// (a successful refresh) before installing anything — any skip or
+	// failure means hold, never a swap onto a token known to be expired.
+	Revive bool
+	// Hold reports "wanted to rotate, couldn't": the active account is over
+	// threshold and no candidate is eligible. To is zero. The daemon
+	// surfaces it as one de-spammed event; benign no-ops (below threshold,
+	// cooldown) stay nil so the feed never fills with silence-breakers.
+	Hold bool
+	// HoldKind is the stable machine key for the hold CLASS. The daemon
+	// de-spams hold events on it, never on the rendered Reason — Reason
+	// embeds percentages that change every poll and would defeat the dedup.
+	HoldKind string
 }
 
 // Utilization is an account's limit proximity: the max percent across every

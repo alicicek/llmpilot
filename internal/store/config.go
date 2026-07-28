@@ -19,7 +19,7 @@ type Config struct {
 	Notifications NotificationsConfig `json:"notifications"`
 	// PlanCostMonthly maps an account ID to a user-set monthly plan cost —
 	// the transcript schema has no price table (see internal/analytics doc
-	// comment), so cost is only ever what the owner tells us.
+	// comment), so cost is only ever what the user tells us.
 	PlanCostMonthly map[string]float64 `json:"plan_cost_monthly,omitempty"`
 }
 

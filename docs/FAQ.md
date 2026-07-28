@@ -17,8 +17,10 @@ you — and that's a fair call.
 
 ## Does it need my Claude password or an API key?
 
-No. It uses the OAuth credential Claude Code already stored in your Keychain when
-you logged in. There is no separate login, no API key, and nothing to paste.
+No. It uses the OAuth credential Claude Code already stored in your Keychain
+when you logged in. There is no API key. Adding a new account happens on
+Anthropic's own sign-in page — either through `claude` in a terminal or from
+inside the app — and llmpilot never sees your password either way.
 
 ## Why did macOS ask to access the Keychain?
 
@@ -31,8 +33,11 @@ changes paths and re-prompts, so use `make build` there.
 
 Tokens: never. Usage numbers: only in the sense that reading them requires
 calling Anthropic's own usage endpoint with your own token — the same call
-Claude Code makes. Nothing is sent to any llmpilot server. There is no
-telemetry. Cache files hold percentages and reset times only.
+Claude Code makes. No usage data and no telemetry is ever sent to an
+llmpilot server. If you buy Pro, your licence re-validates with llmpilot's
+licensing worker about once a week: that request carries a licence id and a
+random install id, and nothing else. Cache files hold percentages and reset
+times only.
 
 ## What's free and what's Pro?
 
@@ -55,13 +60,28 @@ has never seen. If Anthropic changes plans, models, or credit rules, the
 dashboard shows the new shape instead of an error. A scheduled start only *opens*
 a window when none is active; it never shifts a window you're already in.
 
+## Does llmpilot refresh my tokens in the background?
+
+No. There is no background refresh loop — an earlier version had one, and it
+turned out to be the fastest way to get accounts rate-limited. llmpilot
+refreshes a login only when something needs it: about 10 minutes before a
+switch (yours or the autopilot's), when the autopilot revives a stale
+account, or when you sign in from the app. Refreshes are capped at 2 attempts
+per account per rolling
+24 hours, and a single rate-limit answer from the token endpoint pauses all
+refreshes for 24 hours. An account that goes stale in the meantime is shown
+stale — last-known numbers, marked — never silently wrong.
+
 ## Why might usage or a switch stop working?
 
 The usage endpoint, the OAuth token endpoint, and Claude Code's Keychain and
 config layout are undocumented and can change. llmpilot keeps that knowledge in
 small adapters with a delegation fallback, but a Claude Code change can still
 break a feature until an update lands. When a login can't be refreshed, the
-dashboard says so plainly and points you at re-authenticating.
+dashboard says so plainly and points you at re-authenticating. For anything
+else, `llmpilot doctor` checks the fleet, the sign-ins on the Mac, the refresh
+budget, and the install, and names what is wrong — it only looks, it never
+writes.
 
 ## Is Windows or Linux supported?
 
@@ -70,6 +90,11 @@ and wake scheduling are macOS-specific.
 
 ## How do I remove it?
 
-`brew uninstall llmpilot` (and `--cask llmpilot` for the app). Remove local state
-with `rm -rf ~/.llmpilot`. llmpilot never modified your Claude login beyond
-switching which account is active, and uninstalling leaves that account as-is.
+`brew uninstall llmpilot` (and `--cask llmpilot` for the app). Remove local
+state with `rm -rf ~/.llmpilot`. Credential backups, kept foreign sign-ins,
+and setup tokens live in your login keychain under the `llmpilot-backups` and
+`llmpilot-setup-tokens` services — delete those items in Keychain Access if
+you want them gone too. The sign-in active in `~/.claude` is left as-is. One
+caveat: if you used "move into the fleet", the moved sign-in's original
+folder was retired at move time (that is what the move does, after backing
+up) — sign in from that folder again to recreate it.

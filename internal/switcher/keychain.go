@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/alicicek/llmpilot/internal/anthropic"
 )
@@ -63,10 +64,23 @@ func (k *Keychain) interlock() error {
 // trade-off, matching upstream).
 const securityStdinLimit = 4000
 
+// ErrWriteNotAttempted marks a Keychain.Set that was refused BEFORE the
+// /usr/bin/security subprocess ran (interlock or the empty-secret CAS): the
+// stored item is provably untouched. The swap path clears its journal only
+// for this class — a subprocess error may have landed the write and then
+// been SIGKILLed by the deadline, so that case must KEEP the journal for
+// recovery (adversarial review P2, 2026-07-25).
+var ErrWriteNotAttempted = errors.New("keychain write not attempted")
+
 // Set upserts (add-generic-password -U) an item's secret.
 func (k *Keychain) Set(ctx context.Context, service, account string, secret []byte) error {
 	if err := k.interlock(); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrWriteNotAttempted, err)
+	}
+	// CAS floor: an empty write can only ever destroy — the #76905 blanking
+	// class. Every legitimate payload this adapter stores is non-empty JSON.
+	if len(bytes.TrimSpace(secret)) == 0 {
+		return fmt.Errorf("%w: keychain write for service %q: refusing to overwrite with an empty secret", ErrWriteNotAttempted, service)
 	}
 	hexSecret := hex.EncodeToString(secret)
 	// Preferred: `security -i` reads commands from stdin; quoted args keep
@@ -147,6 +161,70 @@ func (k *Keychain) Delete(ctx context.Context, service, account string) error {
 		return fmt.Errorf("keychain delete for service %q: %w", service, err)
 	}
 	return nil
+}
+
+// List enumerates the account attributes of every generic-password item in
+// one service — attribute-only via `security dump-keychain` WITHOUT -d, so
+// no secret payloads are read and no unlock prompts fire. Added for the
+// legacy unmatched-* migration sweep; payload reads still go through
+// GetAccount one item at a time.
+func (k *Keychain) List(ctx context.Context, service string) ([]string, error) {
+	if err := k.interlock(); err != nil {
+		return nil, err
+	}
+	args := []string{"dump-keychain"}
+	if k.File != "" {
+		args = append(args, k.File)
+	}
+	out, err := k.runner()(ctx, nil, "/usr/bin/security", args...)
+	if err != nil {
+		return nil, fmt.Errorf("keychain list for service %q: %w", service, err)
+	}
+	return parseDumpAccounts(out, service), nil
+}
+
+// parseDumpAccounts extracts acct attributes for items whose svce matches.
+// dump-keychain emits one block per item ("keychain: ..." then attributes);
+// acct/svce lines look like `    "acct"<blob>="value"`.
+func parseDumpAccounts(dump []byte, service string) []string {
+	var accounts []string
+	var acct, svce string
+	flush := func() {
+		if svce == service && acct != "" {
+			accounts = append(accounts, acct)
+		}
+		acct, svce = "", ""
+	}
+	for _, line := range strings.Split(string(dump), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "keychain:") {
+			flush()
+			continue
+		}
+		if v, ok := dumpAttr(trimmed, "acct"); ok {
+			acct = v
+		}
+		if v, ok := dumpAttr(trimmed, "svce"); ok {
+			svce = v
+		}
+	}
+	flush()
+	return accounts
+}
+
+// dumpAttr parses `"name"<blob>="value"` lines (quoted-string form; our own
+// keys are ASCII so the hex form never applies to them).
+func dumpAttr(line, name string) (string, bool) {
+	prefix := `"` + name + `"<blob>="`
+	if !strings.HasPrefix(line, prefix) {
+		return "", false
+	}
+	rest := line[len(prefix):]
+	end := strings.LastIndex(rest, `"`)
+	if end < 0 {
+		return "", false
+	}
+	return rest[:end], true
 }
 
 // ErrNotFound marks a missing keychain item.

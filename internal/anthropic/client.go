@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alicicek/llmpilot/internal/store"
@@ -21,14 +23,45 @@ const (
 )
 
 // StatusError is a non-200 from the usage endpoint. The response body is
-// never surfaced (it is drained and discarded).
+// never surfaced (it is drained and discarded). RetryAfter carries the
+// server's Retry-After header when present (0 otherwise).
 type StatusError struct {
 	StatusCode int
+	RetryAfter time.Duration
 }
 
 func (e *StatusError) Error() string {
 	return fmt.Sprintf("usage endpoint returned HTTP %d", e.StatusCode)
 }
+
+// parseRetryAfter reads a Retry-After header (delta-seconds or HTTP-date) into a
+// positive duration; 0 if absent/invalid/past.
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		if secs > maxRetryAfterSeconds {
+			secs = maxRetryAfterSeconds // clamp so ×time.Second can't overflow int64
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// maxRetryAfterSeconds (a day) caps a parsed delta-seconds Retry-After so an
+// absurd header can't overflow the int64 nanosecond duration; the daemon caps
+// the effective wait far lower (maxRateLimitWait).
+const maxRetryAfterSeconds = 24 * 60 * 60
 
 // UsageClient fetches one account's rate-limit buckets.
 type UsageClient struct {
@@ -68,7 +101,7 @@ func (c *UsageClient) FetchUsage(ctx context.Context) ([]store.Bucket, error) {
 	defer resp.Body.Close() //nolint:errcheck // read-only body
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return nil, &StatusError{StatusCode: resp.StatusCode}
+		return nil, &StatusError{StatusCode: resp.StatusCode, RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"))}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {

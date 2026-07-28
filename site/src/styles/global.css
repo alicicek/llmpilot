@@ -5,7 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ============================================================================
-   llmpilot design tokens — single source of truth (derived from design/DESIGN.md).
+   llmpilot design tokens — the single source of truth for the site.
    Architecture: shadcn's semantic names are canonical (:root = light, .dark =
    dark twins). Our surface names (--win, --panel, --hair…) ALIAS onto the
    semantic layer, so a colour changes in exactly one place. The site leads dark

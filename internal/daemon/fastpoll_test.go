@@ -35,7 +35,7 @@ func TestFastPollOnSwitch(t *testing.T) {
 		t.Fatalf("steady state repolled: %v", polled)
 	}
 
-	// the owner /logins over to b, last polled an hour+ ago: next pass
+	// the user /logins over to b, last polled an hour+ ago: next pass
 	// pulls b's poll to now. a is untouched.
 	active = "b"
 	d.mu.Lock()
@@ -88,8 +88,14 @@ func TestCheckUnregisteredSurfacesOncePerEmail(t *testing.T) {
 	if len(evs) != 1 || evs[0].Kind != "unregistered" {
 		t.Fatalf("want one unregistered event, got %+v", evs)
 	}
-	if len(notes) != 1 || !strings.Contains(notes[0], "llmpilot init") {
-		t.Fatalf("notification must name the adopt command, got %v", notes)
+	// P4: the copy points at the cockpit, not a terminal command — adopt now
+	// resolves by identity, so the GUIs can register this sign-in themselves
+	// (the old copy existed BECAUSE the cockpit's adopt 409'd on the global dir).
+	if len(notes) != 1 || !strings.Contains(notes[0], "Add account") {
+		t.Fatalf("notification must point at the cockpit's adopt path, got %v", notes)
+	}
+	if strings.Contains(notes[0], "llmpilot init") {
+		t.Fatalf("notification still sends the user to a terminal: %v", notes)
 	}
 
 	// back on a registered account, then a DIFFERENT unknown: fires again.

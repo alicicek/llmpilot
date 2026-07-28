@@ -52,6 +52,26 @@ func (s *memLicenseStore) current() pilot.StoredLicense {
 	return s.v
 }
 
+// syncBuffer is a goroutine-safe log sink: the activation poller keeps
+// logging from its own goroutine after the test's waitFor condition already
+// holds, so an unsynchronized bytes.Buffer read is a data race under -race.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func signToken(t *testing.T, keyID string, p pilotapi.EntitlementPayload, priv ed25519.PrivateKey) string {
 	t.Helper()
 	p.KeyID = keyID
@@ -124,7 +144,7 @@ func TestLicenseCheckoutPollsUntilActivatedAndPersists(t *testing.T) {
 	token := signToken(t, "key-a", proTrial(trialEnd.Add(72*time.Hour)), priv)
 
 	var activateCalls atomic.Int32
-	var logs bytes.Buffer
+	var logs syncBuffer
 	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/checkout":
@@ -181,7 +201,10 @@ func TestLicenseCheckoutPollsUntilActivatedAndPersists(t *testing.T) {
 		t.Fatalf("poller stopped before success (calls=%d)", activateCalls.Load())
 	}
 
-	// The signed token and license id must never reach a log line.
+	// The signed token and license id must never reach a log line. Wait for
+	// the poller's post-persist "license activated" line so the check covers
+	// the whole poll lifecycle, not just what raced in before persist.
+	waitFor(t, 2*time.Second, func() bool { return strings.Contains(logs.String(), "license activated") })
 	if s := logs.String(); strings.Contains(s, token) || strings.Contains(s, "LLMP2") || strings.Contains(s, "lic_abc0000feed") {
 		t.Fatalf("token or license id leaked into logs:\n%s", s)
 	}
