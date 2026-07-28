@@ -76,8 +76,10 @@ func TestWriteLaunchAgentPinsSandboxEnvOnlyUnderTest(t *testing.T) {
 		!strings.Contains(string(b), "/tmp/sandbox-home") {
 		t.Fatalf("test-mode plist missing sandbox env pinning:\n%s", b)
 	}
-	if out, err := exec.Command("plutil", "-lint", path).CombinedOutput(); err != nil {
-		t.Fatalf("plutil -lint: %v\n%s", err, out)
+	if _, err := exec.LookPath("plutil"); err == nil {
+		if out, err := exec.Command("plutil", "-lint", path).CombinedOutput(); err != nil {
+			t.Fatalf("plutil -lint: %v\n%s", err, out)
+		}
 	}
 
 	t.Setenv("LLMPILOT_TEST", "")
