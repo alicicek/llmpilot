@@ -2,14 +2,52 @@ package daemon
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
 // LaunchAgentLabel is forever-ish once users have plists on disk —
 // reverse-DNS from day one.
 const LaunchAgentLabel = "dev.llmpilot.daemon"
+
+// launchdNoSuchService is launchd's exit code for a label it does not know.
+// Any OTHER non-zero exit means we could not determine the state, which is a
+// different answer from "not installed" and must not be collapsed into it.
+const launchdNoSuchService = 113
+
+// launchctlBin is a seam: tests point it at a stub that mimics launchd's exit
+// codes, so the probe is covered without touching the real service database.
+var launchctlBin = "/bin/launchctl"
+
+// LaunchAgentRegistered asks launchd whether the daemon's label exists in the
+// caller's GUI domain.
+//
+// This is the ONLY way to see the modern install. The menu bar app registers
+// the agent through SMAppService from the plist inside its own bundle, which
+// writes NOTHING to ~/Library/LaunchAgents — so a file check alone reports
+// every app-installed fleet as "no login item", and sends the user to a
+// `daemon install` that is a no-op for an already-loaded agent.
+//
+// Returns (false, nil) only when launchd positively denies knowing the label.
+// An unparseable failure returns an error so the caller can report NOT CHECKED
+// rather than a confident, wrong "missing".
+func LaunchAgentRegistered() (bool, error) {
+	target := fmt.Sprintf("gui/%d/%s", os.Getuid(), LaunchAgentLabel)
+	if err := exec.Command(launchctlBin, "print", target).Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			if ee.ExitCode() == launchdNoSuchService {
+				return false, nil
+			}
+			return false, fmt.Errorf("launchctl print %s exited %d", target, ee.ExitCode())
+		}
+		return false, err
+	}
+	return true, nil
+}
 
 const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

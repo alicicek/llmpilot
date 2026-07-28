@@ -48,6 +48,10 @@ func doctorReaders(st *store.Store, sw *switcher.Switcher) daemon.DoctorLocal {
 	return local
 }
 
+// launchAgentRegistered is a seam so the install-health tests can drive the
+// launchd probe without a real service registration.
+var launchAgentRegistered = daemon.LaunchAgentRegistered
+
 // installFacts reads the install health. A fact it cannot read is reported as
 // an error string, never as "fine" — the sweep turns that into NOT CHECKED.
 func installFacts() (doctor.InstallFacts, error) {
@@ -63,7 +67,18 @@ func installFacts() (doctor.InstallFacts, error) {
 		case err == nil:
 			f.LaunchAgentInstalled = true
 		case errors.Is(err, os.ErrNotExist):
-			f.LaunchAgentInstalled = false
+			// No legacy plist. That is the NORMAL state for an app install:
+			// the menu bar app registers the agent through SMAppService from
+			// the plist inside its own bundle and writes nothing here. Ask
+			// launchd before calling the login item missing, or every
+			// app-installed fleet gets told it will not start at login.
+			registered, regErr := launchAgentRegistered()
+			switch {
+			case regErr != nil:
+				f.LaunchAgentErr = fmt.Sprintf("llmpilot could not ask launchd about the login item: %v", regErr)
+			default:
+				f.LaunchAgentInstalled = registered
+			}
 		default:
 			f.LaunchAgentErr = fmt.Sprintf("llmpilot could not read the login item: %v", err)
 		}

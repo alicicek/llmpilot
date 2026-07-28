@@ -50,6 +50,16 @@ enum DaemonLauncher {
         return run("/bin/launchctl", ["bootstrap", domain, plist])
     }
 
+    /// Bounce the agent so launchd re-resolves the program from the CURRENT
+    /// registration. After an in-place update the old daemon keeps running
+    /// from the replaced bundle — Sparkle swaps the app but never restarts a
+    /// separate launchd job — so without this the user runs new app code
+    /// against a pre-update daemon until they next log out.
+    /// Returns nil on success, or what-happened copy.
+    static func restartAgent() -> String? {
+        run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/dev.llmpilot.daemon"])
+    }
+
     private static func run(_ path: String, _ args: [String]) -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)

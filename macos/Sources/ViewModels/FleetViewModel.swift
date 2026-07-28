@@ -60,6 +60,14 @@ final class FleetViewModel: ObservableObject {
 
     /// Injectable for tests — production launches via launchd.
     var launch: @Sendable () -> String? = { DaemonLauncher.start() }
+    /// Bounces the daemon's launchd job. Injectable so the staleness check is
+    /// testable without touching the real service.
+    var restartAgent: @Sendable () -> String? = { DaemonLauncher.restartAgent() }
+    /// This bundle's marketing version; injectable for the same reason.
+    var bundleVersion: String? = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+    /// Guards against a restart loop when bouncing does not resolve the
+    /// disagreement (a genuinely mismatched pair, not a stale process).
+    private var restartedForVersion: String?
     var startupProbeNanos: UInt64 = 500_000_000
     /// Injectable ServiceManagement seam — tests never touch the real BTM.
     var loginItems: LoginItems = LoginItemsFactory.make()
@@ -170,6 +178,26 @@ final class FleetViewModel: ObservableObject {
         }
     }
 
+    /// Sparkle replaces the app bundle in place but never restarts the
+    /// daemon: it is a separate launchd job, so it keeps running the PREVIOUS
+    /// build's binary out of the replaced bundle until the next logout. The
+    /// user then drives new app code against a pre-update daemon with no sign
+    /// anything is wrong. Bounce it once when the running version disagrees
+    /// with this bundle.
+    ///
+    /// A daemon too old to report a version reports nil, and a missing fact is
+    /// not a mismatch — those are left alone rather than bounced on a guess.
+    func restartStaleDaemon() async {
+        guard let running = state?.version, !running.isEmpty,
+              let mine = bundleVersion, !mine.isEmpty,
+              running != mine, restartedForVersion != running
+        else { return }
+        restartedForVersion = running
+        let restart = self.restartAgent
+        _ = await Task.detached { restart() }.value
+        _ = try? await refresh()
+    }
+
     func refresh() async throws {
         do {
             let s = try await api.state()
@@ -259,7 +287,10 @@ final class FleetViewModel: ObservableObject {
         startGate = nil
         if status != .live { status = .starting }
 
-        if (try? await refresh()) != nil { return }
+        if (try? await refresh()) != nil {
+            await restartStaleDaemon()
+            return
+        }
 
         if bundleLocationBlocked() {
             startGate = .moveToApplications

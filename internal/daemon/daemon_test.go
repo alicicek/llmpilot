@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -306,5 +307,27 @@ func TestStateEmptyFleetMarshalsArraysNotNull(t *testing.T) {
 	}
 	if strings.Contains(string(body), `"accounts":null`) || strings.Contains(string(body), `"schedules":null`) {
 		t.Fatalf("null arrays in fresh-install state: %s", body)
+	}
+}
+
+// After an in-place update the binary on disk is the new build while this
+// process is still the old one. The running process is the only thing that
+// knows which it is, so the version has to travel on the wire — the menu bar
+// app has no other way to notice it is talking to a pre-update daemon.
+func TestStateCarriesTheRunningVersion(t *testing.T) {
+	d := &Daemon{Store: store.At(t.TempDir()), Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Version: "1.2.0"}
+	st, err := d.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Version != "1.2.0" {
+		t.Errorf("state version = %q, want 1.2.0", st.Version)
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"version":"1.2.0"`) {
+		t.Errorf("version missing from the wire payload: %s", b)
 	}
 }

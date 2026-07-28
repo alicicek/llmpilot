@@ -268,8 +268,9 @@ func newDaemon(st *store.Store) *daemon.Daemon {
 	ver := claudecfg.Version(context.Background(), claudecfg.ExecRunner)
 	sw, swErr := newGlobalSwitcher(st)
 	d := &daemon.Daemon{
-		Store: st,
-		Log:   slog.Default(),
+		Store:   st,
+		Log:     slog.Default(),
+		Version: version,
 		Fetch: func(ctx context.Context, a store.Account) ([]store.Bucket, error) {
 			c := &anthropic.UsageClient{
 				Source:    daemonTokenSource(sw, a, activeEmail()),

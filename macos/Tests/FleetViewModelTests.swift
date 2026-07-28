@@ -258,6 +258,57 @@ final class FleetViewModelTests: XCTestCase {
         try await model.refresh()
         XCTAssertEqual(model.autopilotLine, "autopilot off")
     }
+
+    // Sparkle replaces the bundle in place but leaves the daemon's separate
+    // launchd job running the PREVIOUS binary, so the user drives new app code
+    // against a pre-update daemon with no sign anything is wrong.
+    func testStaleDaemonIsRestartedOnce() async throws {
+        let api = StubAPI()
+        var s = Fixtures.twoAccounts()
+        s.version = "1.1.0-p2"
+        api.stateResult = .success(s)
+        let model = makeModel(api)
+        model.bundleVersion = "1.2.0"
+        let restarts = Counter()
+        model.restartAgent = { () -> String? in restarts.bump(); return nil }
+
+        try await model.refresh()
+        await model.restartStaleDaemon()
+        XCTAssertEqual(restarts.value, 1, "a daemon older than the bundle must be bounced")
+
+        // Still reporting the old version: a genuinely mismatched pair, not a
+        // stale process. Must not loop.
+        await model.restartStaleDaemon()
+        XCTAssertEqual(restarts.value, 1, "the bounce must not repeat for the same version")
+    }
+
+    func testMatchingDaemonIsLeftAlone() async throws {
+        let api = StubAPI()
+        var s = Fixtures.twoAccounts()
+        s.version = "1.2.0"
+        api.stateResult = .success(s)
+        let model = makeModel(api)
+        model.bundleVersion = "1.2.0"
+        let restarts = Counter()
+        model.restartAgent = { () -> String? in restarts.bump(); return nil }
+        try await model.refresh()
+        await model.restartStaleDaemon()
+        XCTAssertEqual(restarts.value, 0, "a matching daemon must not be bounced")
+    }
+
+    // A daemon too old to report a version is a MISSING FACT, not a mismatch.
+    func testUnknownDaemonVersionIsNotBounced() async throws {
+        let api = StubAPI()
+        api.stateResult = .success(Fixtures.twoAccounts()) // version nil
+        let model = makeModel(api)
+        model.bundleVersion = "1.2.0"
+        let restarts = Counter()
+        model.restartAgent = { () -> String? in restarts.bump(); return nil }
+        try await model.refresh()
+        await model.restartStaleDaemon()
+        XCTAssertEqual(restarts.value, 0, "an unreported version must not trigger a guess-bounce")
+    }
+
 }
 
 func XCTAssertThrowsErrorAsync<T>(_ expression: @autoclosure () async throws -> T,
@@ -267,4 +318,12 @@ func XCTAssertThrowsErrorAsync<T>(_ expression: @autoclosure () async throws -> 
         _ = try await expression()
         XCTFail("expected error", file: file, line: line)
     } catch {}
+}
+
+/// Sendable counter for the @Sendable restart seam.
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    func bump() { lock.lock(); n += 1; lock.unlock() }
+    var value: Int { lock.lock(); defer { lock.unlock() }; return n }
 }

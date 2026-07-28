@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -435,4 +436,57 @@ func TestDoctorUnreachableFallbackNeverOffersTheNoOp(t *testing.T) {
 	if !found {
 		t.Fatal("no finding at all for an unreachable daemon")
 	}
+}
+
+// The bug this pins: a correct app install registers the agent through
+// SMAppService from the plist inside the bundle, so ~/Library/LaunchAgents is
+// empty. Statting that path alone reported "llmpilot will not start at login"
+// on every such Mac, and sent the user to `daemon install` — a no-op for an
+// already-loaded agent, so the warning could never be cleared.
+func TestInstallFactsSeesSMAppServiceRegistration(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // no legacy plist: the app-install shape
+	old := launchAgentRegistered
+	t.Cleanup(func() { launchAgentRegistered = old })
+
+	t.Run("registered with launchd counts as installed", func(t *testing.T) {
+		launchAgentRegistered = func() (bool, error) { return true, nil }
+		f, err := installFacts()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !f.LaunchAgentInstalled {
+			t.Error("an SMAppService registration was reported as no login item")
+		}
+		if f.LaunchAgentErr != "" {
+			t.Errorf("unexpected error fact: %s", f.LaunchAgentErr)
+		}
+	})
+
+	t.Run("launchd denying the label is genuinely missing", func(t *testing.T) {
+		launchAgentRegistered = func() (bool, error) { return false, nil }
+		f, err := installFacts()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.LaunchAgentInstalled {
+			t.Error("no plist and no launchd registration must read as missing")
+		}
+		if f.LaunchAgentErr != "" {
+			t.Errorf("a definite denial is not an error: %s", f.LaunchAgentErr)
+		}
+	})
+
+	t.Run("an unreadable probe is NOT CHECKED, not missing", func(t *testing.T) {
+		launchAgentRegistered = func() (bool, error) { return false, errors.New("launchctl exploded") }
+		f, err := installFacts()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.LaunchAgentInstalled {
+			t.Error("a failed probe must not claim the agent is installed")
+		}
+		if f.LaunchAgentErr == "" {
+			t.Error("a failed probe must surface an error so the sweep reports NOT CHECKED rather than a false alarm")
+		}
+	})
 }

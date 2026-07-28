@@ -129,6 +129,14 @@ type Daemon struct {
 	Active ActiveFn
 	Log    *slog.Logger
 
+	// Version is the llmpilot build this daemon process is running. It goes
+	// on the wire because the RUNNING process is the only thing that knows
+	// it: after an in-place update the binary on disk is the new one while
+	// this process is still the old one, and nothing else can tell them
+	// apart. The menu bar app compares it against its own bundle to notice
+	// it is talking to a pre-update daemon.
+	Version string
+
 	// Pinned reports whether an account lives in its own config dir. Pinned
 	// accounts are never swap targets (Swap refuses them — installing one
 	// into the global slot clones its refresh-token lineage), so autopilot
@@ -389,8 +397,10 @@ type State struct {
 	License   string                `json:"license_status,omitempty"`
 	// LicenseError is the last terminal licensing refusal code
 	// (seat_limit_reached, trial_email_used, ...) — a machine code only.
-	LicenseError string    `json:"license_error,omitempty"`
-	AsOf         time.Time `json:"as_of"`
+	LicenseError string `json:"license_error,omitempty"`
+	// Version is the build of the daemon PROCESS answering this request.
+	Version string    `json:"version,omitempty"`
+	AsOf    time.Time `json:"as_of"`
 }
 
 // State assembles the current state from the store's caches.
@@ -403,7 +413,7 @@ func (d *Daemon) State(ctx context.Context) (State, error) {
 	// Accounts is never null either — a FRESH install (zero accounts) must
 	// decode on every surface; a nil slice marshals as JSON null and killed
 	// the whole menu-bar state decode (found by the first-run e2e).
-	st := State{Accounts: []AccountState{}, AsOf: time.Now().UTC()}
+	st := State{Accounts: []AccountState{}, Version: d.Version, AsOf: time.Now().UTC()}
 	d.mu.Lock()
 	st.License = d.licenseStatus
 	st.LicenseError = d.licenseError

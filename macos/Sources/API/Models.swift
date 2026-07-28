@@ -14,6 +14,10 @@ struct DaemonState: Decodable, Equatable {
     /// revoked; absent (nil) means no entitlement yet. The menu bar reads this
     /// to show Pro state without a second request (it rides /v1/state + SSE).
     var license: String? = nil
+    /// The build of the daemon PROCESS answering, which is not necessarily the
+    /// binary on disk: an in-place update replaces the bundle while the old
+    /// process keeps running. nil from a daemon too old to report it.
+    var version: String? = nil
     var asOf: Date
 
     enum CodingKeys: String, CodingKey {
@@ -22,17 +26,20 @@ struct DaemonState: Decodable, Equatable {
         case schedules
         case stash
         case license = "license_status"
+        case version
         case asOf = "as_of"
     }
 
     init(accounts: [AccountState], activeID: String?, schedules: [Schedule],
-         stash: [StashEntry] = [], license: String? = nil, asOf: Date)
+         stash: [StashEntry] = [], license: String? = nil,
+         version: String? = nil, asOf: Date)
     {
         self.accounts = accounts
         self.activeID = activeID
         self.schedules = schedules
         self.stash = stash
         self.license = license
+        self.version = version
         self.asOf = asOf
     }
 
@@ -46,6 +53,7 @@ struct DaemonState: Decodable, Equatable {
         schedules = try c.decodeIfPresent([Schedule].self, forKey: .schedules) ?? []
         stash = try c.decodeIfPresent([StashEntry].self, forKey: .stash) ?? []
         license = try c.decodeIfPresent(String.self, forKey: .license)
+        version = try c.decodeIfPresent(String.self, forKey: .version)
         asOf = try c.decode(Date.self, forKey: .asOf)
     }
 

@@ -4,6 +4,26 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-07-28
+
+### Fixed
+
+- **The doctor no longer claims llmpilot will not start at login.** It looked
+  for a launch agent *file*, but the app registers the daemon through macOS's
+  own login-item service, which writes no such file — so a correctly installed
+  Mac was told it was broken, and the suggested fix could not clear it. The
+  check now asks launchd directly, and says "not checked" when it cannot get a
+  straight answer instead of guessing.
+- **Updating no longer leaves the old daemon running.** The updater replaces
+  the app but not the background daemon, which is a separate service, so after
+  an update the new app talked to the previous version's daemon until the next
+  logout. The app now notices the mismatch and restarts it once.
+
+### Added
+
+- The daemon reports its own version, so anything talking to it can tell which
+  build is actually answering.
+
 ## [1.2.0] - 2026-07-27
 
 ### Added
@@ -82,6 +102,7 @@ Initial public release: live usage for every account, lock-first switching,
 window scheduling, the cockpit, the menu bar app, the statusline, and the
 one-time Pro autopilot.
 
+[1.2.1]: https://github.com/alicicek/llmpilot/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/alicicek/llmpilot/compare/v1.0.1...v1.2.0
 [1.0.1]: https://github.com/alicicek/llmpilot/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/alicicek/llmpilot/releases/tag/v1.0.0

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -93,4 +94,55 @@ func TestWriteLaunchAgentPinsSandboxEnvOnlyUnderTest(t *testing.T) {
 	if strings.Contains(string(b), "EnvironmentVariables") {
 		t.Fatalf("production plist must not embed environment:\n%s", b)
 	}
+}
+
+// stubLaunchctl points the probe at a script that exits with the given code,
+// so launchd's answers are covered without touching the real service database
+// (a real register/bootstrap in a test would enroll a login item on the dev
+// Mac — the same reason the app's LoginItems seam exists).
+func stubLaunchctl(t *testing.T, exitCode int) {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "launchctl")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit "+strconv.Itoa(exitCode)+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := launchctlBin
+	launchctlBin = p
+	t.Cleanup(func() { launchctlBin = old })
+}
+
+// The app registers the agent through SMAppService, which writes no plist to
+// ~/Library/LaunchAgents. Asking launchd is the only way to see that install,
+// and "launchd would not tell us" must stay distinct from "not installed".
+func TestLaunchAgentRegistered(t *testing.T) {
+	t.Run("launchd knows the label", func(t *testing.T) {
+		stubLaunchctl(t, 0)
+		got, err := LaunchAgentRegistered()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !got {
+			t.Error("a registered label was reported as absent")
+		}
+	})
+	t.Run("launchd denies the label", func(t *testing.T) {
+		stubLaunchctl(t, launchdNoSuchService)
+		got, err := LaunchAgentRegistered()
+		if err != nil {
+			t.Fatalf("exit %d is a definite answer, not an error: %v", launchdNoSuchService, err)
+		}
+		if got {
+			t.Error("an unknown label was reported as registered")
+		}
+	})
+	t.Run("any other exit is unknown, never a confident absent", func(t *testing.T) {
+		stubLaunchctl(t, 2)
+		got, err := LaunchAgentRegistered()
+		if err == nil {
+			t.Error("an unrecognised launchctl failure must be an error so the caller reports NOT CHECKED")
+		}
+		if got {
+			t.Error("a failed probe must not report the agent as registered")
+		}
+	})
 }
