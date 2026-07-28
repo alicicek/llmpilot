@@ -63,11 +63,14 @@ final class FleetViewModel: ObservableObject {
     /// Bounces the daemon's launchd job. Injectable so the staleness check is
     /// testable without touching the real service.
     var restartAgent: @Sendable () -> String? = { DaemonLauncher.restartAgent() }
-    /// This bundle's marketing version; injectable for the same reason.
-    var bundleVersion: String? = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-    /// Guards against a restart loop when bouncing does not resolve the
-    /// disagreement (a genuinely mismatched pair, not a stale process).
-    private var restartedForVersion: String?
+    /// The executable the daemon's launchd job is running. Injectable so the
+    /// staleness check is testable without a real job.
+    var daemonExecutable: @Sendable () -> String? = { DaemonLauncher.runningDaemonExecutable() }
+    /// This bundle's path, injectable for the same reason.
+    var bundlePath: String = Bundle.main.bundleURL.path
+    /// One bounce per app launch: if the restart does not resolve it, the
+    /// problem is not a stale process and retrying would loop.
+    private var restartedThisLaunch = false
     var startupProbeNanos: UInt64 = 500_000_000
     /// Injectable ServiceManagement seam — tests never touch the real BTM.
     var loginItems: LoginItems = LoginItemsFactory.make()
@@ -179,20 +182,22 @@ final class FleetViewModel: ObservableObject {
     }
 
     /// Sparkle replaces the app bundle in place but never restarts the
-    /// daemon: it is a separate launchd job, so it keeps running the PREVIOUS
-    /// build's binary out of the replaced bundle until the next logout. The
-    /// user then drives new app code against a pre-update daemon with no sign
-    /// anything is wrong. Bounce it once when the running version disagrees
-    /// with this bundle.
+    /// daemon: it is a separate launchd job, so it keeps executing the
+    /// PREVIOUS build out of the bundle the updater moved aside, and the user
+    /// drives new app code against a stale daemon with nothing to show for it.
     ///
-    /// A daemon too old to report a version reports nil, and a missing fact is
-    /// not a mismatch — those are left alone rather than bounced on a guess.
+    /// This deliberately does NOT key on the version the daemon reports. A
+    /// daemon old enough to be stale is old enough to predate that field —
+    /// which is exactly the case on the first update carrying this code — so
+    /// a version comparison can never fire when it is most needed. The
+    /// executable path is the signal that works against any build.
     func restartStaleDaemon() async {
-        guard let running = state?.version, !running.isEmpty,
-              let mine = bundleVersion, !mine.isEmpty,
-              running != mine, restartedForVersion != running
+        guard !restartedThisLaunch else { return }
+        let probe = self.daemonExecutable
+        guard let exe = await Task.detached(operation: { probe() }).value,
+              DaemonLauncher.isStaleExecutable(exe, ourBundle: bundlePath)
         else { return }
-        restartedForVersion = running
+        restartedThisLaunch = true
         let restart = self.restartAgent
         _ = await Task.detached { restart() }.value
         _ = try? await refresh()

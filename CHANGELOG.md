@@ -4,6 +4,17 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-07-28
+
+### Fixed
+
+- **Updating really does restart the daemon now.** 1.2.1 tried to spot a
+  left-behind daemon by comparing the version it reports — but a daemon old
+  enough to be stale is old enough to predate that field, so the check could
+  never fire on the very update that needed it. It now looks at which
+  executable the daemon is actually running. A daemon started from Homebrew
+  or from source is left alone.
+
 ## [1.2.1] - 2026-07-28
 
 ### Fixed
@@ -102,6 +113,7 @@ Initial public release: live usage for every account, lock-first switching,
 window scheduling, the cockpit, the menu bar app, the statusline, and the
 one-time Pro autopilot.
 
+[1.2.2]: https://github.com/alicicek/llmpilot/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/alicicek/llmpilot/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/alicicek/llmpilot/compare/v1.0.1...v1.2.0
 [1.0.1]: https://github.com/alicicek/llmpilot/compare/v1.0.0...v1.0.1

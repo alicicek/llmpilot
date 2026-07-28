@@ -260,53 +260,65 @@ final class FleetViewModelTests: XCTestCase {
     }
 
     // Sparkle replaces the bundle in place but leaves the daemon's separate
-    // launchd job running the PREVIOUS binary, so the user drives new app code
-    // against a pre-update daemon with no sign anything is wrong.
-    func testStaleDaemonIsRestartedOnce() async throws {
+    // launchd job running the PREVIOUS binary out of the bundle the updater
+    // moved aside. The FIRST version of this fix compared the version the
+    // daemon reports — which a stale daemon is, by definition, often too old
+    // to have. Proven live: app 1.2.1, daemon still 1.2.0, no version on the
+    // wire, no bounce. These pin the executable-based detection instead.
+    private func staleModel(_ exe: String?) -> FleetViewModel {
         let api = StubAPI()
-        var s = Fixtures.twoAccounts()
-        s.version = "1.1.0-p2"
-        api.stateResult = .success(s)
+        api.stateResult = .success(Fixtures.twoAccounts())
         let model = makeModel(api)
-        model.bundleVersion = "1.2.0"
-        let restarts = Counter()
-        model.restartAgent = { () -> String? in restarts.bump(); return nil }
-
-        try await model.refresh()
-        await model.restartStaleDaemon()
-        XCTAssertEqual(restarts.value, 1, "a daemon older than the bundle must be bounced")
-
-        // Still reporting the old version: a genuinely mismatched pair, not a
-        // stale process. Must not loop.
-        await model.restartStaleDaemon()
-        XCTAssertEqual(restarts.value, 1, "the bounce must not repeat for the same version")
+        model.bundlePath = "/Applications/llmpilot.app"
+        model.daemonExecutable = { exe }
+        return model
     }
 
-    func testMatchingDaemonIsLeftAlone() async throws {
-        let api = StubAPI()
-        var s = Fixtures.twoAccounts()
-        s.version = "1.2.0"
-        api.stateResult = .success(s)
-        let model = makeModel(api)
-        model.bundleVersion = "1.2.0"
+    func testDaemonLeftBehindByAnUpdateIsBounced() async throws {
+        let model = staleModel(
+            "/Users/x/Library/Caches/dev.llmpilot.menubar/org.sparkle-project.Sparkle/Installation/AA/BB/llmpilot.app/Contents/Resources/llmpilot")
         let restarts = Counter()
         model.restartAgent = { () -> String? in restarts.bump(); return nil }
         try await model.refresh()
         await model.restartStaleDaemon()
-        XCTAssertEqual(restarts.value, 0, "a matching daemon must not be bounced")
+        XCTAssertEqual(restarts.value, 1, "a daemon running from the updater's staging area must be bounced")
+        await model.restartStaleDaemon()
+        XCTAssertEqual(restarts.value, 1, "one bounce per launch — retrying would loop")
     }
 
-    // A daemon too old to report a version is a MISSING FACT, not a mismatch.
-    func testUnknownDaemonVersionIsNotBounced() async throws {
-        let api = StubAPI()
-        api.stateResult = .success(Fixtures.twoAccounts()) // version nil
-        let model = makeModel(api)
-        model.bundleVersion = "1.2.0"
+    func testDaemonFromOurOwnBundleIsLeftAlone() async throws {
+        let model = staleModel("/Applications/llmpilot.app/Contents/Resources/llmpilot")
         let restarts = Counter()
         model.restartAgent = { () -> String? in restarts.bump(); return nil }
         try await model.refresh()
         await model.restartStaleDaemon()
-        XCTAssertEqual(restarts.value, 0, "an unreported version must not trigger a guess-bounce")
+        XCTAssertEqual(restarts.value, 0, "the daemon from this bundle is not stale")
+    }
+
+    // A from-source or Homebrew install legitimately runs the daemon from
+    // PATH. Bouncing it would be an endless restart loop.
+    func testHomebrewDaemonIsNeverBounced() async throws {
+        let model = staleModel("/opt/homebrew/bin/llmpilot")
+        let restarts = Counter()
+        model.restartAgent = { () -> String? in restarts.bump(); return nil }
+        try await model.refresh()
+        await model.restartStaleDaemon()
+        XCTAssertEqual(restarts.value, 0, "a PATH install must never be bounced")
+    }
+
+    func testUnreadableDaemonPathIsLeftAlone() async throws {
+        let model = staleModel(nil)
+        let restarts = Counter()
+        model.restartAgent = { () -> String? in restarts.bump(); return nil }
+        try await model.refresh()
+        await model.restartStaleDaemon()
+        XCTAssertEqual(restarts.value, 0, "an unreadable probe must not trigger a guess-bounce")
+    }
+
+    func testParsesThePIDLaunchctlPrints() {
+        let out = "\tstate = running\n\tpid = 64372\n\tprogram identifier = x\n"
+        XCTAssertEqual(DaemonLauncher.parsePID(out), 64372)
+        XCTAssertNil(DaemonLauncher.parsePID("no pid here"))
     }
 
 }
