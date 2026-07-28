@@ -63,9 +63,11 @@ final class FleetViewModel: ObservableObject {
     /// Bounces the daemon's launchd job. Injectable so the staleness check is
     /// testable without touching the real service.
     var restartAgent: @Sendable () -> String? = { DaemonLauncher.restartAgent() }
-    /// The executable the daemon's launchd job is running. Injectable so the
+    /// What the daemon's launchd job is executing. Injectable so the
     /// staleness check is testable without a real job.
-    var daemonExecutable: @Sendable () -> String? = { DaemonLauncher.runningDaemonExecutable() }
+    var daemonExecutable: @Sendable () -> DaemonLauncher.DaemonExecutable = {
+        DaemonLauncher.runningDaemonExecutable()
+    }
     /// This bundle's path, injectable for the same reason.
     var bundlePath: String = Bundle.main.bundleURL.path
     /// One bounce per app launch: if the restart does not resolve it, the
@@ -189,14 +191,18 @@ final class FleetViewModel: ObservableObject {
     /// This deliberately does NOT key on the version the daemon reports. A
     /// daemon old enough to be stale is old enough to predate that field —
     /// which is exactly the case on the first update carrying this code — so
-    /// a version comparison can never fire when it is most needed. The
-    /// executable path is the signal that works against any build.
+    /// a version comparison can never fire when it is most needed.
+    ///
+    /// Nor does it require a readable path. 1.2.2 asked for one and treated
+    /// its absence as "no mismatch", but the updater deletes the bundle it
+    /// moved aside, so by the time the new app asks, the stale daemon's
+    /// executable is gone and there is no path to compare. A vanished
+    /// executable IS the signal.
     func restartStaleDaemon() async {
         guard !restartedThisLaunch else { return }
         let probe = self.daemonExecutable
-        guard let exe = await Task.detached(operation: { probe() }).value,
-              DaemonLauncher.isStaleExecutable(exe, ourBundle: bundlePath)
-        else { return }
+        let state = await Task.detached(operation: { probe() }).value
+        guard DaemonLauncher.isStale(state, ourBundle: bundlePath) else { return }
         restartedThisLaunch = true
         let restart = self.restartAgent
         _ = await Task.detached { restart() }.value

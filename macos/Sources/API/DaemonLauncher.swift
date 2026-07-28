@@ -51,15 +51,40 @@ enum DaemonLauncher {
         return run("/bin/launchctl", ["bootstrap", domain, plist])
     }
 
-    /// The executable the daemon's launchd job is currently running, or nil
-    /// when there is no such job or the path cannot be read.
-    static func runningDaemonExecutable() -> String? {
+    /// What the daemon's launchd job is executing.
+    ///
+    /// The three states must not be collapsed. 1.2.2 folded `executableGone`
+    /// into `noJob` and so could never fire on the update it was written for:
+    /// Sparkle deletes the bundle it moved aside, and a process whose
+    /// executable has been unlinked has no path left to read.
+    enum DaemonExecutable: Equatable, Sendable {
+        /// No such job, or launchd named no pid — nothing to judge.
+        case noJob
+        /// A live process whose executable can no longer be located on disk.
+        /// This is the NORMAL state after an in-place update.
+        case executableGone
+        case path(String)
+    }
+
+    /// What the daemon's launchd job is currently executing.
+    static func runningDaemonExecutable() -> DaemonExecutable {
         guard let out = capture("/bin/launchctl",
                                 ["print", "gui/\(getuid())/dev.llmpilot.daemon"]),
-              let pid = parsePID(out) else { return nil }
+              let pid = parsePID(out) else { return .noJob }
+        return executable(ofPID: pid)
+    }
+
+    /// Split out from the launchd lookup so tests can drive the real reader
+    /// against a real process — the coverage gap that let 1.2.1 and 1.2.2 both
+    /// ship a check that could not fire. Every earlier test supplied the path
+    /// instead of reading it.
+    static func executable(ofPID pid: pid_t) -> DaemonExecutable {
         var buf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-        guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return nil }
-        return String(cString: buf)
+        // proc_pidpath answers 0 for a running process whose executable was
+        // deleted (measured on macOS 26.5: a live pid returns its path, the
+        // same pid returns 0 with an empty buffer once the file is unlinked).
+        guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return .executableGone }
+        return .path(String(cString: buf))
     }
 
     static func parsePID(_ launchctlOutput: String) -> pid_t? {
@@ -71,7 +96,24 @@ enum DaemonLauncher {
         return nil
     }
 
-    /// Is this daemon executable one an in-place update left behind?
+    /// Is the daemon one an in-place update left behind?
+    ///
+    /// An executable that has vanished from disk is stale whatever its path
+    /// was: the only thing that deletes a running daemon's binary is an
+    /// updater replacing the bundle around it. Bouncing is safe even in the
+    /// rarer readings of that state (the process exited under us; a package
+    /// manager swapped the file), because launchd re-resolves the program from
+    /// the CURRENT registration — and FleetViewModel bounces at most once per
+    /// app launch, so no reading of it can loop.
+    static func isStale(_ state: DaemonExecutable, ourBundle: String) -> Bool {
+        switch state {
+        case .noJob: return false
+        case .executableGone: return true
+        case .path(let exe): return isStaleExecutable(exe, ourBundle: ourBundle)
+        }
+    }
+
+    /// Is this daemon executable PATH one an in-place update left behind?
     ///
     /// Deliberately narrow. A from-source or Homebrew install legitimately
     /// runs the daemon from PATH and must NEVER be bounced — doing so on every
