@@ -34,7 +34,7 @@ final class FleetViewModelTests: XCTestCase {
         XCTAssertEqual(model.accounts.map(\.id), ["acct-a", "acct-b"])
         XCTAssertTrue(model.isActive(model.accounts[0]))
         XCTAssertFalse(model.isActive(model.accounts[1]))
-        XCTAssertEqual(model.autopilotLine, "autopilot on · rotates at 85%")
+        XCTAssertEqual(model.autopilotLine, "autopilot on · switches at 85%")
     }
 
     func testRefreshFailureIsDown() async {

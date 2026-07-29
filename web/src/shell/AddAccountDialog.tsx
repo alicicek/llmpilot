@@ -131,7 +131,7 @@ function DetectedSection({
                 <p className="mt-1 text-[10px] leading-relaxed text-ter">
                   {d.registered
                     ? "llmpilot already knows this account. Moving this copy leaves one sign-in — it won't refresh the account while two exist."
-                    : "Watched: usage stays visible here — this account can't be switched to or rotated."}
+                    : "Watched: usage stays visible here — llmpilot never switches to this account."}
                 </p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   {!d.registered && (

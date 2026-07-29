@@ -48,20 +48,49 @@ structured alarm count for anything it cannot repair.
 custom hourly reminder is dormant. Change it to 3 only after a test delivery from
 the native email binding is proven; that configuration activates the custom sweep.
 
-Stripe SDK and webhook endpoints must stay on `2026-06-24.dahlia`. The
-Prices are yearly recurring Prices with GBP base amounts and pinned USD currency
-options. Catalog and end-to-end scripts default to dry-run and every Stripe CLI
-command uses the `llmpilot` profile.
+Stripe SDK and webhook endpoints must stay on `2026-06-24.dahlia`. Create the
+endpoint with that version pinned explicitly — an unpinned endpoint follows the
+account default, and the payload shapes this Worker parses are version-
+sensitive.
 
-## Launch-price window
+## Stripe catalog
 
-For the 14-day launch sale the full rung sells at `PRICE_LAUNCH`
+The catalog the Worker sells is TWO Prices — `PRICE_FULL` and `PRICE_DISCOUNT`
+(every non-full rung resolves to the discount Price). Both are yearly recurring
+with a GBP base amount and a pinned USD currency option, and **both currencies
+must be tax-inclusive**: `tax_behavior` on the base does not propagate into
+`currency_options`, and an unspecified option falls back to the account's tax
+default (exclusive) — a buyer would be charged tax on top of the number they
+consented to. A currency option's tax behavior is immutable once specified;
+get it right at creation.
+
+Create them per key mode:
+
+```
+node scripts/catalog.mjs --only=full     --apply [--live]
+node scripts/catalog.mjs --only=discount --apply [--live]
+```
+
+**`--live` is what selects the key mode** — without it the Price is created in
+TEST mode and its id would end up in a production secret. The script refuses a
+CLI whose observed mode disagrees with the flag, verifies the created Price's
+own `livemode`, and treats a Stripe error body as failure (the CLI exits 0 on
+HTTP errors). A bare `--apply` (no `--only=`) mints all three rungs including
+`launch` — never what a normal cutover wants.
+
+## Launch-price window (optional lever — currently CLOSED by owner decision)
+
+The window is opened only by a deliberate, separate decision — it is NOT a
+launch-day step. While it stays closed, `PRICE_LAUNCH` and `LAUNCH_ENDS_AT`
+remain unset; that absence IS the closed state (both-or-neither is enforced).
+
+When (and only when) a window is decided: the full rung sells at `PRICE_LAUNCH`
 (£5.99/$7.99) until `LAUNCH_ENDS_AT`, then reverts to `PRICE_FULL` — resolved
-per request from the clock, so closing needs no deploy and no cron. Opening
-the window on launch day:
+per request from the clock, so closing needs no deploy and no cron.
 
-1. `node scripts/catalog.mjs --only=launch --apply` (once per key mode) and
-   put the printed Price id in `wrangler secret put PRICE_LAUNCH`.
+1. `node scripts/catalog.mjs --only=launch --apply [--live]` (per key mode,
+   like the catalog above) and put the printed Price id in
+   `wrangler secret put PRICE_LAUNCH`.
 2. `wrangler secret put LAUNCH_ENDS_AT` with the RFC 3339 end instant,
    exactly 14 days after the posts go out (honest urgency: the stated end
    date is the real one).

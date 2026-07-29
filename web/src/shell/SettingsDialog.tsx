@@ -104,7 +104,7 @@ export function SettingsDialog(props: {
         </Row>
         <Row
           label="Auto-switch"
-          hint={`Rotates to the account with headroom near ${cfg?.autopilot?.threshold_percent ?? 90}%.`}
+          hint={`Switches to the account with headroom near ${cfg?.autopilot?.threshold_percent ?? 90}%.`}
         >
           <Toggle
             on={autoOn}

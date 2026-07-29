@@ -226,7 +226,7 @@ struct MenuBarView: View {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 8))
                         .foregroundStyle(.tertiary)
-                        .help("pinned — excluded from rotation")
+                        .help("pinned — the autopilot never switches to this account")
                 }
                 Spacer()
                 if active {

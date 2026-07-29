@@ -161,7 +161,10 @@ func init() {
 		render: renderCost,
 	})
 	register(&Segment{
-		ID: "rotation", Name: "Next rotation", Desc: "where autopilot would switch next — →label:12%",
+		// ID stays "rotation": it is persisted in saved statusline configs and
+		// is an internal name, which the voice rules allow. The LABEL is what
+		// users read, and that says "switch".
+		ID: "rotation", Name: "Next switch", Desc: "where autopilot would switch next — →label:12%",
 		Deps: []string{"store"}, Priority: 45, Fleet: true,
 		render: renderRotation,
 	})

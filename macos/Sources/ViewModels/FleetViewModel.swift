@@ -453,7 +453,7 @@ final class FleetViewModel: ObservableObject {
         guard let autopilot else { return "autopilot —" }
         if autopilot.disabled == true { return "autopilot off" }
         let threshold = Int((autopilot.thresholdPercent ?? 90).rounded())
-        return "autopilot on · rotates at \(threshold)%"
+        return "autopilot on · switches at \(threshold)%"
     }
 
     /// What the collapsed menu-bar icon renders: the ACTIVE account's session

@@ -236,7 +236,7 @@ func Presets() []Preset {
 			Config: Default(),
 		},
 		{
-			ID: "pilot", Name: "Pilot", Desc: "runway plus the daemon-backed fleet: burn wall, next rotation, autopilot state",
+			ID: "pilot", Name: "Pilot", Desc: "runway plus the daemon-backed fleet: burn wall, next switch, autopilot state",
 			Config: Config{Version: ConfigVersion, Preset: "pilot", Segments: []SegmentConfig{
 				{ID: "account"}, {ID: "usage"}, {ID: "burn"}, {ID: "rotation"}, {ID: "autopilot"},
 			}},

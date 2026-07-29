@@ -27,10 +27,11 @@
     }
   ],
   "vars": {
-    // "staging" while on TEST Stripe keys. Flip to "production" ONLY when live
-    // keys are set — the worker fails closed on a key-mode/ENVIRONMENT mismatch
-    // (test key in production, or live key outside production).
-    "ENVIRONMENT": "staging",
+    // "production" = LIVE Stripe keys (flipped 2026-07-29, go-live). The worker
+    // fails closed on a key-mode/ENVIRONMENT mismatch (test key in production,
+    // or live key outside production) — a deployed worker that should run on
+    // test keys needs a non-production ENVIRONMENT.
+    "ENVIRONMENT": "production",
     "EMAIL_FROM": "support@llmpilot.dev",
     "PUBLIC_ORIGIN": "https://llmpilot.dev",
     "TRIAL_DAYS": "8",
