@@ -142,6 +142,13 @@ export async function createCheckout(
     const licenseId = newLicenseID();
     await insertLicense(env.ENT_DB, licenseId, rung, body.install_id);
     const params = sessionParams(env, rung, licenseId, ui, now);
+    // Pin the Session to the CONSENTED currency. Without this, Checkout may
+    // localize to the Price's other currency option and present an amount the
+    // echo never showed — the same consent/charge divergence class as the
+    // tax-behavior defect. echoMatches has already proven this currency is
+    // one the Price carries at exactly the echoed amount. The no-card rung
+    // shows no amount, echoes no currency, and stays unpinned.
+    if (echo.currency) params.currency = echo.currency.toLowerCase();
     const session = await stripe.checkout.sessions.create(params, {
       idempotencyKey: `checkout:${licenseId}`,
     });
@@ -190,7 +197,7 @@ export async function checkoutPage(env: WorkerEnv, request: Request, stripeOverr
     const secret = escapeHTML(session.client_secret ?? "");
     const publishableKey = JSON.stringify(env.STRIPE_PUBLISHABLE_KEY);
     const clientSecret = JSON.stringify(session.client_secret ?? "");
-    return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>llmpilot checkout</title><body><main><h1>Turn on the autopilot</h1><p id="amount">${escapeHTML(amount)}</p><p>charged once — we cancel the renewal automatically</p><div id="checkout" data-client-secret="${secret}"></div><section id="receipt" hidden><h2>Receipt</h2><p>Your statement will show <strong>LINK.COM* LLMPILOT.DEV</strong>.</p></section></main><script src="https://js.stripe.com/v3/"></script><script>(async()=>{const stripe=Stripe(${publishableKey});if(typeof stripe.createEmbeddedCheckoutPage!=="function")throw new Error("embedded_checkout_unavailable");const checkout=await stripe.createEmbeddedCheckoutPage({fetchClientSecret:async()=>${clientSecret},onComplete:async()=>{await fetch("/v1/activate",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({session_id:${JSON.stringify(session.id)}})});document.getElementById("receipt").hidden=false}});checkout.mount("#checkout")})().catch(()=>{document.getElementById("checkout").textContent="Checkout could not load. Try again."})</script></body></html>`, {
+    return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>llmpilot checkout</title><style>:root{color-scheme:light}body{margin:0;background:#f5f5f4;color:#1c1917;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}main{max-width:460px;margin:0 auto;padding:26px 20px 40px}h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-0.01em}#amount{margin:10px 0 2px;font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}.note{margin:0 0 16px;font-size:12.5px;color:#78716c}#receipt{margin-top:18px;border:1px solid #e7e5e4;border-radius:10px;padding:12px 14px;background:#fff}#receipt h2{margin:0 0 4px;font-size:13px}#receipt p{margin:0;font-size:12.5px;color:#57534e}</style><body><main><h1>Turn on the autopilot</h1><p id="amount">${escapeHTML(amount)}</p><p class="note">charged once — we cancel the renewal automatically</p><div id="checkout" data-client-secret="${secret}"></div><section id="receipt" hidden><h2>Receipt</h2><p>Your statement will show <strong>LINK.COM* LLMPILOT.DEV</strong>.</p></section></main><script src="https://js.stripe.com/v3/"></script><script>(async()=>{const stripe=Stripe(${publishableKey});if(typeof stripe.createEmbeddedCheckoutPage!=="function")throw new Error("embedded_checkout_unavailable");const checkout=await stripe.createEmbeddedCheckoutPage({fetchClientSecret:async()=>${clientSecret},onComplete:async()=>{await fetch("/v1/activate",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({session_id:${JSON.stringify(session.id)}})});document.getElementById("receipt").hidden=false}});checkout.mount("#checkout")})().catch(()=>{document.getElementById("checkout").textContent="Checkout could not load. Try again."})</script></body></html>`, {
       headers: {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",

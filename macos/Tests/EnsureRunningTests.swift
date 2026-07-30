@@ -147,6 +147,10 @@ final class EnsureRunningTests: XCTestCase {
         let api = StubAPI()
         api.stateResult = .success(Fixtures.twoAccounts())
         let (model, _) = makeModel(api)
+        // The flag now burns only on a CONFIRMED-visible window (cooperative
+        // activation can surface it behind a fullscreen Space, unseen).
+        model.windowVisible = { true }
+        model.scheduleVisibilityCheck = { _, work in work() }
         try await model.refresh()
         try await model.refresh()
         XCTAssertEqual(opened.count, 1)
@@ -154,6 +158,7 @@ final class EnsureRunningTests: XCTestCase {
 
         // Relaunch: a second model over the same defaults must not open again.
         let (model2, _) = makeModel(api)
+        model2.scheduleVisibilityCheck = { _, work in work() }
         try await model2.refresh()
         XCTAssertEqual(opened.count, 1)
         _ = model

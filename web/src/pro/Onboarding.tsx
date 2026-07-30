@@ -18,6 +18,8 @@ interface OnboardingProps {
   onDismiss: () => void;
   caughtThisWeek?: number;
   handoffURL?: string | null;
+  checkoutError?: string | null;
+  busy?: boolean;
   // demo overrides the built-in preview fleet (tests / real detected accounts).
   demo?: State;
 }
@@ -48,6 +50,8 @@ export function Onboarding(props: OnboardingProps) {
         onDismiss={props.onDismiss}
         caughtThisWeek={props.caughtThisWeek}
         handoffURL={props.handoffURL}
+        checkoutError={props.checkoutError}
+        busy={props.busy}
       />
     );
   }

@@ -313,9 +313,26 @@ struct MenuBarView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 ForEach(unregistered) { d in
                     HStack {
-                        Text(d.email.isEmpty ? d.configDir : d.email)
-                            .font(.system(size: 11.5))
-                            .lineLimit(1)
+                        // Email + folder: the same account can be signed in
+                        // from more than one config dir (kept sign-ins), and
+                        // two identical bare emails are indistinguishable —
+                        // the cockpit's adopt screen already shows the path.
+                        VStack(alignment: .leading, spacing: 1) {
+                            let dir = d.configDir.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+                            Text(d.email.isEmpty ? dir : d.email)
+                                .font(.system(size: 11.5))
+                                .lineLimit(1)
+                            if !d.email.isEmpty {
+                                // Middle truncation: config dirs differ at the
+                                // TAIL, and tail-truncating them recreates the
+                                // identical-rows defect this line exists to fix.
+                                Text(dir)
+                                    .font(.system(size: 9.5, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
                         Spacer()
                         Button(model.adoptingDir == d.configDir ? "adopting…" : "Adopt") {
                             Task { await model.adopt(d.configDir) }

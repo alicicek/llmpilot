@@ -79,6 +79,30 @@ test("checkout: a matching echo creates the Session with the echoed trial length
   assert.equal(params.subscription_data.trial_period_days, 8);
 });
 
+test("checkout: the Session is pinned to the CONSENTED currency", async () => {
+  // Without the pin, Checkout may localize to the Price's other currency
+  // option and present an amount the buyer never consented to — the same
+  // divergence class as the tax-behavior defect. A US echo must produce a
+  // usd Session, a GBP echo a gbp Session, and the no-card rung (no amount
+  // shown, no currency echoed) must stay unpinned for Stripe to localize.
+  const env = makeEnv(new TestD1(), KEYS.signingKeyB64);
+  const fake = makeFakeStripe();
+  const cases: Array<[Record<string, unknown>, string | undefined]> = [
+    [{ rung: "full", install_id: TEST_INSTALL, quote: { currency: "usd", amount_minor: 1299 } }, "usd"],
+    [{ rung: "full", install_id: TEST_INSTALL, quote: { currency: "gbp", amount_minor: 999 } }, "gbp"],
+    [{ rung: "nocard_trial", install_id: TEST_INSTALL, quote: { trial_days: 8 } }, undefined],
+  ];
+  for (const [body, want] of cases) {
+    const res = await createCheckout(env, body, "192.0.2.30", fake.stripe);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+  }
+  const created = calls(fake.state, "sessions.create");
+  assert.equal(created.length, cases.length);
+  created.forEach((c, i) => {
+    assert.equal((c.args[0] as { currency?: string }).currency, cases[i][1]);
+  });
+});
+
 test("checkout: full and nocard rungs accept their own echo shapes", async () => {
   const env = makeEnv(new TestD1(), KEYS.signingKeyB64);
   const fake = makeFakeStripe();

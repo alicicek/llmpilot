@@ -78,6 +78,14 @@ final class CockpitWindowController: NSWindowController, NSWindowDelegate, WKNav
     /// Injectable so the bridge wiring is testable without a webview.
     var openLogin: () -> Void = { LoginWindowController.shared.open() }
 
+    /// On screen AND at least partially unoccluded. Cooperative activation
+    /// can refuse to surface a window (fullscreen Space in front), in which
+    /// case isVisible alone still reads true while nobody can see it.
+    var isWindowVisible: Bool {
+        guard let w = window else { return false }
+        return w.isVisible && w.occlusionState.contains(.visible)
+    }
+
     func open(url: URL) {
         origin = (url.host, url.port)
         if window == nil {

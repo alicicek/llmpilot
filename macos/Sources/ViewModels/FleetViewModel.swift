@@ -245,16 +245,44 @@ final class FleetViewModel: ObservableObject {
     static let daemonUnreachableError =
         "the daemon never became reachable — run `llmpilot daemon status` in a terminal"
 
-    /// Auto-open the cockpit window exactly once EVER. The flag is set only
-    /// here — at a successful state fetch — never on a failed start, so a
-    /// daemon that fails to come up cannot burn the one auto-open. Flushed
-    /// synchronously so an immediate app kill can't lose it.
+    /// Auto-open the cockpit window exactly once EVER — but burn the one-shot
+    /// only after the window is confirmed VISIBLE. macOS cooperative
+    /// activation can refuse to surface it (a fullscreen Space in front), and
+    /// a flag burned on an unseen window loses the first-run explainer
+    /// forever (hit live 2026-07-30: the window opened behind a fullscreen
+    /// terminal). A failed daemon start still cannot burn it (unchanged);
+    /// a refused surface retries on the next launch. In-run repeats are
+    /// stopped by `autoOpenAttempted`, not the flag.
+    private var autoOpenAttempted = false
+    var windowVisible: () -> Bool = { CockpitWindowController.shared.isWindowVisible }
+    /// Sampled more than once: the user may cmd-tab back a few seconds after
+    /// launch — one early sample would miss that, never burn the flag, and
+    /// reopen the window on every launch.
+    var visibilitySampleDelays: [TimeInterval] = [1.5, 5, 15]
+    var scheduleVisibilityCheck: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
     private func maybeAutoOpenWindow() {
+        guard !autoOpenAttempted else { return }
         guard !defaults.bool(forKey: Self.firstLaunchKey) else { return }
         guard let url = api.cockpitURL() else { return }
-        defaults.set(true, forKey: Self.firstLaunchKey)
-        defaults.synchronize()
+        autoOpenAttempted = true
         openWindow(url)
+        sampleVisibility(0)
+    }
+
+    private func sampleVisibility(_ attempt: Int) {
+        guard attempt < visibilitySampleDelays.count else { return }
+        scheduleVisibilityCheck(visibilitySampleDelays[attempt]) { [weak self] in
+            guard let self else { return }
+            if self.windowVisible() {
+                self.defaults.set(true, forKey: Self.firstLaunchKey)
+                self.defaults.synchronize()
+            } else {
+                self.sampleVisibility(attempt + 1)
+            }
+        }
     }
 
     func switchTo(_ id: String) async {

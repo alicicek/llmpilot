@@ -250,6 +250,51 @@ final class FleetViewModelTests: XCTestCase {
         XCTAssertEqual(api.markerReports, [true])
     }
 
+    // Cooperative activation can leave the one-shot first-run window behind a
+    // fullscreen Space. The flag must burn only on a CONFIRMED-visible window
+    // (hit live 2026-07-30: window opened unseen, explainer lost forever).
+    func testAutoOpenRetriesNextLaunchWhenWindowNeverVisible() async throws {
+        let api = StubAPI()
+        api.stateResult = .success(Fixtures.twoAccounts())
+        var opened = 0
+        let model = makeModel(api)
+        model.openWindow = { _ in opened += 1 }
+        model.windowVisible = { false }
+        model.scheduleVisibilityCheck = { _, work in work() }
+        try await model.refresh()
+        XCTAssertEqual(opened, 1)
+        XCTAssertFalse(testDefaults.bool(forKey: FleetViewModel.firstLaunchKey))
+        // Same run: no reopen storm on every refresh.
+        try await model.refresh()
+        XCTAssertEqual(opened, 1)
+        // Next launch (fresh model, same defaults): tries again.
+        let relaunch = makeModel(api)
+        relaunch.openWindow = { _ in opened += 1 }
+        relaunch.windowVisible = { false }
+        relaunch.scheduleVisibilityCheck = { _, work in work() }
+        try await relaunch.refresh()
+        XCTAssertEqual(opened, 2)
+    }
+
+    func testAutoOpenBurnsFlagOnlyWhenWindowVisible() async throws {
+        let api = StubAPI()
+        api.stateResult = .success(Fixtures.twoAccounts())
+        var opened = 0
+        let model = makeModel(api)
+        model.openWindow = { _ in opened += 1 }
+        model.windowVisible = { true }
+        model.scheduleVisibilityCheck = { _, work in work() }
+        try await model.refresh()
+        XCTAssertEqual(opened, 1)
+        XCTAssertTrue(testDefaults.bool(forKey: FleetViewModel.firstLaunchKey))
+        // Burned: a later launch never auto-opens again.
+        let relaunch = makeModel(api)
+        relaunch.openWindow = { _ in opened += 1 }
+        relaunch.scheduleVisibilityCheck = { _, work in work() }
+        try await relaunch.refresh()
+        XCTAssertEqual(opened, 1)
+    }
+
     func testAutopilotLineWhenDisabled() async throws {
         let api = StubAPI()
         api.stateResult = .success(Fixtures.twoAccounts())

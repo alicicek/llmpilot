@@ -14,6 +14,7 @@ import { useLicense } from "./pro/useLicense.ts";
 import { useQuote } from "./pro/useQuote.ts";
 import { Onboarding } from "./pro/Onboarding.tsx";
 import { Paywall } from "./pro/Paywall.tsx";
+import { licenseErrorCopy } from "./pro/errors.ts";
 import { fixtureActivatedLicense, proFixtureParam } from "./pro/fixtures.ts";
 import {
   createSchedule,
@@ -102,6 +103,10 @@ export default function App() {
   const [adoptSkipped, setAdoptSkipped] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
   const [handoffURL, setHandoffURL] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  // True from click until the guard releases — the button shows busy instead
+  // of looking dead while the POST fans out daemon → worker → Stripe.
+  const [checkoutPending, setCheckoutPending] = useState(false);
   const checkoutInFlight = useRef(false);
   // Detected-but-unregistered config dirs on this Mac — the toolbar badge and
   // the Add-account dialog's "already signed in" section both read this, so
@@ -218,6 +223,8 @@ export default function App() {
 
   const dismissOnboarding = () => {
     setOnboarded(true);
+    // A refusal from a previous attempt must not greet the next visit.
+    setCheckoutError(null);
     if (!proFixtureMode) localStorage.setItem(ONBOARDED_KEY, "yes");
   };
 
@@ -227,16 +234,20 @@ export default function App() {
   // handoff and simulates the silent SSE activation the daemon poller performs.
   const onCheckout = (rung: Rung, echo: QuoteEcho) => {
     // Single-flight: a double-click must not create two billable Checkout
-    // Sessions. The success path navigates away (component unmounts), so the
-    // guard only resets on failure or in fixture mode.
+    // Sessions. NOTE the success path does NOT unmount here — the native
+    // cockpit intercepts the checkout navigation into a separate window —
+    // so the guard is released on a timer below, never assumed away.
     if (checkoutInFlight.current) return;
     checkoutInFlight.current = true;
+    setCheckoutPending(true);
+    setCheckoutError(null);
     if (proFixtureMode) {
       setHandoffURL(`https://checkout.stripe.com/c/pay/${rung}`);
       window.setTimeout(() => {
         setLicense(fixtureActivatedLicense());
         setHandoffURL(null);
         checkoutInFlight.current = false;
+        setCheckoutPending(false);
       }, 600);
       return;
     }
@@ -253,24 +264,50 @@ export default function App() {
     startCheckout(rung, echo)
       .then(({ url }) => {
         setHandoffURL(url);
+        // In a plain browser this page unloads before the timer fires. In the
+        // NATIVE cockpit the window intercepts the navigation into the
+        // separate Checkout window and nothing unmounts — without this reset
+        // the guard stays stuck forever and every later buy click on any rung
+        // dies silently. The handoff line is KEPT: clearing it made the
+        // paywall look idle while a live payment window held an open Session,
+        // inviting a re-click that would orphan that Session's activation
+        // poll (reviewer 2026-07-30). 2.5s still swallows a double-click.
+        // Timer armed BEFORE the assign so even a throwing navigation can
+        // never freeze the busy state permanently.
+        window.setTimeout(() => {
+          checkoutInFlight.current = false;
+          setCheckoutPending(false);
+        }, 2500);
         window.location.assign(url);
       })
       .catch((e) => {
         checkoutInFlight.current = false; // allow a retry after a failed start
+        setCheckoutPending(false);
         if (e instanceof ApiError && e.code === "quote_stale") {
           // The worker refused terms that drifted from what was shown. Never
           // auto-retry a purchase: refresh the quote, re-render, and require
-          // a fresh human click on the new terms.
+          // a fresh human click on the new terms. Rendered IN the paywall —
+          // a flash paints under the overlay and is unreadable exactly here.
           reloadQuote();
-          setFlash("The price or trial terms changed — review the new terms and confirm.");
+          setCheckoutError("The price or trial terms changed — review the new terms and confirm.");
           return;
         }
-        report(e);
+        // Surface the failure NEXT TO the button that was pressed — a flash
+        // under the paywall overlay reads as a dead button (hit live: a
+        // post-update stale session token 401'd every buy click with no
+        // visible word). Known codes get their remedy copy.
+        setCheckoutError(
+          (e instanceof ApiError && licenseErrorCopy(e.code)) ||
+            (e instanceof Error ? e.message : "That didn't take — try again."),
+        );
       });
   };
 
+  // Clearing on OPEN (not just dismiss) covers every path a stale refusal
+  // could ride back in — banner reopen, restore-then-reopen, all of them.
   const openPaywall = () => {
     dismissOnboarding();
+    setCheckoutError(null);
     setPaywallOpen(true);
   };
 
@@ -305,7 +342,7 @@ export default function App() {
           </span>
           <button
             className="font-semibold text-acc-tx hover:underline"
-            onClick={() => setPaywallOpen(true)}
+            onClick={openPaywall}
           >
             Turn on the autopilot
           </button>
@@ -336,6 +373,8 @@ export default function App() {
             onDismiss={dismissOnboarding}
             caughtThisWeek={caughtThisWeek || undefined}
             handoffURL={handoffURL}
+            checkoutError={checkoutError}
+            busy={checkoutPending}
             demo={state.accounts.length > 0 ? state : undefined}
           />
         ) : firstRun && !adoptSkipped ? (
@@ -370,9 +409,14 @@ export default function App() {
                 setPaywallOpen(false);
                 setSettingsOpen(true);
               }}
-              onDismiss={() => setPaywallOpen(false)}
+              onDismiss={() => {
+                setPaywallOpen(false);
+                setCheckoutError(null);
+              }}
               caughtThisWeek={caughtThisWeek || undefined}
               handoffURL={handoffURL}
+              checkoutError={checkoutError}
+              busy={checkoutPending}
             />
           </div>
         </div>

@@ -27,6 +27,13 @@ interface PaywallProps {
   // undefined omits the line entirely (never invent a stat).
   caughtThisWeek?: number;
   handoffURL?: string | null;
+  // A failed checkout START (the POST, not the payment). Rendered here so the
+  // buyer sees the remedy next to the button they pressed — a flash elsewhere
+  // reads as a dead button under a modal.
+  checkoutError?: string | null;
+  // True while a checkout start is in flight or its window is being handed
+  // off — the button shows busy instead of silently swallowing clicks.
+  busy?: boolean;
 }
 
 // bg-acc-tx (dark:bg-accent) keeps white text ≥4.5:1 at this size — the app's
@@ -36,7 +43,7 @@ const btnPrimary =
 const btnGhost =
   "text-[12px] text-sec underline-offset-2 hover:underline focus:outline-none focus-visible:underline";
 
-export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout, onRecover, onDismiss, caughtThisWeek, handoffURL }: PaywallProps) {
+export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout, onRecover, onDismiss, caughtThisWeek, handoffURL, checkoutError, busy }: PaywallProps) {
   const [rung, setRung] = useState<Rung>("full");
   const locale = typeof navigator !== "undefined" ? navigator.language : "en-GB";
   const fullCopy = quote ? rungCopy("full", quote, locale) : null;
@@ -72,13 +79,23 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
             {caughtThisWeek === 1 ? "window" : "windows"} this week.
           </p>
         )}
+        {checkoutError && (
+          <p className="mt-3 rounded-lg border border-hair bg-panel px-3 py-2 text-[11.5px] text-sec" role="alert" data-testid="checkout-error">
+            {checkoutError}
+          </p>
+        )}
+        {handoffURL && (
+          <p className="mt-3 text-[11.5px] text-sec" role="status" data-testid="checkout-handoff" data-url={handoffURL}>
+            Checkout is open in the payment window — finish there, or start again here.
+          </p>
+        )}
         <div className="mt-4 flex items-center gap-4">
           <button
             className={btnPrimary}
-            disabled={!fullCopy}
+            disabled={!fullCopy || busy}
             onClick={() => fullCopy && onCheckout("full", fullCopy.echo)}
           >
-            Turn on the autopilot
+            {busy ? "Opening checkout…" : "Turn on the autopilot"}
           </button>
           <button className={btnGhost} onClick={onRecover}>
             Restore a purchase
@@ -168,7 +185,7 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
 
       {handoffURL && (
         <p className="mt-3 text-[11.5px] text-sec" role="status" data-testid="checkout-handoff" data-url={handoffURL}>
-          Opening secure checkout…
+          Checkout is open in the payment window — finish there, or start again here.
         </p>
       )}
 
@@ -178,9 +195,15 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
         </p>
       )}
 
+      {checkoutError && (
+        <p className="mt-3 rounded-lg border border-hair bg-panel px-3 py-2 text-[11.5px] text-sec" role="alert" data-testid="checkout-error">
+          {checkoutError}
+        </p>
+      )}
+
       <div className="mt-4 flex flex-col gap-2.5">
-        <button className={btnPrimary} onClick={() => onCheckout(copy.rung, copy.echo)}>
-          {copy.cta}
+        <button className={btnPrimary} disabled={busy} onClick={() => onCheckout(copy.rung, copy.echo)}>
+          {busy ? "Opening checkout…" : copy.cta}
         </button>
         <div className="flex items-center justify-between">
           {copy.declineLabel ? (

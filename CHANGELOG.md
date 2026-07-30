@@ -4,6 +4,29 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2026-07-30
+
+### Fixed
+
+- **Buy buttons no longer die after the first click.** Opening the checkout
+  window once locked the paywall's double-click protection permanently, so
+  closing checkout and clicking any purchase button again did nothing until
+  the app restarted. The protection now releases a moment after the checkout
+  window opens; a genuine double-click still cannot start two checkouts.
+- **A checkout that cannot start now says so, next to the button.** In
+  particular, a cockpit window left open across an app update loses its
+  session token; every purchase click was refused invisibly. The refusal now
+  appears where you clicked, with what to do about it.
+- **The first-run window no longer counts as shown when nobody saw it.** With
+  a fullscreen app in front, macOS can open the cockpit's one-time welcome
+  behind everything; it then never appeared again. It now only counts as
+  shown once it is actually visible, and otherwise tries again next launch.
+- **The menu bar's adopt list tells identical sign-ins apart.** The same
+  account signed in from two folders showed as two indistinguishable rows;
+  each row now carries its folder, like the cockpit already did.
+- **The checkout page looks like part of the product.** The wrapper around
+  the payment form previously rendered unstyled.
+
 ## [1.2.3] - 2026-07-29
 
 ### Fixed
