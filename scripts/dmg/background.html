@@ -10,14 +10,15 @@
      app/Applications labels near-invisible. Light is also Apple's own DMG
      material. Tokens from the design system's light column.
 
-     SAFE ZONE: AppleScript window bounds include the ~28pt title bar and
-     a user-enabled status bar eats ~26pt more, so the worst-case visible
-     canvas is 400-54 = 346pt. Every glyph here ends by y=328. -->
+     SAFE ZONE: window bounds include the ~28pt title bar, and a user can
+     have BOTH the path bar and status bar enabled (~82pt total chrome), so
+     the worst-case canvas is ~318pt. Every glyph ends by y=303; the canvas
+     is 560pt tall so resizes reveal floor, never a white seam. -->
 <html lang="en">
 <meta charset="utf-8">
 <style>
   * { margin:0; box-sizing:border-box; }
-  html,body { width:620px; height:400px; overflow:hidden; }
+  html,body { width:620px; height:560px; overflow:hidden; }
   body { background:#F5F5F7; color:#1D1D1F;
     font:14px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
     -webkit-font-smoothing:antialiased; position:relative; }
@@ -30,13 +31,13 @@
   header .name { font-size:14px; font-weight:700; letter-spacing:-.01em; }
   header .eyebrow { margin-left:auto; font-size:11px; font-weight:700;
     letter-spacing:.07em; color:#59595E; }
-  /* Icon wells: create-dmg pins the real icons at centers 160/460, y178,
+  /* Icon wells: create-dmg pins the real icons at centers 160/460, y156,
      128pt — nothing is drawn there, Finder's black labels land below on
      this light floor at full contrast. */
-  .arrow { position:absolute; top:172px; left:250px; width:120px; height:12px; }
-  .drag { position:absolute; top:284px; left:0; right:0; text-align:center;
+  .arrow { position:absolute; top:162px; left:250px; width:120px; height:12px; }
+  .drag { position:absolute; top:264px; left:0; right:0; text-align:center;
     font-size:18px; font-weight:650; color:#1D1D1F; }
-  .tag { position:absolute; top:314px; left:0; right:0; text-align:center;
+  .tag { position:absolute; top:292px; left:0; right:0; text-align:center;
     font-size:11px; color:#59595E; }
 </style>
 <body>
