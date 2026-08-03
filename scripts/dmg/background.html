@@ -1,36 +1,43 @@
 <!doctype html>
-<!-- Source for background.tiff (620x400pt). Regenerate after edits:
-       npx playwright screenshot --viewport-size=620,400 background.html bg1x.png
-       npx playwright screenshot --viewport-size=620,400 --device-scale-factor=2 background.html bg2x.png  (via the node API; see release notes)
+<!-- Source for background.tiff (620x400pt). Regenerate after edits (see
+     scratchpad shoot script / release notes):
+       playwright screenshots at deviceScaleFactor 1 and 2, then
        tiffutil -cathidpicheck bg1x.png bg2x.png -out background.tiff
-     Text obeys the design tokens: floor --win dark, text/sec steps, one
-     hairline. Contrast floors: headline #F2F2F4 (~15:1), support #A8A8AF
-     (~6.9:1) — the old art's #6F6F76 tagline measured 3.4:1 and failed AA. -->
+
+     LIGHT surface by design, not preference: Finder draws icon labels in
+     dark text over background pictures and exposes NO label-color control
+     (dmgbuild settings spec; create-dmg #197) — a dark floor makes the
+     app/Applications labels near-invisible. Light is also Apple's own DMG
+     material. Tokens from the design system's light column.
+
+     SAFE ZONE: AppleScript window bounds include the ~28pt title bar and
+     a user-enabled status bar eats ~26pt more, so the worst-case visible
+     canvas is 400-54 = 346pt. Every glyph here ends by y=328. -->
 <html lang="en">
 <meta charset="utf-8">
 <style>
   * { margin:0; box-sizing:border-box; }
   html,body { width:620px; height:400px; overflow:hidden; }
-  body { background:#1E1E21; color:#F2F2F4;
+  body { background:#F5F5F7; color:#1D1D1F;
     font:14px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
     -webkit-font-smoothing:antialiased; position:relative; }
-  header { position:absolute; top:28px; left:26px; right:26px;
+  header { position:absolute; top:24px; left:26px; right:26px;
     display:flex; align-items:center; gap:10px;
-    padding-bottom:14px; border-bottom:1px solid rgba(255,255,255,.10); }
+    padding-bottom:12px; border-bottom:1px solid rgba(0,0,0,.11); }
   header img { width:22px; height:22px; border-radius:5px; }
-  /* Three sizes, clean steps (18 → 14 → 11, ratios ≥1.27): the drag
-     instruction is the hero, the wordmark a quiet anchor, and the two
-     support lines share 11px — caps + tracking + color tell them apart. */
+  /* Three sizes, clean steps (18 → 14 → 11): the drag instruction is the
+     hero, the wordmark a quiet anchor, support lines share 11px. */
   header .name { font-size:14px; font-weight:700; letter-spacing:-.01em; }
   header .eyebrow { margin-left:auto; font-size:11px; font-weight:700;
-    letter-spacing:.07em; color:#A8A8AF; }
-  /* Icon wells sit where create-dmg pins the real icons (centers 160/460
-     at y185, 128pt) — nothing is drawn there, the space is reserved. */
-  .arrow { position:absolute; top:179px; left:250px; width:120px; height:12px; }
-  .drag { position:absolute; top:305px; left:0; right:0; text-align:center;
-    font-size:18px; font-weight:650; color:#F2F2F4; }
-  .tag { position:absolute; top:340px; left:0; right:0; text-align:center;
-    font-size:11px; color:#A8A8AF; }
+    letter-spacing:.07em; color:#59595E; }
+  /* Icon wells: create-dmg pins the real icons at centers 160/460, y178,
+     128pt — nothing is drawn there, Finder's black labels land below on
+     this light floor at full contrast. */
+  .arrow { position:absolute; top:172px; left:250px; width:120px; height:12px; }
+  .drag { position:absolute; top:284px; left:0; right:0; text-align:center;
+    font-size:18px; font-weight:650; color:#1D1D1F; }
+  .tag { position:absolute; top:314px; left:0; right:0; text-align:center;
+    font-size:11px; color:#59595E; }
 </style>
 <body>
   <header>
@@ -39,7 +46,7 @@
     <span class="eyebrow">YOUR ACCOUNTS, ON AUTOPILOT</span>
   </header>
   <svg class="arrow" viewBox="0 0 120 12" fill="none" aria-hidden="true">
-    <path d="M2 6 H112 M104 1.5 L112 6 L104 10.5" stroke="#A8A8AF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M2 6 H112 M104 1.5 L112 6 L104 10.5" stroke="#59595E" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>
   <div class="drag">drag llmpilot to Applications</div>
   <div class="tag">signed &amp; notarized · free core · one-time Pro</div>
