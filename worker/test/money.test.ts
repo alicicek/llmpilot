@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import {
   TEST_INSTALL,
   TestD1,
+  captureEmails,
   makeKeys,
   makeEnv,
   makeFakeStripe,
@@ -51,7 +52,9 @@ test("checkout: rung shapes — trial days, card collection, MP always on, no re
   const full = sessionParams(env, "full", "lic_x", "hosted");
   assert.equal((full.managed_payments as { enabled: boolean }).enabled, true);
   assert.equal(full.mode, "subscription");
-  assert.equal((full.subscription_data as { trial_period_days?: number }).trial_period_days, undefined);
+  // The reshape (owner 2026-07-31): every rung leads with the trial.
+  assert.equal((full.subscription_data as { trial_period_days?: number }).trial_period_days, 8);
+  assert.equal(full.payment_method_collection, undefined); // card-upfront default
   assert.ok((full.success_url as string).includes("{CHECKOUT_SESSION_ID}"));
 
   const disc = sessionParams(env, "discount_trial", "lic_x", "hosted");
@@ -71,6 +74,61 @@ test("checkout: rung shapes — trial days, card collection, MP always on, no re
     assert.equal(p.custom_text, undefined);
     assert.equal(p.wallet_options, undefined);
   }
+});
+
+test("checkout: the pre-reshape full echo (no trial length shown) refuses invalid_input", async () => {
+  // A 1.2.4 client renders the full rung without a trial and echoes no
+  // trial_days. Binding that consent to a Session that now trials first
+  // would be the exact shown-vs-charged divergence the echo exists to stop.
+  const db = new TestD1();
+  const env = makeEnv(db, KEYS.signingKeyB64);
+  const fake = makeFakeStripe();
+  const res = await createCheckout(
+    env,
+    { rung: "full", install_id: TEST_INSTALL, quote: { currency: "gbp", amount_minor: 999 } },
+    "192.0.2.11",
+    fake.stripe,
+  );
+  assert.equal(res.status, 400);
+  assert.equal(res.body.error, "invalid_input");
+  assert.equal(calls(fake.state, "sessions.create").length, 0);
+});
+
+test("checkout: remind_days_before is stored per license; junk values refuse", async () => {
+  const db = new TestD1();
+  const env = makeEnv(db, KEYS.signingKeyB64);
+  const fake = makeFakeStripe();
+  const chosen = await createCheckout(
+    env,
+    { rung: "full", install_id: TEST_INSTALL, quote: testQuote("full"), remind_days_before: 2 },
+    "192.0.2.12",
+    fake.stripe,
+  );
+  assert.equal(chosen.status, 200);
+  assert.equal(db.row("licenses", chosen.body.license as string)!.remind_days_before, 2);
+
+  // Absent → the day-before default (the previous fixed behavior).
+  const defaulted = await createCheckout(
+    env,
+    { rung: "discount_trial", install_id: TEST_INSTALL, quote: testQuote("discount_trial") },
+    "192.0.2.12",
+    fake.stripe,
+  );
+  assert.equal(defaulted.status, 200);
+  assert.equal(db.row("licenses", defaulted.body.license as string)!.remind_days_before, 1);
+
+  for (const bad of [0, 3, -1, 1.5, "2", true, null]) {
+    const res = await createCheckout(
+      env,
+      { rung: "full", install_id: TEST_INSTALL, quote: testQuote("full"), remind_days_before: bad },
+      "192.0.2.13",
+      fake.stripe,
+    );
+    assert.equal(res.status, 400, `remind_days_before=${JSON.stringify(bad)}`);
+    assert.equal(res.body.error, "invalid_input");
+  }
+  const count = db.db.prepare("SELECT COUNT(*) AS n FROM licenses").get() as { n: number };
+  assert.equal(count.n, 2, "refused checkouts must not allocate license rows");
 });
 
 test("checkout: per-IP limit bounds D1 and Stripe object creation", async () => {
@@ -182,6 +240,52 @@ test("trial: £0 subscription_create invoice NEVER converts; the paid cycle invo
   assert.equal(upd.length, 1, "invoice.paid only mints; checkout already fixed cancellation");
   const pay = db.row("payments", "pi_test_1")!;
   assert.equal(pay.billing_reason, "subscription_cycle");
+});
+
+test("full rung: the reshaped revenue path — trialing checkout, then the cycle invoice mints lifetime", async () => {
+  // Since the 2026-07-31 reshape every full purchase goes trial-first; this
+  // is the production revenue path end to end.
+  const db = new TestD1();
+  const env = makeEnv(db, KEYS.signingKeyB64);
+  const lic = await seedLicense(db, "full");
+  const trialEnd = Math.floor(Date.now() / 1000) + 4 * 86400;
+  const session = trialSession(lic, trialEnd);
+  (session.metadata as Record<string, string>).rung = "full";
+  const { stripe, state } = makeFakeStripe({ session });
+
+  const r = await fulfillSession(env, stripe, "cs_2");
+  assert.equal(r.state, "trialing");
+  let row = db.row("licenses", lic)!;
+  assert.equal(row.status, "trialing");
+  const p = await tokenPayload(row.entitlement as string);
+  assert.equal(p.kind, "TRIAL");
+  // cancel_at was fixed at checkout so cycle two can never charge.
+  assert.equal(calls(state, "subscriptions.update").length, 1);
+
+  const cycle = dahliaInvoice(lic, "sub_2", 999, "subscription_cycle");
+  assert.equal(await handleEvent(env, stripe, stripeEvent("invoice.paid", cycle)), "ok");
+  row = db.row("licenses", lic)!;
+  assert.equal(row.status, "lifetime");
+  const lp = await tokenPayload(row.entitlement as string);
+  assert.equal(lp.kind, "LIFETIME");
+  assert.equal(lp.expires_at, null);
+});
+
+test("full rung: a paid-status session that is STILL TRIALING never mints lifetime early", async () => {
+  // Guard on webhook.ts's no-trial branch: minting lifetime for £0 while
+  // the trial runs would be an uncancellable free license (cancelRoute only
+  // cancels trialing rows).
+  const db = new TestD1();
+  const env = makeEnv(db, KEYS.signingKeyB64);
+  const lic = await seedLicense(db, "full");
+  const trialEnd = Math.floor(Date.now() / 1000) + 4 * 86400;
+  const session = trialSession(lic, trialEnd, { payment_status: "paid" });
+  (session.metadata as Record<string, string>).rung = "full";
+  const { stripe } = makeFakeStripe({ session });
+
+  const r = await fulfillSession(env, stripe, "cs_2");
+  assert.equal(r.state, "trialing");
+  assert.equal(db.row("licenses", lic)!.status, "trialing");
 });
 
 test("invoice.paid strict gate ignores even a paid subscription_create invoice", async () => {
@@ -471,11 +575,8 @@ test("recover: identical response whether the email exists or not", async () => 
 
 test("recover: per-IP and per-email limit stays uniform and only sends magic links", async () => {
   const db = new TestD1();
-  let sends = 0;
-  let sentText = "";
-  const env = makeEnv(db, KEYS.signingKeyB64, {
-    EMAIL: { send: async (message: unknown) => { sends++; sentText = (message as { text: string }).text; return { messageId: "m" }; } } as never,
-  });
+  const emails: Array<Record<string, unknown>> = [];
+  const env = makeEnv(db, KEYS.signingKeyB64, { EMAIL_HTTP: captureEmails(emails) });
   const lic = await seedLicense(db);
   const { stripe } = makeFakeStripe({ session: paidSession(lic) });
   await fulfillSession(env, stripe, "cs_1");
@@ -487,7 +588,8 @@ test("recover: per-IP and per-email limit stays uniform and only sends magic lin
   }
   const miss = await recoverRoute(env, { email: "missing@example.dev" }, request);
   assert.equal(miss.status, 202);
-  assert.equal(sends, 5);
+  assert.equal(emails.length, 5);
+  const sentText = String(emails.at(-1)!.text);
   assert.match(sentText, /https:\/\/llmpilot\.dev\/recover\?token=/);
   assert.doesNotMatch(sentText, /lic_/);
   const recoveryRows = db.db.prepare("SELECT COUNT(*) AS n FROM recovery_requests").get() as { n: number };
@@ -587,6 +689,57 @@ test("checkout page shows localized session amount, charged-once copy, and descr
   assert.match(html, /charged once — we cancel the renewal automatically/);
   assert.match(html, /LINK\.COM\* LLMPILOT\.DEV/);
   assert.equal((await checkoutPage(env, new Request("https://llmpilot.dev/checkout?session_id=bad"))).status, 404);
+
+  // A trial session collects £0 today — the page must not let £0.00 stand
+  // as the price. It states the REAL charge and date from the subscription
+  // (the same derivation the reminder sweep uses).
+  const trialEnd = Math.floor(Date.parse("2026-08-04T12:00:00Z") / 1000);
+  const { stripe: trialStripe } = makeFakeStripe({
+    session: paidSession("lic_y", {
+      amount_total: 0,
+      client_secret: "secret_redacted",
+      subscription: {
+        id: "sub_t",
+        status: "trialing",
+        trial_end: trialEnd,
+        metadata: { license_id: "lic_y" },
+        items: { data: [{ price: { unit_amount: 999, currency: "gbp" }, current_period_end: trialEnd }] },
+      },
+    }),
+  });
+  const trialHtml = await (await checkoutPage(
+    env,
+    new Request("https://llmpilot.dev/checkout?session_id=cs_1", { headers: { "accept-language": "en-GB" } }),
+    trialStripe,
+  )).text();
+  assert.match(trialHtml, /£0\.00 today/);
+  assert.match(trialHtml, /£9\.99 on 4 August — charged once/);
+
+  // A usd-pinned session whose subscription Price reports its GBP base must
+  // NOT put a £ figure on the consent line — the currency mismatch falls
+  // back to the generic honest note instead of a wrong exact number.
+  const { stripe: usdStripe } = makeFakeStripe({
+    session: paidSession("lic_z", {
+      amount_total: 0,
+      currency: "usd",
+      client_secret: "secret_redacted",
+      subscription: {
+        id: "sub_u",
+        status: "trialing",
+        trial_end: trialEnd,
+        metadata: { license_id: "lic_z" },
+        items: { data: [{ price: { unit_amount: 999, currency: "gbp" }, current_period_end: trialEnd }] },
+      },
+    }),
+  });
+  const usdHtml = await (await checkoutPage(
+    env,
+    new Request("https://llmpilot.dev/checkout?session_id=cs_1", { headers: { "accept-language": "en-US" } }),
+    usdStripe,
+  )).text();
+  assert.match(usdHtml, /\$0\.00 today/);
+  assert.match(usdHtml, /nothing due today — the trial price is charged once when it ends/);
+  assert.doesNotMatch(usdHtml, /£9\.99 on/);
 });
 
 test("localized amount formatting handles two-decimal and zero-decimal currencies", () => {
@@ -596,9 +749,9 @@ test("localized amount formatting handles two-decimal and zero-decimal currencie
 
 // ---- trial reminder sweep ---------------------------------------------------------
 
-test("reminder sweep: card-upfront trials get exactly one reminder inside 24h of the charge", async () => {
+test("reminder sweep: card-upfront trials (full and discount) get exactly one reminder inside the chosen window", async () => {
   const db = new TestD1();
-  const env = makeEnv(db, KEYS.signingKeyB64, { TRIAL_DAYS: "3" });
+  const env = makeEnv(db, KEYS.signingKeyB64, { TRIAL_DAYS: "4" });
   const now = new Date("2026-07-12T12:00:00Z");
 
   const mk = async (rung: string, endsInH: number, id: string) => {
@@ -610,12 +763,14 @@ test("reminder sweep: card-upfront trials get exactly one reminder inside 24h of
       .run(new Date(now.getTime() + endsInH * 3600_000).toISOString(), id);
   };
   await mk("discount_trial", 12, "lic_due");
-  await mk("discount_trial", 48, "lic_not_yet");
+  await mk("full", 12, "lic_full_due"); // full now trials and auto-charges too
+  await mk("discount_trial", 60, "lic_not_yet"); // beyond even the 2-day window
   await mk("nocard_trial", 12, "lic_nocard"); // never auto-charges → no reminder
   await mk("discount_trial", -2, "lic_past"); // already ended → nothing to warn
 
-  assert.equal(await runReminderSweep(env, now), 1);
+  assert.equal(await runReminderSweep(env, now), 2);
   assert.ok(db.row("licenses", "lic_due")!.reminder_sent_at);
+  assert.ok(db.row("licenses", "lic_full_due")!.reminder_sent_at);
   assert.equal(db.row("licenses", "lic_not_yet")!.reminder_sent_at, null);
   assert.equal(db.row("licenses", "lic_nocard")!.reminder_sent_at, null);
   assert.equal(db.row("licenses", "lic_past")!.reminder_sent_at, null);
@@ -624,14 +779,139 @@ test("reminder sweep: card-upfront trials get exactly one reminder inside 24h of
   assert.equal(await runReminderSweep(env, now), 0);
 });
 
-test("eight-day default leaves the custom reminder dormant", async () => {
+test("reminder sweep honors each license's chosen offset and words the email to match", async () => {
   const db = new TestD1();
-  const env = makeEnv(db, KEYS.signingKeyB64);
+  const emailBodies: Array<Record<string, unknown>> = [];
+  const subjects = () => emailBodies.map((e) => e.subject);
+  const env = makeEnv(db, KEYS.signingKeyB64, {
+    TRIAL_DAYS: "4",
+    EMAIL_HTTP: captureEmails(emailBodies),
+  });
+  const now = new Date("2026-07-12T12:00:00Z");
+  const mk = async (id: string, endsInH: number, remind: number) => {
+    await insertLicense(db as never, id, "full", TEST_INSTALL, remind);
+    db.db.prepare("UPDATE licenses SET status='trialing', email='t@example.dev', trial_end=? WHERE id=?")
+      .run(new Date(now.getTime() + endsInH * 3600_000).toISOString(), id);
+  };
+  // Both end in 36h: inside the 2-day window, outside the 1-day window.
+  await mk("lic_early", 36, 2);
+  await mk("lic_late", 36, 1);
+
+  assert.equal(await runReminderSweep(env, now), 1);
+  assert.ok(db.row("licenses", "lic_early")!.reminder_sent_at);
+  assert.equal(db.row("licenses", "lic_late")!.reminder_sent_at, null);
+  assert.deepEqual(subjects(), ["your llmpilot trial ends in 2 days"]);
+
+  // A day later the 1-day license enters its window and gets the tomorrow wording.
+  const dayLater = new Date(now.getTime() + 24 * 3600_000);
+  assert.equal(await runReminderSweep(env, dayLater), 1);
+  assert.ok(db.row("licenses", "lic_late")!.reminder_sent_at);
+  assert.deepEqual(subjects(), ["your llmpilot trial ends in 2 days", "your llmpilot trial ends tomorrow"]);
+});
+
+test("reminder sweep: exact window boundaries send; junk offsets fall back to the day-before default", async () => {
+  const db = new TestD1();
+  const emailBodies: Array<Record<string, unknown>> = [];
+  const subjects = () => emailBodies.map((e) => e.subject);
+  const env = makeEnv(db, KEYS.signingKeyB64, {
+    TRIAL_DAYS: "4",
+    EMAIL_HTTP: captureEmails(emailBodies),
+  });
+  const now = new Date("2026-07-12T12:00:00Z");
+  const mk = async (id: string, endsInH: number, remind: number) => {
+    await insertLicense(db as never, id, "full", TEST_INSTALL, remind);
+    db.db.prepare("UPDATE licenses SET status='trialing', email='t@example.dev', trial_end=?, remind_days_before=? WHERE id=?")
+      .run(new Date(now.getTime() + endsInH * 3600_000).toISOString(), remind, id);
+  };
+  await mk("lic_edge24", 24, 1); // exactly on the 1-day boundary → sends
+  await mk("lic_edge48", 48, 2); // exactly on the 2-day boundary → sends
+  await mk("lic_junk3", 36, 3); // junk offset → treated as 1 → NOT due at 36h
+  await mk("lic_junk0", 12, 0); // junk offset → treated as 1 → due at 12h
+
+  assert.equal(await runReminderSweep(env, now), 3);
+  assert.ok(db.row("licenses", "lic_edge24")!.reminder_sent_at);
+  assert.ok(db.row("licenses", "lic_edge48")!.reminder_sent_at);
+  assert.equal(db.row("licenses", "lic_junk3")!.reminder_sent_at, null);
+  assert.ok(db.row("licenses", "lic_junk0")!.reminder_sent_at);
+
+  // Every reminder carries its per-license idempotency key — the
+  // double-send guard the provider dedupes on.
+  for (const e of emailBodies) {
+    const h = e.headers as Record<string, string>;
+    assert.match(h["Idempotency-Key"] ?? "", /^trial_reminder:lic_/);
+  }
+});
+
+test("reminder sweep outcomes: 409 stamps as already-sent, 5xx retries, missing key never stamps", async () => {
+  const now = new Date("2026-07-12T12:00:00Z");
+  const mk = async (db: TestD1, id: string) => {
+    await insertLicense(db as never, id, "full", TEST_INSTALL, 1);
+    db.db.prepare("UPDATE licenses SET status='trialing', email='t@example.dev', trial_end=? WHERE id=?")
+      .run(new Date(now.getTime() + 12 * 3600_000).toISOString(), id);
+  };
+
+  // 409 = the provider already accepted this key on a lost earlier attempt
+  // (and our payload drifts, so a retry can never clear it): the email
+  // EXISTS — stamp it, count no send, and never loop hourly into 409s.
+  const db409 = new TestD1();
+  const dupBodies: Array<Record<string, unknown>> = [];
+  await mk(db409, "lic_dup");
+  assert.equal(
+    await runReminderSweep(makeEnv(db409, KEYS.signingKeyB64, { TRIAL_DAYS: "4", EMAIL_HTTP: captureEmails(dupBodies, 409) }), now),
+    0,
+  );
+  assert.ok(db409.row("licenses", "lic_dup")!.reminder_sent_at, "409 must stamp — the reminder exists");
+  assert.equal(dupBodies.length, 1);
+
+  // A 5xx is retryable: no stamp, the next hourly run tries again.
+  const db500 = new TestD1();
+  await mk(db500, "lic_retry");
+  assert.equal(
+    await runReminderSweep(makeEnv(db500, KEYS.signingKeyB64, { TRIAL_DAYS: "4", EMAIL_HTTP: captureEmails([], 500) }), now),
+    0,
+  );
+  assert.equal(db500.row("licenses", "lic_retry")!.reminder_sent_at, null);
+
+  // A deploy that forgot the provider secret must not stamp anything.
+  const dbNoKey = new TestD1();
+  await mk(dbNoKey, "lic_nokey");
+  assert.equal(
+    await runReminderSweep(makeEnv(dbNoKey, KEYS.signingKeyB64, { TRIAL_DAYS: "4", RESEND_API_KEY: "" }), now),
+    0,
+  );
+  assert.equal(dbNoKey.row("licenses", "lic_nokey")!.reminder_sent_at, null);
+});
+
+test("reminder sweep: a delayed cron words the subject from the clock, not the preference", async () => {
+  // A 2-days-before row first seen with under a day left must say
+  // "tomorrow" — the preference names the window, the clock names the day.
+  const db = new TestD1();
+  const emailBodies: Array<Record<string, unknown>> = [];
+  const subjects = () => emailBodies.map((e) => e.subject);
+  const env = makeEnv(db, KEYS.signingKeyB64, {
+    TRIAL_DAYS: "4",
+    EMAIL_HTTP: captureEmails(emailBodies),
+  });
+  const now = new Date("2026-07-12T12:00:00Z");
+  await insertLicense(db as never, "lic_lateseen", "full", TEST_INSTALL, 2);
+  db.db.prepare("UPDATE licenses SET status='trialing', email='t@example.dev', trial_end=? WHERE id=?")
+    .run(new Date(now.getTime() + 20 * 3600_000).toISOString(), "lic_lateseen");
+  assert.equal(await runReminderSweep(env, now), 1);
+  assert.deepEqual(subjects(), ["your llmpilot trial ends tomorrow"]);
+});
+
+test("a 7-day-or-longer trial leaves the custom reminder dormant (Stripe sends its own)", async () => {
+  const db = new TestD1();
+  const env = makeEnv(db, KEYS.signingKeyB64); // TRIAL_DAYS "8"
   await insertLicense(db as never, "lic_due_default", "discount_trial", TEST_INSTALL);
   db.db.prepare("UPDATE licenses SET status='trialing', email='t@example.dev', trial_end=? WHERE id=?")
     .run(new Date(Date.now() + 12 * 3600_000).toISOString(), "lic_due_default");
   assert.equal(await runReminderSweep(env, new Date()), 0);
   assert.equal(db.row("licenses", "lic_due_default")!.reminder_sent_at, null);
+
+  // The boundary: 7 exactly is Stripe's own; 4 (the deployed value) sweeps.
+  assert.equal(await runReminderSweep(makeEnv(db, KEYS.signingKeyB64, { TRIAL_DAYS: "7" }), new Date()), 0);
+  assert.equal(await runReminderSweep(makeEnv(db, KEYS.signingKeyB64, { TRIAL_DAYS: "4" }), new Date()), 1);
 });
 
 test("daily reconcile fixes active and trialing subscriptions missing cancel_at", async () => {

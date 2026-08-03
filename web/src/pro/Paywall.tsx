@@ -1,15 +1,16 @@
 import { useState } from "react";
 import type { License, Quote, QuoteEcho, Rung } from "../api.ts";
 import { licenseErrorCopy } from "./errors.ts";
-import { nextRung, rungCopy, STATEMENT_NOTE } from "./ladder.ts";
+import { remindDate, rungCopy, STATEMENT_NOTE } from "./ladder.ts";
 
-// The decline-ladder paywall. Copy obeys VOICE.md: sentence case, no exclamation
-// marks, verb+object CTAs, and the honest "charged once — we cancel the renewal"
-// framing beside the price. The rung state walks full → discount → no-card as the
-// buyer declines; the no-card rung is hidden once the native marker reports it
-// was used. Activation is silent: on the SSE license flip this renders "Pro is on".
-// Every price/trial figure comes from the server quote — no quote, no consent,
-// no checkout.
+// The reshaped paywall (owner 2026-07-31): ONE offer — the free trial that
+// converts to £9.99 charged once, lifetime — with the trial timeline and the
+// reminder-timing choice rendered from the server quote. Pressing close IS
+// the decline: the first ✕ surfaces the standing £5.99 offer once, the
+// second ✕ closes for real. No free-tools link, no no-card rung. Copy obeys
+// VOICE.md; every figure comes from the quote — no quote, no consent, no
+// checkout. The reminder choice is a REAL control: it rides the checkout
+// call, lands on the license row, and the worker's hourly sweep honors it.
 
 interface PaywallProps {
   license: License;
@@ -19,8 +20,9 @@ interface PaywallProps {
   onRetryQuote?: () => void;
   // onCheckout opens the returned checkout URL (native intercepts; browser
   // follows). The parent decides navigate-vs-simulate so tests stay daemon-free.
-  // echo is the exact consent statement this paywall rendered.
-  onCheckout: (rung: Rung, echo: QuoteEcho) => void;
+  // echo is the exact consent statement this paywall rendered; remindDays is
+  // the buyer's reminder-timing choice (1 or 2 days before the charge).
+  onCheckout: (rung: Rung, echo: QuoteEcho, remindDays: number) => void;
   onRecover: () => void;
   onDismiss?: () => void;
   // caughtThisWeek is the buyer's own honest number for the paused variant;
@@ -43,8 +45,147 @@ const btnPrimary =
 const btnGhost =
   "text-[12px] text-sec underline-offset-2 hover:underline focus:outline-none focus-visible:underline";
 
+function CloseButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      aria-label="Close the paywall"
+      data-testid="paywall-close"
+      className="absolute right-0 top-0 flex h-7 w-7 items-center justify-center rounded-full border border-hair bg-panel text-[13px] text-sec hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-acc-bd"
+      onClick={onClick}
+    >
+      ✕
+    </button>
+  );
+}
+
+// The trial timeline: today → the chosen reminder date → the one charge.
+// Every figure comes from the quote; the DATES are derived from the trial
+// length at render time rather than read from the quote's charge_date —
+// a quote fetched at app open can be hours old by the time the paywall
+// shows, and Stripe anchors the trial at checkout COMPLETION, so the
+// freshest honest date is "now + trial_days". Residual drift only exists
+// while the payment window itself sits open; it can only move the charge
+// LATER (more free days), and the reminder email states the subscription's
+// real trial end.
+function chargeInstant(quote: Quote): string {
+  return new Date(Date.now() + quote.trial_days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function TrialTimeline({
+  quote,
+  amount,
+  approx,
+  remindDays,
+  locale,
+}: {
+  quote: Quote;
+  amount: string;
+  approx: boolean;
+  remindDays: number;
+  locale: string;
+}) {
+  const amt = `${approx ? "≈ " : ""}${amount}`;
+  const chargeISO = chargeInstant(quote);
+  const stops = [
+    { when: "Today", why: "The autopilot turns on. Every Pro feature, free.", tone: "bg-accent" },
+    {
+      when: remindDate(chargeISO, remindDays, locale),
+      why: "We email you a reminder before anything is charged.",
+      tone: "bg-warn",
+    },
+    {
+      when: new Date(chargeISO).toLocaleDateString(locale, { day: "numeric", month: "long" }),
+      why: `${amt}, charged once. We cancel the renewal automatically. Yours for life.`,
+      tone: "border-[1.5px] border-sec bg-rail",
+    },
+  ];
+  return (
+    <ol className="mt-4 list-none">
+      {stops.map((s, i) => (
+        <li key={s.when + i} className="flex gap-3">
+          <div className="flex w-[14px] flex-col items-center">
+            <span className={`mt-[3px] h-[10px] w-[10px] flex-none rounded-full ${s.tone}`} aria-hidden="true" />
+            {i < stops.length - 1 && <span className="min-h-[20px] w-px flex-1 bg-rail" aria-hidden="true" />}
+          </div>
+          <div className="pb-3.5">
+            <div className="text-[12px] font-bold tabular-nums">{s.when}</div>
+            <div className="text-[11.5px] text-sec">{s.why}</div>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+// The one consent card: price line, timeline, reminder choice, statement
+// note. Used by the main ask AND the trial-restart (paused) screen — every
+// screen that starts a card-upfront trial owes the same dates and control.
+function OfferCard({
+  copy,
+  quote,
+  remindDays,
+  onRemindDays,
+  locale,
+}: {
+  copy: NonNullable<ReturnType<typeof rungCopy>>;
+  quote: Quote;
+  remindDays: number;
+  onRemindDays: (d: number) => void;
+  locale: string;
+}) {
+  return (
+    <div className="mt-4 rounded-[11px] border border-hair bg-panel p-4">
+      <p className="text-[15px] font-semibold tabular-nums">
+        {copy.strikeAmount && (
+          <s className="mr-1.5 text-[13px] font-medium text-ter">
+            {copy.approx ? "≈ " : ""}
+            {copy.strikeAmount}
+          </s>
+        )}
+        {copy.approx ? "≈ " : ""}
+        {copy.amount} <span className="text-[11.5px] font-medium text-sec">{copy.beside}</span>
+      </p>
+      <TrialTimeline
+        quote={quote}
+        amount={copy.amount}
+        approx={copy.approx}
+        remindDays={remindDays}
+        locale={locale}
+      />
+      <div className="mt-1 border-t border-hairsoft pt-3">
+        <p className="text-[12px] font-semibold">When should we remind you?</p>
+        <div className="mt-2 flex gap-2" role="group" aria-label="When should we remind you?">
+          {[2, 1].map((d) => (
+            <button
+              key={d}
+              aria-pressed={remindDays === d}
+              onClick={() => onRemindDays(d)}
+              className={`rounded-lg border px-3 py-1.5 text-left text-[11.5px] font-semibold tabular-nums transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-acc-bd ${
+                remindDays === d
+                  ? // the app's proven filled-selection idiom — the tinted
+                    // acc-a/acc-tx pair fails AA at this size (4.36:1)
+                    "border-acc-bd bg-acc-tx text-white dark:bg-accent"
+                  : "border-hair bg-win text-sec hover:text-text"
+              }`}
+            >
+              {d === 1 ? "1 day before" : `${d} days before`}
+              <span className={`block text-[10.5px] font-medium ${remindDays === d ? "" : "text-ter"}`}>
+                {remindDate(chargeInstant(quote), d, locale)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="mt-3 text-[11px] text-ter">{STATEMENT_NOTE}</p>
+    </div>
+  );
+}
+
 export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout, onRecover, onDismiss, caughtThisWeek, handoffURL, checkoutError, busy }: PaywallProps) {
-  const [rung, setRung] = useState<Rung>("full");
+  // The decline walk: the offer → (first ✕) the standing lower price →
+  // (second ✕ or "No thanks") closed.
+  const [declined, setDeclined] = useState(false);
+  const [remindDays, setRemindDays] = useState(1);
   const locale = typeof navigator !== "undefined" ? navigator.language : "en-GB";
   const fullCopy = quote ? rungCopy("full", quote, locale) : null;
 
@@ -89,22 +230,22 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
             Checkout is open in the payment window — finish there, or start again here.
           </p>
         )}
-        <div className="mt-4 flex items-center gap-4">
-          <button
-            className={btnPrimary}
-            disabled={!fullCopy || busy}
-            onClick={() => fullCopy && onCheckout("full", fullCopy.echo)}
-          >
-            {busy ? "Opening checkout…" : "Turn on the autopilot"}
-          </button>
-          <button className={btnGhost} onClick={onRecover}>
-            Restore a purchase
-          </button>
-        </div>
-        {fullCopy ? (
-          <p className="mt-2 text-[11.5px] text-sec">{fullCopy.terms}</p>
+        {/* Restarting the trial is the SAME card-upfront consent as the
+            first one — the exact dates and the reminder control are owed
+            here too, not just on the first ask. */}
+        {fullCopy && quote ? (
+          <>
+            <OfferCard
+              copy={fullCopy}
+              quote={quote}
+              remindDays={remindDays}
+              onRemindDays={setRemindDays}
+              locale={locale}
+            />
+            <p className="mt-3 text-[11.5px] text-sec">No payment due today.</p>
+          </>
         ) : quoteFailed ? (
-          <p className="mt-2 text-[11.5px] text-sec" role="alert">
+          <p className="mt-3 text-[11.5px] text-sec" role="alert">
             The price could not be loaded — check your connection.{" "}
             {onRetryQuote && (
               <button className={btnGhost} onClick={onRetryQuote}>
@@ -113,20 +254,34 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
             )}
           </p>
         ) : (
-          <p className="mt-2 text-[11.5px] text-sec" role="status">
+          <p className="mt-3 text-[11.5px] text-sec" role="status">
             Loading the price…
           </p>
         )}
+        <div className="mt-3 flex items-center gap-4">
+          <button
+            className={btnPrimary}
+            disabled={!fullCopy || busy}
+            onClick={() => fullCopy && onCheckout("full", fullCopy.echo, remindDays)}
+          >
+            {busy ? "Opening checkout…" : fullCopy ? fullCopy.cta : "Turn on the autopilot"}
+          </button>
+          <button className={btnGhost} onClick={onRecover}>
+            Restore a purchase
+          </button>
+        </div>
       </section>
     );
   }
 
-  const copy = quote ? rungCopy(rung, quote, locale) : null;
-  if (!copy) {
+  const copy = quote ? rungCopy(declined ? "discount_trial" : "full", quote, locale) : null;
+  if (!copy || !quote) {
     // No server quote means no honest terms to consent to — never render a
-    // paywall that hides the price.
+    // paywall that hides the price. Without terms there is no decline offer
+    // either: the ✕ just closes.
     return (
-      <section className="mx-auto mt-14 w-[460px] max-w-[92vw]">
+      <section className="relative mx-auto mt-14 w-[460px] max-w-[92vw]">
+        {onDismiss && <CloseButton onClick={onDismiss} />}
         <h2 className="text-[16px] font-semibold">Turn on the autopilot</h2>
         <div className="mt-4 rounded-[11px] border border-hair bg-panel p-4">
           {quoteFailed ? (
@@ -146,42 +301,37 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
             </p>
           )}
         </div>
-        {onDismiss && (
-          <button className="mt-5 block text-[11.5px] text-ter hover:underline" onClick={onDismiss}>
-            Keep using the free tools for now
-          </button>
-        )}
       </section>
     );
   }
 
-  const advance = () => {
-    const next = nextRung(rung, license.nocard_trial_used);
-    if (next) setRung(next);
+  // The decline offer only exists while it is genuinely LOWER: under an
+  // active launch window full already sells at the discount amount, and
+  // striking through the same price it offers would be a lying screen —
+  // in that configuration the close just closes.
+  const declineCopy = quote ? rungCopy("discount_trial", quote, locale) : null;
+  const hasLowerOffer =
+    declineCopy?.echo.amount_minor !== undefined &&
+    fullCopy?.echo.amount_minor !== undefined &&
+    declineCopy.echo.amount_minor < fullCopy.echo.amount_minor;
+  const close = () => {
+    if (!declined && hasLowerOffer) setDeclined(true);
+    else onDismiss?.();
   };
 
   return (
-    <section className="mx-auto mt-14 w-[460px] max-w-[92vw]">
+    <section className="relative mx-auto mt-14 w-[460px] max-w-[92vw]">
+      {onDismiss && <CloseButton onClick={close} />}
       <h2 className="text-[16px] font-semibold">{copy.headline}</h2>
-      <p className="mt-2 text-[12.5px] leading-relaxed text-sec">
-        The autopilot switches accounts before you hit a wall, revives a stale account once a
-        refresh proves it live, and fires your scheduled nudges — so you never lose your place
-        mid-thought.
-      </p>
+      <p className="mt-2 text-[12.5px] leading-relaxed text-sec">{copy.lede}</p>
 
-      <div className="mt-4 rounded-[11px] border border-hair bg-panel p-4">
-        {copy.amount && (
-          <p className="text-[15px] font-semibold">
-            {copy.approx ? "≈ " : ""}
-            {copy.amount}
-            {copy.rung === "full" ? " once" : ""}
-          </p>
-        )}
-        <p className={`${copy.amount ? "mt-1 " : ""}text-[12.5px] leading-relaxed text-text`}>{copy.terms}</p>
-        {copy.rung !== "nocard_trial" && (
-          <p className="mt-2 text-[11px] text-ter">{STATEMENT_NOTE}</p>
-        )}
-      </div>
+      <OfferCard
+        copy={copy}
+        quote={quote}
+        remindDays={remindDays}
+        onRemindDays={setRemindDays}
+        locale={locale}
+      />
 
       {handoffURL && (
         <p className="mt-3 text-[11.5px] text-sec" role="status" data-testid="checkout-handoff" data-url={handoffURL}>
@@ -201,14 +351,15 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
         </p>
       )}
 
-      <div className="mt-4 flex flex-col gap-2.5">
-        <button className={btnPrimary} disabled={busy} onClick={() => onCheckout(copy.rung, copy.echo)}>
+      <p className="mt-4 text-center text-[11.5px] text-sec">No payment due today.</p>
+      <div className="mt-2 flex flex-col gap-2.5">
+        <button className={btnPrimary} disabled={busy} onClick={() => onCheckout(copy.rung, copy.echo, remindDays)}>
           {busy ? "Opening checkout…" : copy.cta}
         </button>
         <div className="flex items-center justify-between">
-          {copy.declineLabel ? (
-            <button className={btnGhost} onClick={advance}>
-              {copy.declineLabel}
+          {declined && onDismiss ? (
+            <button className={btnGhost} onClick={onDismiss}>
+              No thanks
             </button>
           ) : (
             <span />
@@ -218,12 +369,6 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
           </button>
         </div>
       </div>
-
-      {onDismiss && (
-        <button className="mt-5 block text-[11.5px] text-ter hover:underline" onClick={onDismiss}>
-          Keep using the free tools for now
-        </button>
-      )}
     </section>
   );
 }

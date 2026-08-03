@@ -13,7 +13,7 @@ interface OnboardingProps {
   quote: Quote | null;
   quoteFailed?: boolean;
   onRetryQuote?: () => void;
-  onCheckout: (rung: Rung, echo: QuoteEcho) => void;
+  onCheckout: (rung: Rung, echo: QuoteEcho, remindDays: number) => void;
   onRecover: () => void;
   onDismiss: () => void;
   caughtThisWeek?: number;

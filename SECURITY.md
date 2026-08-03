@@ -47,6 +47,11 @@ sends your credential there and nowhere else. The sign-in and checkout rows
 are embedded web pages — like any web page, they load what Anthropic's and
 Stripe's pages embed. The CLI and daemon perform no update check.
 
+Server-side: the licensing worker sends its two transactional emails — the
+pre-charge trial reminder and license recovery — through Resend. The only
+personal data that reaches Resend is the receipt email address and the
+message itself; never a Claude token, never usage data.
+
 ## Undocumented surfaces
 
 The usage endpoint, the OAuth token endpoint, the Keychain service naming, and

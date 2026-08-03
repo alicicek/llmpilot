@@ -86,13 +86,15 @@ test("accounts detected: adopt renders before any paywall, pitch runs on the rea
   await mockDaemon(page, { detected: true });
   await page.goto("/?pro=paywall");
 
-  // Adopt FIRST — no onboarding pitch, no paywall on screen.
+  // Adopt FIRST — no onboarding pitch, no paywall on screen, and no skip:
+  // with accounts detected, adopting is the only forward path.
   await expect(page.getByRole("heading", { name: "Adopt your accounts" })).toBeVisible();
   await expect(page.getByText("real-adopted@example.dev")).toBeVisible();
+  await expect(page.getByRole("button", { name: "I'll sign in later" })).toBeHidden();
   await expect(
     page.getByRole("heading", { name: "Never hit a wall mid-thought" }),
   ).toBeHidden();
-  await expect(page.getByText(/charged once/i)).toBeHidden();
+  await expect(page.getByText(/charged once/i).first()).toBeHidden();
 
   // Adopt → the daemon state gains the account → the pitch runs on it.
   await page.getByRole("button", { name: "Adopt account" }).click();
@@ -104,12 +106,33 @@ test("accounts detected: adopt renders before any paywall, pitch runs on the rea
 
   // Paywall comes last.
   await page.getByRole("button", { name: "Turn on the autopilot" }).click();
-  await expect(page.getByText(/charged once/i)).toBeVisible();
+  await expect(page.getByText(/charged once/i).first()).toBeVisible();
 
-  // Dismiss → the free tools keep working (board, not a dead end).
-  await page.getByRole("button", { name: "Keep using the free tools for now" }).click();
-  await expect(page.getByText(/charged once/i)).toBeHidden();
+  // ✕ once → the decline offer; ✕ again → the free tools keep working
+  // (board, not a dead end).
+  await page.getByTestId("paywall-close").click();
+  await expect(page.getByRole("heading", { name: "Same trial, lower price" })).toBeVisible();
+  await page.getByTestId("paywall-close").click();
+  await expect(page.getByText(/charged once/i).first()).toBeHidden();
   await expect(page.getByText("real-adopted@example.dev")).toBeVisible();
+});
+
+test("a failed adopt is not a dead end: the error shows and the sign-in-later path appears", async ({
+  page,
+}) => {
+  await mockDaemon(page, { detected: true });
+  // A denied Keychain prompt surfaces as an adopt error; the screen must
+  // keep a forward path (regression rail on the fresh-install class).
+  await page.unroute("**/v1/adopt");
+  await page.route("**/v1/adopt", (route) =>
+    route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"keychain denied"}' }),
+  );
+  await page.goto("/?pro=paywall");
+  await expect(page.getByRole("button", { name: "I'll sign in later" })).toBeHidden();
+  await page.getByRole("button", { name: "Adopt account" }).click();
+  await expect(page.getByText(/keychain denied/i)).toBeVisible();
+  await page.getByRole("button", { name: "I'll sign in later" }).click();
+  await expect(page.getByRole("heading", { name: "Never hit a wall mid-thought" })).toBeVisible();
 });
 
 test("no accounts detected: the empty state offers skip → pitch on the demo fleet → no dead-end", async ({
@@ -121,21 +144,22 @@ test("no accounts detected: the empty state offers skip → pitch on the demo fl
   // Empty adopt state with a forward path.
   await expect(page.getByRole("heading", { name: "Adopt your accounts" })).toBeVisible();
   await expect(page.getByText(/No signed-in Claude accounts found/i)).toBeVisible();
-  await expect(page.getByText(/charged once/i)).toBeHidden();
+  await expect(page.getByText(/charged once/i).first()).toBeHidden();
 
-  // Skip → the pitch runs on the demo fleet.
-  await page.getByRole("button", { name: "Skip for now" }).click();
+  // Sign-in-later → the pitch runs on the demo fleet.
+  await page.getByRole("button", { name: "I'll sign in later" }).click();
   await expect(page.getByRole("heading", { name: "Never hit a wall mid-thought" })).toBeVisible();
   await page.getByRole("button", { name: "Show me the autopilot" }).click();
   await expect(page.getByText("alex@example.dev")).toBeVisible();
 
-  // Paywall last; dismissing a skipped-adoption run lands on the working
-  // board (its honest empty state), not back on the adopt screen — the
-  // "free tools" the dismissal promised, with no re-trap and no lost skip.
+  // Paywall last; dismissing a skipped-adoption run (✕ through the decline
+  // offer) lands on the working board (its honest empty state), not back on
+  // the adopt screen — no re-trap and no lost skip.
   await page.getByRole("button", { name: "Turn on the autopilot" }).click();
-  await expect(page.getByText(/charged once/i)).toBeVisible();
-  await page.getByRole("button", { name: "Keep using the free tools for now" }).click();
-  await expect(page.getByText(/charged once/i)).toBeHidden();
+  await expect(page.getByText(/charged once/i).first()).toBeVisible();
+  await page.getByTestId("paywall-close").click();
+  await page.getByTestId("paywall-close").click();
+  await expect(page.getByText(/charged once/i).first()).toBeHidden();
   await expect(page.getByRole("heading", { name: "Adopt your accounts" })).toBeHidden();
   await expect(page.getByText(/nothing here is scheduled/i)).toBeVisible();
 });

@@ -182,14 +182,28 @@ export function makeEnv(db: TestD1, signingKeyB64: string, over: Partial<WorkerE
     PUBLIC_ORIGIN: "https://llmpilot.dev",
     TRIAL_DAYS: "8",
     SEAT_LIMIT: "4",
-    EMAIL: { send: async () => ({ messageId: "email_test_1" }) },
+    RESEND_API_KEY: "re_test_fake",
+    EMAIL_HTTP: (async () => new Response('{"id":"email_test_1"}', { status: 200 })) as never,
     ...over,
   } as WorkerEnv;
 }
 
-/** The quote echo matching makeFakeStripe's prices + makeEnv's TRIAL_DAYS. */
+/** An EMAIL_HTTP double that records each send's parsed JSON body plus the
+ *  request headers (under `headers` — we never send a body field of that
+ *  name) — tests assert on what would actually reach the provider, not on
+ *  a hand-fed answer (the LaunchAgentInstalled lesson). Pass `status` to
+ *  exercise the non-2xx outcomes. */
+export function captureEmails(into: Array<Record<string, unknown>>, status = 200) {
+  return (async (_url: unknown, init?: { body?: string; headers?: Record<string, string> }) => {
+    into.push({ ...(JSON.parse(init?.body ?? "{}") as Record<string, unknown>), headers: init?.headers ?? {} });
+    return new Response('{"id":"email_test_1"}', { status });
+  }) as never;
+}
+
+/** The quote echo matching makeFakeStripe's prices + makeEnv's TRIAL_DAYS.
+ *  Every rung leads with the trial, so every echo carries trial_days. */
 export function testQuote(rung: "full" | "discount_trial" | "nocard_trial"): Record<string, unknown> {
-  if (rung === "full") return { currency: "gbp", amount_minor: 999 };
+  if (rung === "full") return { trial_days: 8, currency: "gbp", amount_minor: 999 };
   if (rung === "nocard_trial") return { trial_days: 8 };
   return { trial_days: 8, currency: "gbp", amount_minor: 599 };
 }

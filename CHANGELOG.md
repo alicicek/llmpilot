@@ -4,6 +4,39 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.5] - 2026-08-03
+
+### Changed
+
+- **The ask is one clear offer: try free for 4 days, then £9.99 once, yours
+  for life.** The trial is the purchase — card up front, a single charge at
+  trial end, renewal cancelled automatically. The old full-price-first
+  ladder (discount step, no-card step, "keep using the free tools" link) is
+  gone; closing the paywall instead surfaces the standing lower price once,
+  struck honestly against the regular one.
+- **You pick when the trial reminder email lands.** Two days or one day
+  before the charge, chosen beside a timeline of the real dates — and the
+  choice drives the actual email, not just the copy on screen.
+- **Trial-reminder and license-recovery emails now arrive reliably.** They
+  are delivered through a dedicated provider with per-message delivery
+  logs; previously a recovery email could fail without leaving a trace.
+
+### Fixed
+
+- **A nearly-full usage bar no longer reads as completely full.** Every
+  usage track now ends in a visible tick, and the menu bar's account rows
+  gained a small ring beside the percentage — at 90% the ring shows an
+  unmistakable 36° gap where a thin bar sliver did not.
+- **The checkout page names the real price and charge date when nothing is
+  due today.** A trial checkout used to headline £0.00 and never say what
+  would be charged, or when.
+- **The first-run screen always keeps a way forward.** The sign-in-later
+  link now appears when no accounts were found or an adopt attempt failed —
+  a denied Keychain prompt no longer strands the screen.
+- **Buying from an outdated app asks for an update instead of failing
+  quietly.** An older app can show terms the server no longer sells; the
+  refusal now says what happened and what to do.
+
 ## [1.2.4] - 2026-07-30
 
 ### Fixed

@@ -232,7 +232,7 @@ export default function App() {
   // off-daemon navigation and hands it to the clean checkout window; a plain
   // browser follows it. In ?pro= fixture mode nothing navigates — it records the
   // handoff and simulates the silent SSE activation the daemon poller performs.
-  const onCheckout = (rung: Rung, echo: QuoteEcho) => {
+  const onCheckout = (rung: Rung, echo: QuoteEcho, remindDays: number) => {
     // Single-flight: a double-click must not create two billable Checkout
     // Sessions. NOTE the success path does NOT unmount here — the native
     // cockpit intercepts the checkout navigation into a separate window —
@@ -261,7 +261,7 @@ export default function App() {
         }
       ).webkit?.messageHandlers?.trialMarker?.postMessage("nocard");
     }
-    startCheckout(rung, echo)
+    startCheckout(rung, echo, remindDays)
       .then(({ url }) => {
         setHandoffURL(url);
         // In a plain browser this page unloads before the timer fires. In the

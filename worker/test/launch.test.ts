@@ -85,7 +85,7 @@ test("checkout: during the window a launch-amount echo binds and the Session sel
   const fake = makeFakeStripe();
   const res = await createCheckout(
     env,
-    { rung: "full", install_id: TEST_INSTALL, quote: { currency: "gbp", amount_minor: 599 } },
+    { rung: "full", install_id: TEST_INSTALL, quote: { trial_days: 8, currency: "gbp", amount_minor: 599 } },
     "192.0.2.32",
     fake.stripe,
     undefined,
@@ -103,7 +103,7 @@ test("checkout: during the window a regular-amount echo is quote_stale", async (
   const fake = makeFakeStripe();
   const res = await createCheckout(
     env,
-    { rung: "full", install_id: TEST_INSTALL, quote: { currency: "gbp", amount_minor: 999 } },
+    { rung: "full", install_id: TEST_INSTALL, quote: { trial_days: 8, currency: "gbp", amount_minor: 999 } },
     "192.0.2.33",
     fake.stripe,
     undefined,
@@ -120,7 +120,7 @@ test("checkout: past the boundary an open paywall's launch echo refuses to bind"
   const fake = makeFakeStripe();
   const stale = await createCheckout(
     env,
-    { rung: "full", install_id: TEST_INSTALL, quote: { currency: "gbp", amount_minor: 599 } },
+    { rung: "full", install_id: TEST_INSTALL, quote: { trial_days: 8, currency: "gbp", amount_minor: 599 } },
     "192.0.2.34",
     fake.stripe,
     undefined,
@@ -130,7 +130,7 @@ test("checkout: past the boundary an open paywall's launch echo refuses to bind"
   assert.equal(stale.body.error, "quote_stale");
   const fresh = await createCheckout(
     env,
-    { rung: "full", install_id: TEST_INSTALL, quote: { currency: "gbp", amount_minor: 999 } },
+    { rung: "full", install_id: TEST_INSTALL, quote: { trial_days: 8, currency: "gbp", amount_minor: 999 } },
     "192.0.2.34",
     fake.stripe,
     undefined,

@@ -271,6 +271,9 @@ func TestCheckoutForwardsQuoteEchoVerbatim(t *testing.T) {
 				}
 			}
 		}
+		if b["remind_days_before"] != float64(2) {
+			t.Errorf("remind_days_before = %v, want 2", b["remind_days_before"])
+		}
 		// A refused echo must surface its machine code through the daemon.
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "quote_stale"})
 	}))
@@ -280,7 +283,7 @@ func TestCheckoutForwardsQuoteEchoVerbatim(t *testing.T) {
 	defer srv.Close()
 
 	resp, body := postJSON(t, d, srv.URL+"/v1/license/checkout",
-		`{"rung":"discount_trial","quote":{"trial_days":8,"currency":"gbp","amount_minor":599}}`)
+		`{"rung":"discount_trial","quote":{"trial_days":8,"currency":"gbp","amount_minor":599},"remind_days_before":2}`)
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("stale-quote checkout = %d (%s), want the worker's 409", resp.StatusCode, body)
 	}
@@ -290,6 +293,13 @@ func TestCheckoutForwardsQuoteEchoVerbatim(t *testing.T) {
 	}
 	if got["code"] != "quote_stale" || got["error"] == "" {
 		t.Fatalf("stale-quote body = %v (want machine code + human copy)", got)
+	}
+
+	// A junk reminder choice refuses AT the daemon — it never reaches the worker.
+	resp, body = postJSON(t, d, srv.URL+"/v1/license/checkout",
+		`{"rung":"discount_trial","quote":{"trial_days":8,"currency":"gbp","amount_minor":599},"remind_days_before":3}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("junk remind_days_before = %d (%s), want 400", resp.StatusCode, body)
 	}
 }
 

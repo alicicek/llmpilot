@@ -88,8 +88,8 @@ test("checkout: the Session is pinned to the CONSENTED currency", async () => {
   const env = makeEnv(new TestD1(), KEYS.signingKeyB64);
   const fake = makeFakeStripe();
   const cases: Array<[Record<string, unknown>, string | undefined]> = [
-    [{ rung: "full", install_id: TEST_INSTALL, quote: { currency: "usd", amount_minor: 1299 } }, "usd"],
-    [{ rung: "full", install_id: TEST_INSTALL, quote: { currency: "gbp", amount_minor: 999 } }, "gbp"],
+    [{ rung: "full", install_id: TEST_INSTALL, quote: { trial_days: 8, currency: "usd", amount_minor: 1299 } }, "usd"],
+    [{ rung: "full", install_id: TEST_INSTALL, quote: { trial_days: 8, currency: "gbp", amount_minor: 999 } }, "gbp"],
     [{ rung: "nocard_trial", install_id: TEST_INSTALL, quote: { trial_days: 8 } }, undefined],
   ];
   for (const [body, want] of cases) {
@@ -125,7 +125,8 @@ test("checkout: drifted echo values are quote_stale and create nothing", async (
     { rung: "discount_trial", quote: { trial_days: 3, currency: "gbp", amount_minor: 599 } }, // old trial length
     { rung: "discount_trial", quote: { trial_days: 8, currency: "gbp", amount_minor: 499 } }, // old amount
     { rung: "discount_trial", quote: { trial_days: 8, currency: "eur", amount_minor: 599 } }, // currency the price lacks
-    { rung: "full", quote: { currency: "gbp", amount_minor: 899 } },
+    { rung: "full", quote: { trial_days: 8, currency: "gbp", amount_minor: 899 } }, // old amount
+    { rung: "full", quote: { trial_days: 3, currency: "gbp", amount_minor: 999 } }, // old trial length
     { rung: "nocard_trial", quote: { trial_days: 7 } },
   ];
   for (const c of stale) {
@@ -144,15 +145,15 @@ test("checkout: a missing or malformed echo is invalid_input and creates nothing
   const bad: { rung: string; quote?: unknown }[] = [
     { rung: "full" }, // no echo at all
     { rung: "full", quote: "gbp999" },
-    { rung: "full", quote: { currency: "gbp" } }, // amount missing
-    { rung: "full", quote: { trial_days: 8, currency: "gbp", amount_minor: 999 } }, // full shows no trial
-    { rung: "full", quote: { trial_days: 8.5, currency: "gbp", amount_minor: 999 } }, // junk trial value on full
+    { rung: "full", quote: { trial_days: 8, currency: "gbp" } }, // amount missing
+    { rung: "full", quote: { currency: "gbp", amount_minor: 999 } }, // pre-reshape client shape: the trial the rung now shows is missing
+    { rung: "full", quote: { trial_days: 8.5, currency: "gbp", amount_minor: 999 } }, // junk trial value
     { rung: "nocard_trial", quote: { trial_days: 8, currency: "gbp", amount_minor: 599 } }, // nocard shows no amount
     { rung: "discount_trial", quote: { trial_days: "8", currency: "gbp", amount_minor: 599 } }, // wrong type
     { rung: "nocard_trial", quote: { trial_days: 0 } }, // non-positive is structural, not stale
     { rung: "nocard_trial", quote: { trial_days: -8 } },
-    { rung: "full", quote: { currency: "gbp", amount_minor: 0 } },
-    { rung: "full", quote: { currency: "gbp", amount_minor: -999 } },
+    { rung: "full", quote: { trial_days: 8, currency: "gbp", amount_minor: 0 } },
+    { rung: "full", quote: { trial_days: 8, currency: "gbp", amount_minor: -999 } },
   ];
   for (const c of bad) {
     const res = await createCheckout(env, { ...c, install_id: TEST_INSTALL }, "192.0.2.23", fake.stripe);

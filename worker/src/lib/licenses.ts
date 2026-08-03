@@ -28,6 +28,7 @@ export interface LicenseRow {
   trial_end: string | null;
   cancel_at: string | null;
   reminder_sent_at: string | null;
+  remind_days_before: number;
   entitlement: string | null;
   install_id: string | null;
   created_at: string;
@@ -43,13 +44,19 @@ export function newLicenseID(): string {
   return `lic_${s}`;
 }
 
-export async function insertLicense(db: D1Database, id: string, rung: string, installId: string): Promise<void> {
+export async function insertLicense(
+  db: D1Database,
+  id: string,
+  rung: string,
+  installId: string,
+  remindDaysBefore = 1,
+): Promise<void> {
   const now = new Date().toISOString();
   await db
     .prepare(
-      "INSERT INTO licenses (id, status, rung, install_id, created_at, updated_at) VALUES (?, 'pending', ?, ?, ?, ?)",
+      "INSERT INTO licenses (id, status, rung, install_id, remind_days_before, created_at, updated_at) VALUES (?, 'pending', ?, ?, ?, ?, ?)",
     )
-    .bind(id, rung, installId, now, now)
+    .bind(id, rung, installId, remindDaysBefore, now, now)
     .run();
 }
 

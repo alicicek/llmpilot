@@ -11,6 +11,10 @@ export function licenseErrorCopy(code: string | undefined): string | null {
       return "This Mac is not activated for that license. Restore by email to activate it here.";
     case "auth_required":
       return "This page opened without its session token. Reopen the cockpit from the menu bar, or run `llmpilot open`.";
+    case "invalid_input":
+      // The realistic cause on the checkout path: this build renders terms
+      // the worker no longer sells (the consent echo refused to bind).
+      return "This version shows outdated terms. Update llmpilot from the menu bar, then try again.";
     default:
       return null;
   }

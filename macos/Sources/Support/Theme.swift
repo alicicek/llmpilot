@@ -11,6 +11,11 @@ enum Theme {
     static let accent = Color(nsColor: .systemBlue)
     static let drained = Color(nsColor: .tertiaryLabelColor)
     static let rail = Color(nsColor: .quaternaryLabelColor)
+    /// The track's terminus tick. A filled capsule's rounded end is shaped
+    /// exactly like a 100% bar's end, so at high fill the eye can't tell
+    /// 90 from full — the tick marks where the track really ends, and the
+    /// gap between fill and tick IS the headroom.
+    static let railEnd = Color(nsColor: .tertiaryLabelColor)
 
     /// Runway severity trio: calm green → warn ≥70 amber → critical ≥90 red.
     static func severity(_ percent: Double) -> Color {

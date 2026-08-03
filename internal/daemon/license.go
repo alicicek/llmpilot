@@ -32,7 +32,9 @@ type EntitlementClient interface {
 	Quote(ctx context.Context) (json.RawMessage, error)
 	// Checkout forwards the client's quote echo untouched; the worker is the
 	// boundary that validates consent, so the daemon adds no meaning to it.
-	Checkout(ctx context.Context, rung, ui string, quote json.RawMessage) (CheckoutResult, error)
+	// remindDaysBefore is the buyer's reminder-timing choice (1 or 2 days
+	// before the charge); 0 means unset and the worker applies its default.
+	Checkout(ctx context.Context, rung, ui string, quote json.RawMessage, remindDaysBefore int) (CheckoutResult, error)
 	Activate(ctx context.Context, sessionID string) (LicenseView, error)
 	Cancel(ctx context.Context, licenseID string) (LicenseView, error)
 	Recover(ctx context.Context, email string) error
@@ -258,10 +260,21 @@ func (d *Daemon) handleLicenseCheckout(w http.ResponseWriter, r *http.Request) {
 		UI   string `json:"ui"`
 		// Quote is the consent echo, forwarded to the worker verbatim.
 		Quote json.RawMessage `json:"quote"`
+		// RemindDaysBefore is the buyer's reminder-timing choice; absent
+		// leaves the worker's default (the day before the charge).
+		RemindDaysBefore *int `json:"remind_days_before"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpError(w, http.StatusBadRequest, errors.New(`body must be {"rung": "full|discount_trial|nocard_trial", "ui?": "hosted|embedded", "quote": {...}}`))
+		httpError(w, http.StatusBadRequest, errors.New(`body must be {"rung": "full|discount_trial|nocard_trial", "ui?": "hosted|embedded", "quote": {...}, "remind_days_before?": 1|2}`))
 		return
+	}
+	remindDays := 0
+	if req.RemindDaysBefore != nil {
+		if *req.RemindDaysBefore != 1 && *req.RemindDaysBefore != 2 {
+			httpError(w, http.StatusBadRequest, fmt.Errorf("remind_days_before must be 1 or 2, got %d", *req.RemindDaysBefore))
+			return
+		}
+		remindDays = *req.RemindDaysBefore
 	}
 	rung := req.Rung
 	if rung == "" {
@@ -281,7 +294,7 @@ func (d *Daemon) handleLicenseCheckout(w http.ResponseWriter, r *http.Request) {
 	if req.UI == "hosted" {
 		ui = "hosted"
 	}
-	res, err := g.Client.Checkout(r.Context(), rung, ui, req.Quote)
+	res, err := g.Client.Checkout(r.Context(), rung, ui, req.Quote, remindDays)
 	if err != nil {
 		httpWorkerError(w, err, "checkout could not start — try again")
 		d.Log.Warn("license checkout", "rung", rung, "err", err)
@@ -651,7 +664,7 @@ func parseTrialEnd(s string) *time.Time {
 	return &t
 }
 
-func (c httpEntitlementClient) Checkout(ctx context.Context, rung, ui string, quote json.RawMessage) (CheckoutResult, error) {
+func (c httpEntitlementClient) Checkout(ctx context.Context, rung, ui string, quote json.RawMessage, remindDaysBefore int) (CheckoutResult, error) {
 	var r struct {
 		SessionID   string `json:"sessionId"`
 		License     string `json:"license"`
@@ -662,6 +675,9 @@ func (c httpEntitlementClient) Checkout(ctx context.Context, rung, ui string, qu
 	body := map[string]any{"rung": rung, "ui": ui, "install_id": c.InstallID}
 	if len(quote) > 0 {
 		body["quote"] = quote
+	}
+	if remindDaysBefore != 0 {
+		body["remind_days_before"] = remindDaysBefore
 	}
 	code, err := c.post(ctx, "/v1/checkout", body, &r)
 	if err != nil {

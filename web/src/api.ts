@@ -538,12 +538,17 @@ export async function fetchQuote(): Promise<Quote> {
 // startCheckout returns the URL to open. The native cockpit window intercepts
 // the off-daemon navigation and hands it to the clean checkout window; a plain
 // browser just follows it. Activation completes silently in the daemon poller.
-// The echo carries the exact terms the buyer consented to.
-export async function startCheckout(rung: Rung, quote: QuoteEcho): Promise<{ url: string; session_id: string }> {
+// The echo carries the exact terms the buyer consented to; remindDaysBefore is
+// the reminder-timing choice (1 or 2 days before the charge) the sweep honors.
+export async function startCheckout(
+  rung: Rung,
+  quote: QuoteEcho,
+  remindDaysBefore: number,
+): Promise<{ url: string; session_id: string }> {
   const res = await fetch("/v1/license/checkout", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ rung, quote }),
+    body: JSON.stringify({ rung, quote, remind_days_before: remindDaysBefore }),
   });
   if (!res.ok) throw await licenseError(res, "Checkout could not start — try again.");
   return res.json();

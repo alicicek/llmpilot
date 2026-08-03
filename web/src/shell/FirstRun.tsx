@@ -3,8 +3,10 @@ import { adoptAccount, fetchDetected, type DetectedDir } from "../api.ts";
 
 // Empty fleet = first run. Detect logged-in Claude accounts on this Mac and
 // adopt them with one click — the UI flow IS onboarding; `llmpilot init` is
-// the power-user shortcut, never the required path. onSkip, when provided,
-// is the forward path to the autopilot pitch — nothing dead-ends here.
+// the power-user shortcut, never the required path. onSkip renders ONLY in
+// the zero-detected state: with accounts on screen, adopting is the point
+// (owner 2026-07-31 — "why skip, then the app is useless"); with none found,
+// the sign-in-later link keeps a stranger out of a dead end.
 export function FirstRun({ onSkip }: { onSkip?: () => void }) {
   const [detected, setDetected] = useState<DetectedDir[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -76,9 +78,12 @@ export function FirstRun({ onSkip }: { onSkip?: () => void }) {
         Tokens never leave this Mac.
       </p>
 
-      {onSkip && (
+      {onSkip && detected !== null && (candidates.length === 0 || err !== null) && (
+        // The zero-detected state needs a forward path, and so does a FAILED
+        // adopt (denied Keychain prompt) — without this, an error here is a
+        // dead end with no in-app exit.
         <button className="mt-4 text-[11.5px] text-ter hover:underline" onClick={onSkip}>
-          Skip for now
+          I'll sign in later
         </button>
       )}
     </div>

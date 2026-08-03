@@ -7,35 +7,78 @@ import AxeBuilder from "@axe-core/playwright";
 // route-mocked where exercised.
 
 test.describe.configure({ mode: "serial" });
+// Money copy renders locale-resolved currency and dates; pin both so the
+// consent strings under test are deterministic.
+test.use({ locale: "en-GB", timezoneId: "UTC" });
 
-test("onboarding → paywall ladder walk → checkout handoff → activation flips the UI", async ({
+test("onboarding → trial offer → ✕ surfaces the decline offer → checkout handoff → activation", async ({
   page,
 }) => {
   await page.goto("/?fixtures=1&pro=paywall");
 
-  // Onboarding: pain framing → the autopilot shown working → the paywall.
+  // Onboarding: pain framing → the autopilot shown working → the ask.
   await expect(page.getByRole("heading", { name: "Never hit a wall mid-thought" })).toBeVisible();
   await page.getByRole("button", { name: "Show me the autopilot" }).click();
   await expect(page.getByRole("heading", { name: /switches before you are blocked/i })).toBeVisible();
   await page.getByRole("button", { name: "Turn on the autopilot" }).click();
 
-  // Ladder rung 1 — full price, charged once.
+  // The single offer: trial-first full rung with timeline + reminder choice.
+  await expect(page.getByRole("heading", { name: "Try the autopilot free for 4 days" })).toBeVisible();
+  await expect(page.getByText("No payment due today.")).toBeVisible();
   await expect(page.getByText(/charged once\. We cancel the renewal/i)).toBeVisible();
-  // Decline → rung 2, discounted trial with an exact charge date.
-  await page.getByRole("button", { name: "Try it free first" }).click();
-  await expect(page.getByText(/charged once on/i)).toBeVisible();
-  await expect(page.getByText(/8-day free trial/i)).toBeVisible();
-  // Decline → rung 3, no-card trial (bottom rung, no further decline).
-  await page.getByRole("button", { name: "Start without a card" }).click();
-  await expect(page.getByText(/no card\. The autopilot turns on now/i)).toBeVisible();
+  // Dates derive from the CLOCK at render (now + trial_days), not the
+  // quote's fetch-time charge_date — Stripe anchors the trial at checkout
+  // completion, so render-time is the freshest honest date. The reminder
+  // choice moves the shown date by a real day. (Runner and page share
+  // TZ=UTC + en-GB, so both format the same strings.)
+  const DAY = 24 * 60 * 60 * 1000;
+  const gb = (daysFromNow: number) =>
+    new Date(Date.now() + daysFromNow * DAY).toLocaleDateString("en-GB", { day: "numeric", month: "long" });
+  await expect(page.getByText(gb(3))).toHaveCount(2); // 1-day default: chip date + timeline stop
+  await page.getByRole("button", { name: /2 days before/ }).click();
+  await expect(page.getByText(gb(2))).toHaveCount(2);
+  // The removed rungs stay removed.
+  await expect(page.getByRole("button", { name: "Start without a card" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Keep using the free tools for now" })).toBeHidden();
+
+  // First ✕ is the reject: the standing lower price surfaces, honestly framed.
+  await page.getByTestId("paywall-close").click();
+  await expect(page.getByRole("heading", { name: "Same trial, lower price" })).toBeVisible();
+  await expect(page.getByText("£9.99")).toBeVisible(); // struck beside the new price
 
   // CTA → checkout hands off a URL (no navigation in fixture mode).
-  await page.getByRole("button", { name: "Start the free trial" }).click();
+  await page.getByRole("button", { name: "Start the trial at £5.99" }).click();
   await expect(page.getByTestId("checkout-handoff")).toBeVisible();
 
   // The silent activation lands over SSE — onboarding unmounts, the board shows.
-  await expect(page.getByRole("button", { name: "Start the free trial" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Start the trial at £5.99" })).toBeHidden();
   await expect(page.getByText("alex@example.dev")).toBeVisible();
+});
+
+test("second ✕ closes the paywall for real — free tools remain, no re-trap", async ({ page }) => {
+  await page.goto("/?fixtures=1&pro=paywall");
+  await page.getByRole("button", { name: "Show me the autopilot" }).click();
+  await page.getByRole("button", { name: "Turn on the autopilot" }).click();
+  await expect(page.getByRole("heading", { name: "Try the autopilot free for 4 days" })).toBeVisible();
+
+  await page.getByTestId("paywall-close").click();
+  await expect(page.getByRole("heading", { name: "Same trial, lower price" })).toBeVisible();
+  await page.getByTestId("paywall-close").click();
+  await expect(page.getByRole("heading", { name: "Same trial, lower price" })).toBeHidden();
+  await expect(page.getByText("alex@example.dev")).toBeVisible();
+});
+
+test("paused paywall (trial restart) states the full consent: dates, price, reminder choice", async ({
+  page,
+}) => {
+  await page.goto("/?fixtures=1&pro=paused");
+  await page.getByRole("button", { name: "Turn on the autopilot" }).click();
+  await expect(page.getByRole("heading", { name: /Your trial ended/ })).toBeVisible();
+  // Restarting a card-upfront trial owes the same consent as the first one.
+  await expect(page.getByText(/charged once\. We cancel the renewal/i)).toBeVisible();
+  await expect(page.getByText("When should we remind you?").first()).toBeVisible();
+  await expect(page.getByText("No payment due today.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start the 4-day free trial" })).toBeVisible();
 });
 
 test("Settings → License shows the trial and cancels it in one click", async ({ page }) => {

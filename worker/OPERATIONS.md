@@ -31,22 +31,40 @@ app key set, and re-issuance through the recovery flow.
 
 ## Deployment
 
-Run `npm run check`, `npm test`, `npm run types`, and
-`npx wrangler deploy --dry-run`. Apply D1 migrations before
-traffic. `node scripts/secrets-push.mjs` only describes its changes;
+Deploy in this order — the migration step is NOT optional when a migration
+is pending (a deploy whose code reads a column the remote DB lacks 502s
+every checkout until the migration lands):
+
+1. `npm run check`, `npm test`, `npm run types`, `npx wrangler deploy --dry-run`.
+2. `npm run migrate:remote` — apply pending D1 migrations FIRST. New columns
+   arrive with defaults, so old code + new schema is safe; new code + old
+   schema is not.
+3. `npx wrangler deploy`.
+4. Verify: `curl https://api.llmpilot.dev/v1/quote` reflects the deployed vars.
+
+`node scripts/secrets-push.mjs` only describes its changes;
 `--apply` reads concealed fields without printing them and uses secret bulk.
 The `llmpilot` vault must contain the approved Cloudflare account id; the
 script binds both that id and the `llmpilot` Wrangler profile before sending
 any secret.
 
-The native `EMAIL` binding must be enabled for `llmpilot.dev`; sender access is
-restricted to `support@llmpilot.dev`. The hourly cron checks reminders. The daily
-cron repairs active or trialing subscriptions missing `cancel_at` and emits a
-structured alarm count for anything it cannot repair.
+Transactional email goes out through Resend (`RESEND_API_KEY` secret; sender
+`support@llmpilot.dev` on a Resend-verified `llmpilot.dev`). Chosen 2026-08-01
+over the native Cloudflare binding for its deliverability track record and
+per-message delivery logs — the pre-charge reminder is a consumer-law email
+and the delivery log is the dispute evidence. Resend's dashboard shows every
+send; a `not_configured` email_failed log means the secret is missing. The
+hourly cron checks reminders. The daily cron repairs active or trialing
+subscriptions missing `cancel_at` and emits a structured alarm count for
+anything it cannot repair.
 
-`TRIAL_DAYS` defaults to 8, so Stripe supplies the pre-charge reminder and the
-custom hourly reminder is dormant. Change it to 3 only after a test delivery from
-the native email binding is proven; that configuration activates the custom sweep.
+`TRIAL_DAYS` is deployed as 4 (code default 8). Every rung leads with the
+trial; the full rung converts to its one lifetime charge at trial end. Stripe
+supplies its own pre-charge reminder only for trials of 7 days or more, so
+any shorter value activates the custom hourly sweep — never deploy such a
+value until a test delivery through Resend is proven. Buyers
+choose the reminder offset at checkout (`remind_days_before`: 1 or 2 days
+before the charge); the sweep honors it per license.
 
 Stripe SDK and webhook endpoints must stay on `2026-06-24.dahlia`. Create the
 endpoint with that version pinned explicitly — an unpinned endpoint follows the

@@ -43,11 +43,11 @@ export function fixtureLicense(param: string | null): License | null {
 }
 
 // fixtureQuote mirrors the worker quote the paywall would fetch: the shipped
-// ladder terms (8 days, £9.99/$12.99 full, £5.99/$7.99 discount) so ladder
-// copy renders deterministically without a daemon.
+// terms (4-day trial, £9.99/$12.99 full, £5.99/$7.99 decline offer) so the
+// consent copy renders deterministically without a daemon.
 export function fixtureQuote(): Quote {
   return {
-    trial_days: 8,
+    trial_days: 4,
     charge_date: TRIAL_ENDS,
     prices: {
       full: { gbp: 999, usd: 1299 },
@@ -62,7 +62,7 @@ export function fixtureActivatedLicense(): License {
   return {
     available: true, active: true, status: "trialing", kind: "trial",
     features: ["autopilot", "scheduling", "wake"], seats: 1,
-    trial: { ends_at: TRIAL_ENDS, charge_date: TRIAL_ENDS, days_left: 6 },
+    trial: { ends_at: TRIAL_ENDS, charge_date: TRIAL_ENDS, days_left: 3 },
     expires_at: "2026-07-23T09:00:00Z", last_validated: "2026-07-12T12:00:00Z",
     license_id_masked: "lic_••••4f2a", nocard_trial_used: false,
   };

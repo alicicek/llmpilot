@@ -11,6 +11,7 @@
     "check": "tsc --noEmit",
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "migrate:local": "wrangler d1 migrations apply llmpilot-entitlements --local",
+    "migrate:remote": "wrangler d1 migrations apply llmpilot-entitlements --remote",
     "secrets:push": "node scripts/secrets-push.mjs"
   },
   "dependencies": {

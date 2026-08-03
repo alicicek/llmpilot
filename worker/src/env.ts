@@ -7,6 +7,10 @@ export type WorkerEnv = Omit<Env, "ENVIRONMENT" | "TRIAL_DAYS" | "SEAT_LIMIT"> &
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   STRIPE_PUBLISHABLE_KEY: string;
+  RESEND_API_KEY: string;
+  /** Test seam for the email egress (the stripeOverride idiom): production
+   *  never sets it and sendEmail uses the real global fetch. */
+  EMAIL_HTTP?: typeof fetch;
   ENT_SIGNING_KEY: string;
   ENT_SIGNING_KEY_ID: string;
   PRICE_FULL: string;

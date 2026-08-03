@@ -99,7 +99,8 @@ export default {
       await runCancellationReconcile(env);
       return;
     }
-    const sent = await runReminderSweep(env, new Date());
-    if (sent > 0) console.log(JSON.stringify({ event: "trial_reminders", sent }));
+    // The sweep logs its own counts unconditionally — a "due N, sent 0"
+    // line is the alarm the silent-failure incident never had.
+    await runReminderSweep(env, new Date());
   },
 } satisfies ExportedHandler<WorkerEnv>;

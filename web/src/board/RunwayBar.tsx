@@ -30,9 +30,14 @@ export default function RunwayBar({ bucket, refIso, stale }: RunwayBarProps) {
   return (
     <div className="mt-[5px] flex items-center gap-[7px]">
       <span className="w-[15px] shrink-0 text-[9px] font-semibold text-ter">{bucketLabel(bucket)}</span>
-      <span className="h-2 flex-1 overflow-hidden rounded-sm bg-hairsoft">
+      {/* Track is the rail token (the mock's spec — hairsoft was drift) and
+          carries a terminus tick under the fill: a rounded fill end looks
+          identical to a full bar, so the tick marks where the track really
+          ends and the gap before it IS the headroom. Covered only at 100%. */}
+      <span className="relative h-2 flex-1 overflow-hidden rounded-sm bg-rail">
+        <span aria-hidden="true" className="absolute inset-y-0 right-0 w-[1.5px] bg-ter/70" />
         <span
-          className={`block h-full rounded-sm ${fill} ${stale ? "opacity-40" : ""}`}
+          className={`relative block h-full rounded-sm ${fill} ${stale ? "opacity-40" : ""}`}
           style={{ width: `${Math.min(100, Math.max(0, bucket.percent))}%` }}
         />
       </span>

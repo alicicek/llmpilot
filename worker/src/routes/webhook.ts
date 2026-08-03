@@ -61,12 +61,18 @@ export async function fulfillSession(
   });
   lic = (await licenseBy(db, "id", lic.id)) as LicenseRow;
 
-  if (session.payment_status === "paid" && lic.rung === "full" && sub) {
-    // Full-price rung charges immediately and has no paid cycle event until a
-    // year later, so it must mint here; waiting for subscription_cycle would
-    // withhold the product after payment. A refund cancels the
-    // subscription and revokes — fulfillLifetime refuses revoked rows, so a
-    // replayed success URL can never re-arm a refunded license.
+  if (session.payment_status === "paid" && lic.rung === "full" && sub && !sub.trial_end) {
+    // The no-trial full path. Its live purpose since the 2026-07-31 reshape
+    // (every rung now trials): full Sessions created BEFORE the reshape
+    // deploy that complete after it — those collected payment at completion
+    // and must mint here; waiting for subscription_cycle would withhold the
+    // product after payment. The !trial_end guard keeps any trialing
+    // session out: a paid-status trialing session minting here would grant
+    // lifetime for £0 with the trial still running (and cancelRoute only
+    // cancels trialing rows — the mistake would be uncancellable). A refund
+    // cancels the subscription and revokes — fulfillLifetime refuses
+    // revoked rows, so a replayed success URL can never re-arm a refunded
+    // license.
     await ensureCancellation(stripe, db, lic, sub);
     const invoice = typeof session.invoice === "object" ? session.invoice : null;
     const invoiceId = invoice ? invoice.id : idOf(session.invoice);
@@ -162,8 +168,8 @@ export async function handleEvent(
 
     case "invoice.paid": {
       const invoice = ev.data.object as Stripe.Invoice;
-      // Lifetime conversion is exclusively the first real renewal cycle.
-      // Full-price purchases mint from their paid Checkout Session instead.
+      // Lifetime conversion is exclusively the first real renewal cycle —
+      // for every rung, now that full also trials before its one charge.
       if (invoice.billing_reason !== "subscription_cycle" || invoice.amount_paid <= 0) return "ignored";
       const amountPaid = invoice.amount_paid;
       const lic = await licenseForInvoice(env, stripe, invoice);

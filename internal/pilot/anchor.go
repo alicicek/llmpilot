@@ -14,7 +14,7 @@ import (
 // to minutes; comparisons are UTC so DST never applies) and the coarse write
 // cadence below. It bounds how far a single backward jump reaches before the
 // hold latches — too small to reclaim a meaningful slice of the 30-day grace
-// or an 8-day trial in one step. It does NOT defend against sustained clock
+// or a multi-day trial in one step. It does NOT defend against sustained clock
 // control (freezing or oscillating time below the high-water mark): a clock
 // cannot be forced forward offline, so that case is the accepted offline
 // floor, alongside patching a signed binary.
