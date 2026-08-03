@@ -19,26 +19,34 @@
 <style>
   * { margin:0; box-sizing:border-box; }
   html,body { width:620px; height:560px; overflow:hidden; }
-  body { background:#F5F5F7; color:#1D1D1F;
+  body { background:#1E1E21; color:#F2F2F4;
     font:14px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
     -webkit-font-smoothing:antialiased; position:relative; }
   header { position:absolute; top:24px; left:26px; right:26px;
     display:flex; align-items:center; gap:10px;
-    padding-bottom:12px; border-bottom:1px solid rgba(0,0,0,.11); }
+    padding-bottom:12px; border-bottom:1px solid rgba(255,255,255,.10); }
   header img { width:22px; height:22px; border-radius:5px; }
   /* Three sizes, clean steps (18 → 14 → 11): the drag instruction is the
      hero, the wordmark a quiet anchor, support lines share 11px. */
   header .name { font-size:14px; font-weight:700; letter-spacing:-.01em; }
   header .eyebrow { margin-left:auto; font-size:11px; font-weight:700;
-    letter-spacing:.07em; color:#59595E; }
+    letter-spacing:.07em; color:#A8A8AF; }
   /* Icon wells: create-dmg pins the real icons at centers 160/460, y156,
-     128pt — nothing is drawn there, Finder's black labels land below on
-     this light floor at full contrast. */
+     128pt. Finder draws its labels in DARK text with no color control
+     (dmgbuild spec; create-dmg #197), so on this dark floor the art bakes
+     a light pill under each label position — the same visual language as
+     Finder's own selection pill. Both strings are fixed (the Applications
+     symlink in a DMG is not localized), so the geometry is deterministic;
+     positions are pixel-calibrated against a real mounted window. */
+  .pill { position:absolute; width:150px; height:28px; border-radius:14px;
+    background:#E8E8ED; top:221px; }
+  .pill.left { left:85px; }
+  .pill.right { left:385px; }
   .arrow { position:absolute; top:162px; left:250px; width:120px; height:12px; }
   .drag { position:absolute; top:264px; left:0; right:0; text-align:center;
-    font-size:18px; font-weight:650; color:#1D1D1F; }
+    font-size:18px; font-weight:650; color:#F2F2F4; }
   .tag { position:absolute; top:292px; left:0; right:0; text-align:center;
-    font-size:11px; color:#59595E; }
+    font-size:11px; color:#A8A8AF; }
 </style>
 <body>
   <header>
@@ -46,8 +54,10 @@
     <span class="name">llmpilot</span>
     <span class="eyebrow">YOUR ACCOUNTS, ON AUTOPILOT</span>
   </header>
+  <div class="pill left"></div>
+  <div class="pill right"></div>
   <svg class="arrow" viewBox="0 0 120 12" fill="none" aria-hidden="true">
-    <path d="M2 6 H112 M104 1.5 L112 6 L104 10.5" stroke="#59595E" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M2 6 H112 M104 1.5 L112 6 L104 10.5" stroke="#A8A8AF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>
   <div class="drag">drag llmpilot to Applications</div>
   <div class="tag">signed &amp; notarized · free core · one-time Pro</div>
