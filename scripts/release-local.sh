@@ -134,9 +134,9 @@ create-dmg \
   --volname "llmpilot $VERSION" \
   --volicon scripts/dmg/volume.icns \
   --background scripts/dmg/background.tiff \
-  --window-pos 200 140 --window-size 660 400 --icon-size 128 \
-  --icon "llmpilot.app" 180 185 \
-  --app-drop-link 480 185 \
+  --window-pos 200 140 --window-size 620 400 --icon-size 128 \
+  --icon "llmpilot.app" 160 185 \
+  --app-drop-link 460 185 \
   --codesign "$IDENTITY" \
   --notarize "$PROFILE" \
   "$DD/llmpilot.dmg" "$DD/dmgroot"
