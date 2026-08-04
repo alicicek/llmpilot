@@ -43,10 +43,14 @@ export interface TrackProps {
   onCreate: (hour: number, minute: number) => void;
   onMove: (id: string, hour: number, minute: number) => void;
   onDelete: (id: string) => void;
+  /** False when this build/licence cannot save a schedule: the lane then
+   *  EXPLAINS the capability instead of inviting a click that must fail. */
+  canSchedule?: boolean;
 }
 
 export default function Track({
   accountLabel,
+  canSchedule = true,
   schedules,
   mid,
   nowMinutes,
@@ -209,7 +213,9 @@ export default function Track({
         // lane already says it's busy via the in-use band (and still books
         // via the hover ghost).
         <div className="pointer-events-none absolute inset-x-0 top-[42px] text-center text-[11px] text-ter">
-          No fresh windows — click a time to book one
+          {canSchedule
+            ? "No fresh windows — click a time to book one"
+            : "Fresh windows open on a schedule the autopilot runs — nothing booked here"}
         </div>
       )}
 

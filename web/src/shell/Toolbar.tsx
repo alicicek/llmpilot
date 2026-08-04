@@ -12,6 +12,8 @@ export function Toolbar(props: {
   onFreshWindow: (accountId: string) => void;
   onAddAccount: () => void;
   onSettings: () => void;
+  /** replays the guided tour; absent hides the control (nothing to point at). */
+  onGuide?: () => void;
 }) {
   const accounts = props.state?.accounts ?? [];
   const pillLabel =
@@ -27,7 +29,10 @@ export function Toolbar(props: {
     <header className="flex h-[52px] items-center gap-2.5 border-b border-hair bg-toolbar px-4">
       <span className="text-[13px] font-bold tracking-[0.01em]">llmpilot</span>
       <div className="flex-1" />
-      <span className="flex items-center gap-1.5 rounded-full border border-hair px-3 py-1 text-[11px] text-sec">
+      <span
+        data-tour="daemon"
+        className="flex items-center gap-1.5 rounded-full border border-hair px-3 py-1 text-[11px] text-sec"
+      >
         <i
           className={`h-[7px] w-[7px] rounded-full ${
             props.conn === "live" ? "bg-ok shadow-[0_0_5px_var(--ok)]" : "bg-graydot"
@@ -50,6 +55,7 @@ export function Toolbar(props: {
         <DropdownMenu.Trigger asChild>
           <button
             disabled={accounts.length === 0}
+            data-tour="fresh-window"
             className="rounded-md bg-acc-tx px-3 py-1.5 text-[11.5px] font-semibold text-white disabled:opacity-50 dark:bg-accent"
           >
             ＋ Fresh window
@@ -76,6 +82,16 @@ export function Toolbar(props: {
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+      {props.onGuide && (
+        <button
+          aria-label="Show me around"
+          title="Show me around"
+          onClick={props.onGuide}
+          className="rounded px-1.5 py-1 text-[13px] font-semibold text-sec hover:text-text"
+        >
+          ?
+        </button>
+      )}
       <button
         aria-label="Settings"
         onClick={props.onSettings}

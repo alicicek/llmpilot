@@ -117,6 +117,7 @@ final class FleetViewModel: ObservableObject {
     }
 
     static let firstLaunchKey = "firstLaunchWindowShown"
+    static let startAtLoginDefaultedKey = "startAtLoginDefaulted"
 
     private var ensureInFlight = false
 
@@ -125,7 +126,12 @@ final class FleetViewModel: ObservableObject {
         self.trialMarker = trialMarker
         if autostart {
             start()
+            // Parallel tasks: ensureRunning must set its in-flight flag
+            // immediately (connectOnce suppresses the down-flash only while
+            // it holds), and a slow first BTM registration must never delay
+            // it.
             Task { await self.ensureRunning() }
+            Task { await self.defaultStartAtLoginOnce() }
         }
     }
 
@@ -391,6 +397,32 @@ final class FleetViewModel: ObservableObject {
         }
         status = .down
         lastError = Self.daemonUnreachableError
+    }
+
+    /// First run defaults the login item ON (owner, SPEC 1.2.6): the daemon
+    /// auto-registers its agent, but the menu bar app never registered
+    /// itself — after a reboot the icon was gone and the app looked broken.
+    /// One-shot; the gear toggle owns every later change (System Settings
+    /// revocations included — this never re-registers). Never from a
+    /// translocated/DMG launch: registering there would pin a doomed path,
+    /// so the unburned key retries once the app runs from Applications.
+    func defaultStartAtLoginOnce() async {
+        guard !defaults.bool(forKey: Self.startAtLoginDefaultedKey) else { return }
+        guard !bundleLocationBlocked() else { return }
+        let prior = lastError
+        await setStartAtLogin(true)
+        // A refused BACKGROUND default stays quiet — the user pressed
+        // nothing, so a red popover line here reads as breakage. The retry
+        // rides the next launch; the gear toggle still reports ITS failures.
+        if !startAtLogin { lastError = prior }
+        // Burn the one-shot only on a CONFIRMED registration — a throw or a
+        // crash mid-call must retry next launch, not silently lose the
+        // default forever (the exact bug this exists to fix). A user who
+        // later disables it in System Settings is safe: the key burned the
+        // moment it was enabled.
+        if startAtLogin {
+            defaults.set(true, forKey: Self.startAtLoginDefaultedKey)
+        }
     }
 
     /// The gear toggle state. Read fresh when the popover opens — System

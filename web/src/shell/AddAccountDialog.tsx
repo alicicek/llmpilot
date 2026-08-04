@@ -126,12 +126,21 @@ function DetectedSection({
               <p className="mt-1 text-[10.5px] leading-relaxed text-ter">
                 Already moved into the fleet.
               </p>
+            ) : d.signed_in === false ? (
+              // The folder names an account but holds no sign-in. Both verbs
+              // refuse here, so neither is offered — the user gets the one
+              // thing that changes the state instead.
+              <p className="mt-1 text-[10.5px] leading-relaxed text-ter">
+                Signed out — this folder remembers the account, but its sign-in is gone. Run{" "}
+                <code className="font-semibold">claude</code> in that folder and sign in again to
+                use it here.
+              </p>
             ) : (
               <>
                 <p className="mt-1 text-[10px] leading-relaxed text-ter">
                   {d.registered
                     ? "llmpilot already knows this account. Moving this copy leaves one sign-in — it won't refresh the account while two exist."
-                    : "Watched: usage stays visible here — llmpilot never switches to this account."}
+                    : "Add as watched keeps its usage visible without ever switching to it. Move into the fleet makes it switchable."}
                 </p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   {!d.registered && (

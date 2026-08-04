@@ -4,6 +4,51 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.6] - 2026-08-04
+
+### Added
+
+- **First run now walks you through it, one screen at a time.** Your accounts,
+  then the autopilot shown switching away from a wall before you hit it, then
+  the offer, then when you want to be reminded, then what is on. The switch
+  demonstration runs on your own accounts once there are two of them, and says
+  so plainly when it is running on a sample instead.
+- **A short guide points at your own cockpit.** It spotlights your live usage,
+  the control that moves you to an account with room, booking a window ahead
+  of time, and where llmpilot keeps running once the window is closed. It
+  appears once and stays available from the toolbar afterwards.
+
+### Changed
+
+- **Accounts are grouped by who they are, not by folder.** Two folders holding
+  the same account collapse into a single row that says so — watching both
+  adds no headroom, because they share one limit. A genuinely separate account
+  is named as what it is: the one the autopilot switches to.
+- **Switching to another account is a control on that account's own row**,
+  beside its name, rather than a small link below its usage bars.
+- **llmpilot starts with your Mac by default.** The daemon always did; the menu
+  bar icon did not, so after a restart it was simply gone. The switch stays in
+  the gear menu, and first run now says where the icon lives and that a menu
+  bar manager such as Ice or Bartender can hide it.
+
+### Fixed
+
+- **Folders whose sign-in is gone are no longer offered as accounts.** A Claude
+  folder remembers which account it belonged to even after the sign-in itself
+  is gone, so llmpilot listed it as available and then refused to add it. It
+  now tells you the folder is signed out and what to do about it.
+- **You can paste into the in-app sign-in window.** The code field could not
+  take ⌘V — which was the one thing that window was for. Pasting also works
+  with Caps Lock on, and in the cockpit and checkout windows.
+- **Booking a fresh window without the autopilot answers with the offer, not
+  an error.** It used to fail with the daemon's own internal wording and point
+  at recovering a licence you never had. Lanes also stop inviting a click they
+  cannot honour.
+- **The marker at the end of a usage bar only appears where it means
+  something.** On a fresh or idle account it sat alone with nothing to
+  reference; it now shows from the warning threshold up, where a rounded fill
+  end starts passing for a full bar.
+
 ## [1.2.5] - 2026-08-03
 
 ### Changed

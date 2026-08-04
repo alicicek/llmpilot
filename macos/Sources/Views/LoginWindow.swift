@@ -22,7 +22,13 @@ final class LoginWindowController: NSWindowController, NSWindowDelegate, WKNavig
         // touches Safari's session, and leaves nothing on disk. Reusing one
         // webview would carry the first account's cookies into the second add.
         window?.close()
-        let win = NSWindow(
+        // The Edit-menu key equivalents (⌘V etc.) are wired to NSApp.mainMenu
+        // by the LSUIElement app delegate, but this app's only Scene is the
+        // MenuBarExtra — SwiftUI's scene setup can own the main menu after
+        // the delegate runs, and menu equivalents only fire while the app is
+        // active. Rather than depend on that ordering, this window answers
+        // the standard editing key equivalents itself.
+        let win = EditableWindow(
             contentRect: NSRect(x: 0, y: 0, width: 500, height: 680),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
@@ -85,6 +91,38 @@ final class LoginWindowController: NSWindowController, NSWindowDelegate, WKNavig
     }
 }
 
+/// Answers ⌘V/⌘C/⌘X/⌘A/⌘Z directly instead of relying on NSApp.mainMenu,
+/// which this LSUIElement app's MenuBarExtra scene can end up owning.
+final class EditableWindow: NSWindow {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let selector = Self.editingSelector(for: event) {
+            return NSApp.sendAction(selector, to: nil, from: self)
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    /// Pure mapping so the ⌘-only requirement is unit-testable without a
+    /// window server: ⌘⇧V and friends must NOT match, only the bare chord.
+    static func editingSelector(for event: NSEvent) -> Selector? {
+        // Caps Lock rides in deviceIndependentFlagsMask, so an exact compare
+        // against .command silently stops matching whenever it is on — and
+        // the fallback is the very menu path this class exists to bypass.
+        let mods = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting(.capsLock)
+        guard mods == .command, let key = event.charactersIgnoringModifiers?.lowercased()
+        else { return nil }
+        switch key {
+        case "v": return #selector(NSText.paste(_:))
+        case "c": return #selector(NSText.copy(_:))
+        case "x": return #selector(NSText.cut(_:))
+        case "a": return #selector(NSText.selectAll(_:))
+        case "z": return Selector(("undo:"))
+        default: return nil
+        }
+    }
+}
+
 /// Hosts the controller-owned webview inside the SwiftUI layout.
 private struct LoginWebView: NSViewRepresentable {
     let webView: WKWebView
@@ -95,10 +133,21 @@ private struct LoginWebView: NSViewRepresentable {
 struct LoginView: View {
     @ObservedObject var model: LoginFlowModel
     let webView: WKWebView
+    // The .web phase leaves focus in the WKWebView; when the phase flips to
+    // .paste that view drops out of the hierarchy and focus lands nowhere,
+    // so ⌘V has no field editor to act on. Driving focus explicitly also
+    // means the user lands ready to paste.
+    @FocusState private var pasteFieldFocused: Bool
 
     var body: some View {
         content
             .frame(minWidth: 500, minHeight: 620)
+            .onChange(of: model.phase) { phase in
+                if case .paste = phase { pasteFieldFocused = true }
+            }
+            .task {
+                if case .paste = model.phase { pasteFieldFocused = true }
+            }
     }
 
     @ViewBuilder private var content: some View {
@@ -130,6 +179,7 @@ struct LoginView: View {
                         TextField("Paste code here", text: $model.pasteInput)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 12, design: .monospaced))
+                            .focused($pasteFieldFocused)
                             .onSubmit { Task { await model.submitPaste() } }
                         Button("Add account") { Task { await model.submitPaste() } }
                             .disabled(model.pasteInput.trimmingCharacters(in: .whitespaces).isEmpty)

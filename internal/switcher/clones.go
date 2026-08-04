@@ -202,9 +202,60 @@ func normDir(p string) string {
 // account's email the rotation is skipped. Unknown must never mean "safe to
 // rotate".
 func (s *Switcher) retirementStillHolds(ctx context.Context, dir claudecfg.Dir) bool {
+	return s.dirIsSignedOut(ctx, dir)
+}
+
+// CredentialPresent reports whether a config dir still holds a sign-in that
+// adopt or move could actually USE.
+//
+// A dir keeps its `oauthAccount` block in .claude.json after its credential
+// is gone (moved into the fleet, cleared, expired out of the Keychain), so
+// identity alone says "signed in" long after the sign-in stopped existing —
+// which is how the cockpit came to offer Add/Move on folders where both verbs
+// can only refuse ("no credential in Keychain service …", "has no stored
+// sign-in to move"). This is the direct question those screens owe the user.
+//
+// Any doubt answers YES: an unreadable file or an enumeration error must not
+// hide a real account, and the engine still refuses safely if we guess wrong.
+func (s *Switcher) CredentialPresent(ctx context.Context, dir claudecfg.Dir) bool {
+	return !s.dirIsSignedOut(ctx, dir)
+}
+
+// SignedInDirs answers CredentialPresent for many dirs with ONE keychain
+// enumeration. /v1/detect asks about every folder on the machine and is
+// polled by both surfaces, so the per-dir form would re-dump the whole
+// keychain once per folder on every refresh.
+//
+// An enumeration failure reports every dir as present, for the same reason
+// the single-dir probe does: doubt must never hide an account.
+func (s *Switcher) SignedInDirs(ctx context.Context, dirs []claudecfg.Dir) map[string]bool {
+	out := make(map[string]bool, len(dirs))
+	services, err := s.Keychain.Services(ctx)
+	if err != nil {
+		for _, d := range dirs {
+			out[d.Path()] = true
+		}
+		return out
+	}
+	for _, d := range dirs {
+		out[d.Path()] = services[d.KeychainService()] || !s.credentialsFileEmpty(d)
+	}
+	return out
+}
+
+// dirIsSignedOut answers "is this dir empty of credentials right now?" —
+// confidently true only; see the callers above for how doubt is read.
+func (s *Switcher) dirIsSignedOut(ctx context.Context, dir claudecfg.Dir) bool {
 	if accounts, err := s.Keychain.List(ctx, dir.KeychainService()); err != nil || len(accounts) > 0 {
 		return false
 	}
+	return s.credentialsFileEmpty(dir)
+}
+
+// credentialsFileEmpty reports that the dir's on-disk credential file holds
+// no OAuth payload. Doubt (an unreadable or unparseable file) answers false:
+// it may well hold one.
+func (s *Switcher) credentialsFileEmpty(dir claudecfg.Dir) bool {
 	data, err := os.ReadFile(dir.CredentialsFilePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return true

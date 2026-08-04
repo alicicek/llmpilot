@@ -61,6 +61,21 @@ export default function LaneHeader({ account, active, nowMinutes, onSwitch }: La
               ACTIVE
             </span>
           )}
+          {/* Switching is the product's staple verb, so it sits on the
+              identity row where the eye already is — mirroring the ACTIVE
+              badge one lane up, not buried under the runway bars as a
+              footnote link. */}
+          {!active && !account.pinned && (
+            <button
+              type="button"
+              onClick={onSwitch}
+              aria-label={`Switch to ${account.label || account.email}`}
+              data-tour="switch"
+              className="shrink-0 rounded-full border border-acc-bd bg-acc-a px-[7px] py-px text-[9px] font-bold tracking-[0.04em] text-acc-tx transition-colors duration-150 hover:bg-chipbg focus:outline-none focus-visible:ring-2 focus-visible:ring-acc-bd"
+            >
+              SWITCH
+            </button>
+          )}
           {account.pinned && (
             <svg
               aria-label="pinned"
@@ -101,7 +116,7 @@ export default function LaneHeader({ account, active, nowMinutes, onSwitch }: La
           </>
         )}
         {snap && (
-          <div className="mt-1.5 flex flex-col">
+          <div className="mt-1.5 flex flex-col" data-tour={active ? "runway" : undefined}>
             {snap.buckets.map((b, i) => (
               <RunwayBar key={`${b.kind}-${b.scope ?? i}`} bucket={b} refIso={snap.as_of} stale={stale} />
             ))}
@@ -113,15 +128,6 @@ export default function LaneHeader({ account, active, nowMinutes, onSwitch }: La
             Watched — signs in from its own folder, usage only. Move it into the fleet from Add
             account to make it switchable.
           </p>
-        )}
-        {!active && !account.pinned && (
-          <button
-            type="button"
-            onClick={onSwitch}
-            className="mt-1.5 text-[10px] font-medium text-acc-tx hover:underline"
-          >
-            switch to {account.label || account.email}
-          </button>
         )}
       </div>
     </div>

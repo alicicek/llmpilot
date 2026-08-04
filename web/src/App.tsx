@@ -12,7 +12,7 @@ import {
 import { useDaemonState } from "./useDaemonState.ts";
 import { useLicense } from "./pro/useLicense.ts";
 import { useQuote } from "./pro/useQuote.ts";
-import { Onboarding } from "./pro/Onboarding.tsx";
+import { OnboardingFlow } from "./pro/Onboarding.tsx";
 import { Paywall } from "./pro/Paywall.tsx";
 import { licenseErrorCopy } from "./pro/errors.ts";
 import { fixtureActivatedLicense, proFixtureParam } from "./pro/fixtures.ts";
@@ -27,12 +27,18 @@ import {
   WINDOW_HOURS,
   type Schedule,
 } from "./schedule.ts";
-import { FIXTURE_NOW_MINUTES, fixtureSchedules, fixtureState, fixtureEmptyState } from "./fixtures.ts";
+import {
+  FIXTURE_NOW_MINUTES,
+  fixtureSchedules,
+  fixtureState,
+  fixtureEmptyState,
+  fixtureSoloState,
+} from "./fixtures.ts";
 import Board from "./board/Board.tsx";
 import { Toolbar } from "./shell/Toolbar.tsx";
 import { History } from "./shell/History.tsx";
-import { FirstRun } from "./shell/FirstRun.tsx";
 import { StashPanel } from "./shell/StashPanel.tsx";
+import { Tour, type TourStep } from "./shell/Tour.tsx";
 import { DoctorPanel } from "./shell/DoctorPanel.tsx";
 import { AddAccountDialog } from "./shell/AddAccountDialog.tsx";
 import { SettingsDialog, showHistoryPref, HISTORY_PREF_KEY } from "./shell/SettingsDialog.tsx";
@@ -74,6 +80,37 @@ const fixturesMode = fixturesParam !== null;
 
 const proFixtureMode = proFixtureParam !== null;
 const ONBOARDED_KEY = "llmpilot.pro.onboarded";
+const TOUR_KEY = "llmpilot.tour.seen";
+// ?tour=1 forces the guide open (tests, and a way to see it without clearing
+// storage); the fixture harnesses otherwise never start it, so every existing
+// spec keeps its unobstructed board.
+const tourForced = new URLSearchParams(window.location.search).get("tour") === "1";
+
+// The guide points at the user's OWN cockpit. Each step names one thing on
+// screen and what it means for them — a step whose target is absent (no
+// second account to switch to) is skipped by the Tour itself.
+const TOUR_STEPS: TourStep[] = [
+  {
+    target: "runway",
+    title: "This is your real usage",
+    body: "Live limits for the account you are on — session and weekly, straight from Claude. When a bar fills, that account is done until it resets.",
+  },
+  {
+    target: "switch",
+    title: "Move to an account with room",
+    body: "One click switches you. Your place is kept and there is no re-login — the autopilot does this for you before you hit a wall.",
+  },
+  {
+    target: "fresh-window",
+    title: "Open a window on your own clock",
+    body: "Book a fresh 5-hour window ahead of time and it opens unattended, so your limits reset when you actually work.",
+  },
+  {
+    target: "daemon",
+    title: "It keeps running without this window",
+    body: "Watching continues in the background. The icon lives at the top right of your screen — a menu bar manager like Ice or Bartender may hide it.",
+  },
+];
 
 export default function App() {
   const live = useDaemonState(fixturesMode);
@@ -94,13 +131,26 @@ export default function App() {
   const [statuslineOpen, setStatuslineOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(showHistoryPref());
   const [flash, setFlash] = useState<string | null>(null);
+  // The autopilot-only action a free buyer just reached for. Rendered as an
+  // offer card, not an alert.
+  const [proPrompt, setProPrompt] = useState<string | null>(null);
   const [onboarded, setOnboarded] = useState(
     () => !proFixtureMode && localStorage.getItem(ONBOARDED_KEY) === "yes",
   );
-  // Adopt-first funnel: with an empty fleet the adopt screen renders before
-  // any pitch; skip is the forward path when nothing was detected (session
-  // state only — the adopt screen returns after onboarding).
-  const [adoptSkipped, setAdoptSkipped] = useState(false);
+  // The first-run flow stays mounted through checkout so the activation
+  // facts screen can show (activation itself flips showOnboarding false —
+  // without the latch the flow would unmount mid-story). flowClosed is
+  // session-only: the accounts screen returns on the next visit if the
+  // fleet is still empty (same semantics the old adoptSkipped had).
+  const [flowLatched, setFlowLatched] = useState(false);
+  const [flowClosed, setFlowClosed] = useState(false);
+  // The guide runs once, the first time a real board is on screen — never
+  // over the first-run flow (which is its own guided path) and never in the
+  // fixture harnesses unless asked for.
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourSeen, setTourSeen] = useState(
+    () => !tourForced && localStorage.getItem(TOUR_KEY) === "yes",
+  );
   const [paywallOpen, setPaywallOpen] = useState(false);
   const [handoffURL, setHandoffURL] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
@@ -143,14 +193,23 @@ export default function App() {
   const state: State | null = fixturesMode
     ? fixturesParam === "empty"
       ? fixtureEmptyState
-      : fixtureState
+      : fixturesParam === "solo"
+        ? fixtureSoloState
+        : fixtureState
     : live.state;
   const conn = fixturesMode ? "live" : live.conn;
   const schedules = fixturesMode ? fixSchedules : (live.state?.schedules ?? liveSchedules);
   const nowMinutes = fixturesMode ? FIXTURE_NOW_MINUTES : nowMin;
 
-  const report = (e: unknown) =>
+  // A tier boundary is an offer, not a failure: pro_required gets the calm
+  // card, never the warn flash. Everything else keeps the flash.
+  const report = (e: unknown) => {
+    if (e instanceof ApiError && (e.code === "pro_required" || e.code === "pro_unavailable")) {
+      setProPrompt(e.code);
+      return;
+    }
     setFlash(e instanceof Error ? e.message : "That didn't take — try again.");
+  };
 
   const actions = fixturesMode
     ? {
@@ -214,17 +273,55 @@ export default function App() {
   const proAvailable = license?.available === true;
   const proUnlicensed = proAvailable && !license.active;
   const showOnboarding = proUnlicensed && license.status === "none" && !onboarded && state !== null;
-  const showProBanner = proUnlicensed && !showOnboarding && !paywallOpen && state !== null;
+  // One path during first run: the flow owns the screen (no toolbar, no
+  // board) from the accounts step through the activation facts.
+  const wantFlow = (firstRun && !flowClosed) || showOnboarding;
+  const showFlow = state !== null && (wantFlow || flowLatched);
+  const showProBanner = proUnlicensed && !showFlow && !paywallOpen && state !== null;
+  // The board is up and unobstructed: the moment the guide has something real
+  // to point at.
+  const boardVisible = state !== null && !showFlow && !paywallOpen;
+  // Never over a fixture board unless asked: the README recorder drives
+  // ?fixtures=1 with its own browser context and would otherwise film the
+  // guide sitting on top of the product, eating the first drag.
+  const canGuide =
+    boardVisible && state.accounts.length > 0 && (!fixturesMode || tourForced);
   const caughtThisWeek = state
     ? state.events.filter(
         (e) => (e.kind === "switch" || e.kind === "rotate") && Date.now() - Date.parse(e.at) < 7 * 864e5,
       ).length
     : 0;
 
+  // One rule: the first time a real board is on screen, the guide opens.
+  useEffect(() => {
+    if (!canGuide || tourSeen || tourOpen) return;
+    setTourOpen(true);
+  }, [canGuide, tourSeen, tourOpen]);
+
+  // The latch arms whenever the flow becomes wanted and holds through the
+  // activation flip; only an explicit close releases it.
+  useEffect(() => {
+    if (wantFlow) setFlowLatched(true);
+  }, [wantFlow]);
+
+  const closeFlow = () => {
+    setFlowLatched(false);
+    setFlowClosed(true);
+  };
+
+  const endTour = () => {
+    setTourOpen(false);
+    setTourSeen(true);
+    // Looking at the guide through a harness must not disable it for the
+    // real cockpit on this origin (same rule dismissOnboarding follows).
+    if (!fixturesMode && !tourForced) localStorage.setItem(TOUR_KEY, "yes");
+  };
+
   const dismissOnboarding = () => {
     setOnboarded(true);
     // A refusal from a previous attempt must not greet the next visit.
     setCheckoutError(null);
+    closeFlow();
     if (!proFixtureMode) localStorage.setItem(ONBOARDED_KEY, "yes");
   };
 
@@ -242,7 +339,9 @@ export default function App() {
     setCheckoutPending(true);
     setCheckoutError(null);
     if (proFixtureMode) {
-      setHandoffURL(`https://checkout.stripe.com/c/pay/${rung}`);
+      // The fixture handoff encodes what would ride the real POST, so tests
+      // can assert the reminder choice is a real control, not chrome.
+      setHandoffURL(`https://checkout.stripe.com/c/pay/${rung}?remind=${remindDays}`);
       window.setTimeout(() => {
         setLicense(fixtureActivatedLicense());
         setHandoffURL(null);
@@ -313,15 +412,20 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-win">
-      <Toolbar
-        conn={conn}
-        state={state}
-        asOfAge={conn === "down" ? asOfAge : null}
-        detectedCount={detected.filter((d) => !d.registered).length}
-        onFreshWindow={bookFreshWindow}
-        onAddAccount={() => setAddOpen(true)}
-        onSettings={() => setSettingsOpen(true)}
-      />
+      {/* One path during first run: the toolbar's competing CTAs (Add
+          account, Fresh window) stay off screen until the flow closes. */}
+      {!showFlow && (
+        <Toolbar
+          conn={conn}
+          state={state}
+          asOfAge={conn === "down" ? asOfAge : null}
+          detectedCount={detected.filter((d) => !d.registered).length}
+          onFreshWindow={bookFreshWindow}
+          onAddAccount={() => setAddOpen(true)}
+          onSettings={() => setSettingsOpen(true)}
+          onGuide={canGuide ? () => setTourOpen(true) : undefined}
+        />
+      )}
       {flash && (
         <div
           role="status"
@@ -333,7 +437,47 @@ export default function App() {
           </button>
         </div>
       )}
-      {showProBanner && license && (
+      {proPrompt && (
+        // VOICE scope rule: one bold fact line, the consequence in plain
+        // words, then the action. No warn colors — nothing went wrong.
+        <div
+          role="status"
+          data-testid="pro-prompt"
+          className="flex items-start justify-between gap-4 border-b border-hair bg-panel px-4 py-3"
+        >
+          <div className="max-w-[640px]">
+            <p className="text-[12.5px] font-semibold">
+              Fresh windows run on your schedule — that is the autopilot's job.
+            </p>
+            <p className="mt-0.5 text-[11.5px] leading-relaxed text-sec">
+              {proPrompt === "pro_unavailable"
+                ? "This build was compiled without it. Watching, switching, the statusline, and history keep working here — the app at llmpilot.dev adds the autopilot."
+                : "Watching every account, switching by hand, the statusline, and history stay free. The autopilot books your windows and moves you before a wall, unattended."}
+            </p>
+          </div>
+          <div className="flex flex-none items-center gap-3">
+            {proPrompt === "pro_required" && (
+              <button
+                className="rounded-lg bg-acc-tx px-3 py-1.5 text-[11.5px] font-semibold text-white dark:bg-accent"
+                onClick={() => {
+                  setProPrompt(null);
+                  openPaywall();
+                }}
+              >
+                Try it free for 4 days
+              </button>
+            )}
+            <button
+              className="text-[11.5px] text-sec hover:underline"
+              onClick={() => setProPrompt(null)}
+              aria-label="Dismiss"
+            >
+              Not now
+            </button>
+          </div>
+        </div>
+      )}
+      {showProBanner && !proPrompt && license && (
         <div className="flex items-center justify-between gap-4 border-b border-hair bg-panel px-4 py-1.5 text-[11.5px]">
           <span className="text-sec">
             {license.status === "lapsed" || license.status === "revoked"
@@ -348,7 +492,15 @@ export default function App() {
           </button>
         </div>
       )}
-      <main className="flex-1">
+      <main
+        className={
+          showFlow
+            ? // The flow sits vertically centred — mt-16 stranded it at the
+              // top of a full-height window (owner's fresh-user sweep).
+              "flex flex-1 flex-col items-center justify-center overflow-y-auto py-10"
+            : "flex-1"
+        }
+      >
         {conn === "down" && !state ? (
           <div className="mx-auto mt-16 w-[440px] max-w-[92vw] text-[12.5px] leading-relaxed">
             <p className="font-semibold">Daemon not running — nothing here is live.</p>
@@ -360,25 +512,40 @@ export default function App() {
           </div>
         ) : !state ? (
           <p className="p-6 text-[12.5px] text-ter">Connecting to the daemon…</p>
-        ) : showOnboarding && license && (!firstRun || adoptSkipped) ? (
-          // Adopt-first: the pitch runs AFTER adoption, on the user's own
-          // fleet — the demo fixtures appear only when adoption was skipped.
-          <Onboarding
-            license={license}
-            quote={quote}
-            quoteFailed={quoteFailed}
-            onRetryQuote={reloadQuote}
-            onCheckout={onCheckout}
-            onRecover={() => setSettingsOpen(true)}
-            onDismiss={dismissOnboarding}
-            caughtThisWeek={caughtThisWeek || undefined}
-            handoffURL={handoffURL}
-            checkoutError={checkoutError}
-            busy={checkoutPending}
-            demo={state.accounts.length > 0 ? state : undefined}
-          />
-        ) : firstRun && !adoptSkipped ? (
-          <FirstRun onSkip={showOnboarding ? () => setAdoptSkipped(true) : undefined} />
+        ) : showFlow ? (
+          <>
+            {/* The toolbar (and its daemon pill) is hidden behind the flow —
+                a dead daemon must still be named, or the wall animates live
+                colors over stale numbers. */}
+            {conn !== "live" && (
+              <p className="mb-4 text-[11px] text-ter" role="status">
+                {conn === "connecting"
+                  ? "Connecting to the daemon…"
+                  : asOfAge
+                    ? `Daemon down — numbers as of ${asOfAge}`
+                    : "Daemon not running."}
+              </p>
+            )}
+            {/* Add-first: the accounts screen runs before any pitch, the
+                wall runs on the user's own fleet once two genuine accounts
+                exist, and the ask comes last. */}
+            <OnboardingFlow
+              license={license}
+              tour={showOnboarding}
+              state={state}
+              quote={quote}
+              quoteFailed={quoteFailed}
+              onRetryQuote={reloadQuote}
+              onCheckout={onCheckout}
+              onRecover={() => setSettingsOpen(true)}
+              onDismiss={dismissOnboarding}
+              onExit={closeFlow}
+              caughtThisWeek={caughtThisWeek || undefined}
+              handoffURL={handoffURL}
+              checkoutError={checkoutError}
+              busy={checkoutPending}
+            />
+          </>
         ) : (
           <>
             {!fixturesMode && (
@@ -391,15 +558,22 @@ export default function App() {
               />
             )}
             <StashPanel stash={state.stash ?? []} />
-            <Board state={state} schedules={schedules} nowMinutes={nowMinutes} {...actions} />
+            <Board
+              state={state}
+              schedules={schedules}
+              nowMinutes={nowMinutes}
+              canSchedule={!proUnlicensed}
+              {...actions}
+            />
             {showHistory && <History state={state} fixturesMode={fixturesMode} defaultOpen={fixturesMode} />}
           </>
         )}
       </main>
       {paywallOpen && license && (
         <div className="fixed inset-0 z-40 overflow-y-auto bg-win/95 backdrop-blur-sm">
-          <div className="flex min-h-full items-start justify-center pb-10">
+          <div className="flex min-h-full items-start justify-center py-14">
             <Paywall
+              accountsWatched={state?.accounts.length ?? 0}
               license={license}
               quote={quote}
               quoteFailed={quoteFailed}
@@ -421,6 +595,7 @@ export default function App() {
           </div>
         </div>
       )}
+      {tourOpen && canGuide && <Tour steps={TOUR_STEPS} onDone={endTour} />}
       <AddAccountDialog
         open={addOpen}
         onOpenChange={setAddOpen}

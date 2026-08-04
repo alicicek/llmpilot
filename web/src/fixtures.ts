@@ -107,3 +107,13 @@ export const fixtureEmptyState: State = {
   events: [],
   accounts: [],
 };
+
+// One account, nothing to switch to — the shape most new users actually
+// arrive in, and the one where surfaces that assume a second lane (the
+// switch control, the guide's switch step) must degrade honestly.
+export const fixtureSoloState: State = {
+  active_id: "alex",
+  as_of: at("12:37"),
+  events: [],
+  accounts: [fixtureState.accounts[0]],
+};

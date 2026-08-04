@@ -178,3 +178,66 @@ func TestAdoptFlow(t *testing.T) {
 		t.Fatalf("re-adopt status = %d, want 409", again.StatusCode)
 	}
 }
+
+// A dir whose credential is gone still names its account in .claude.json, so
+// /v1/detect must say so on the wire — the cockpit uses signed_in to stop
+// offering Add/Move where the engine can only refuse. A daemon with no probe
+// wired reports signed in, preserving the pre-probe behavior rather than
+// hiding a real account.
+func TestDetectReportsSignedOutDirs(t *testing.T) {
+	detected := []detect.Detected{
+		fakeDetected("/fake/dir-live", "live@example.dev"),
+		fakeDetected("/fake/dir-spent", "spent@example.dev"),
+	}
+	read := func(t *testing.T, d *Daemon) map[string]bool {
+		t.Helper()
+		srv := httptest.NewServer(d.Handler())
+		defer srv.Close()
+		resp, err := http.Get(srv.URL + "/v1/detect")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close() //nolint:errcheck // test
+		var out []struct {
+			Email    string `json:"email"`
+			SignedIn bool   `json:"signed_in"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, o := range out {
+			got[o.Email] = o.SignedIn
+		}
+		return got
+	}
+
+	withProbe := &Daemon{
+		Store:  testStore(t),
+		Detect: func(context.Context) ([]detect.Detected, error) { return detected, nil },
+		SignedInDirs: func(_ context.Context, ds []detect.Detected) map[string]bool {
+			out := map[string]bool{}
+			for _, d := range ds {
+				out[d.Dir.Path()] = d.Dir.Path() != "/fake/dir-spent"
+			}
+			return out
+		},
+	}
+	got := read(t, withProbe)
+	if !got["live@example.dev"] {
+		t.Fatal("a dir holding a credential reported signed out — a real account would be hidden")
+	}
+	if got["spent@example.dev"] {
+		t.Fatal("a dir with no credential reported signed in — the cockpit would offer verbs that refuse")
+	}
+
+	noProbe := &Daemon{
+		Store:  testStore(t),
+		Detect: func(context.Context) ([]detect.Detected, error) { return detected, nil },
+	}
+	for email, signedIn := range read(t, noProbe) {
+		if !signedIn {
+			t.Fatalf("%s reported signed out with no probe wired — unknown must never hide an account", email)
+		}
+	}
+}

@@ -242,6 +242,16 @@ type Daemon struct {
 	Detect DetectFn
 	Adopt  AdoptFn
 
+	// SignedInDirs reports, keyed by config dir, which detected dirs still
+	// hold a usable sign-in. A dir keeps its identity in .claude.json after
+	// the credential is gone, so detection alone cannot tell a live folder
+	// from a spent one — without this the cockpit offers Add/Move on folders
+	// where both refuse. Batched because both surfaces poll /v1/detect and
+	// the underlying probe enumerates the whole keychain. nil, or a dir
+	// missing from the result, reads as present (never hide a real account
+	// over a missing probe).
+	SignedInDirs func(ctx context.Context, ds []detect.Detected) map[string]bool
+
 	// LoginMint/LoginURL/LoginComplete wire the in-app sign-in (POST
 	// /v1/login/*; all nil = 501). See login.go — the PKCE verifier lives only
 	// in this process, keyed by CSRF state in loginAttempts.

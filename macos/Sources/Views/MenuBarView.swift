@@ -203,7 +203,7 @@ struct MenuBarView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            Text("Adopt or discard these in the cockpit.")
+            Text("Add or discard these in the cockpit.")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
         }
@@ -307,7 +307,7 @@ struct MenuBarView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Found logged-in Claude Code accounts. Adopt reads usage only — macOS asks to allow Keychain access once per account.")
+                Text("Found logged-in Claude Code accounts. Adding reads usage only — macOS asks to allow Keychain access once per account.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -334,7 +334,7 @@ struct MenuBarView: View {
                             }
                         }
                         Spacer()
-                        Button(model.adoptingDir == d.configDir ? "adopting…" : "Adopt") {
+                        Button(model.adoptingDir == d.configDir ? "adding…" : "Add") {
                             Task { await model.adopt(d.configDir) }
                         }
                         .controlSize(.small)

@@ -62,6 +62,7 @@ final class FakeLoginItems: LoginItems, @unchecked Sendable {
     /// Runs on a successful register — e.g. flip the stub API to reachable.
     var onRegister: (@Sendable () -> Void)?
     var mainStatus: LoginItemStatus = .notRegistered
+    var setMainShouldThrow = false
     private(set) var registerCalls = 0
     private(set) var mainSets: [Bool] = []
     private(set) var openedSettings = 0
@@ -78,6 +79,7 @@ final class FakeLoginItems: LoginItems, @unchecked Sendable {
 
     func setMainApp(enabled: Bool) throws {
         mainSets.append(enabled)
+        if setMainShouldThrow { throw Refused() }
         mainStatus = enabled ? .enabled : .notRegistered
     }
 

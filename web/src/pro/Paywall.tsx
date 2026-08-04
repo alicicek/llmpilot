@@ -1,16 +1,22 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { License, Quote, QuoteEcho, Rung } from "../api.ts";
+import { StepDots } from "../shell/StepDots.tsx";
 import { licenseErrorCopy } from "./errors.ts";
-import { remindDate, rungCopy, STATEMENT_NOTE } from "./ladder.ts";
+import { CloseButton } from "./CloseButton.tsx";
+import { Remind } from "./Remind.tsx";
+import { chargeInstant, remindDate, rungCopy, STATEMENT_NOTE } from "./ladder.ts";
 
-// The reshaped paywall (owner 2026-07-31): ONE offer — the free trial that
-// converts to £9.99 charged once, lifetime — with the trial timeline and the
-// reminder-timing choice rendered from the server quote. Pressing close IS
-// the decline: the first ✕ surfaces the standing £5.99 offer once, the
-// second ✕ closes for real. No free-tools link, no no-card rung. Copy obeys
-// VOICE.md; every figure comes from the quote — no quote, no consent, no
-// checkout. The reminder choice is a REAL control: it rides the checkout
-// call, lands on the license row, and the worker's hourly sweep honors it.
+// The reshaped paywall (owner 2026-07-31, reworked for SPEC 1.2.6): ONE
+// offer — the free trial that converts to £9.99 charged once, lifetime —
+// rendered from the server quote in two steps. The OFFER states the terms
+// (headline, timeline, no payment due today); its CTA advances to the
+// REMINDER screen (pro/Remind.tsx), which owns the reminder-timing choice
+// and the trial-starting CTA — checkout begins there. Pressing close IS the
+// decline: the first ✕ surfaces the standing £5.99 offer once, the second ✕
+// closes for real, from either step. Copy obeys VOICE.md; every figure comes
+// from the quote — no quote, no consent, no checkout. The reminder choice is
+// a REAL control: it rides the checkout call, lands on the license row, and
+// the worker's hourly sweep honors it.
 
 interface PaywallProps {
   license: License;
@@ -29,13 +35,18 @@ interface PaywallProps {
   // undefined omits the line entirely (never invent a stat).
   caughtThisWeek?: number;
   handoffURL?: string | null;
-  // A failed checkout START (the POST, not the payment). Rendered here so the
-  // buyer sees the remedy next to the button they pressed — a flash elsewhere
-  // reads as a dead button under a modal.
+  // A failed checkout START (the POST, not the payment). Rendered on the
+  // reminder screen so the buyer sees the remedy next to the button they
+  // pressed — a flash elsewhere reads as a dead button under a modal.
   checkoutError?: string | null;
   // True while a checkout start is in flight or its window is being handed
   // off — the button shows busy instead of silently swallowing clicks.
   busy?: boolean;
+  /** first-run step dots — base is the offer step's index. Absent outside
+   *  the guided flow (the reopened overlay is not a guided run). */
+  dots?: { base: number; total: number };
+  /** fleet size for the activation facts; 0/undefined omits the line. */
+  accountsWatched?: number;
 }
 
 // bg-acc-tx (dark:bg-accent) keeps white text ≥4.5:1 at this size — the app's
@@ -44,32 +55,6 @@ const btnPrimary =
   "rounded-lg bg-acc-tx px-4 py-2 text-[13px] font-semibold text-white transition-colors duration-150 disabled:opacity-50 dark:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-acc-bd";
 const btnGhost =
   "text-[12px] text-sec underline-offset-2 hover:underline focus:outline-none focus-visible:underline";
-
-function CloseButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      aria-label="Close the paywall"
-      data-testid="paywall-close"
-      className="absolute right-0 top-0 flex h-7 w-7 items-center justify-center rounded-full border border-hair bg-panel text-[13px] text-sec hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-acc-bd"
-      onClick={onClick}
-    >
-      ✕
-    </button>
-  );
-}
-
-// The trial timeline: today → the chosen reminder date → the one charge.
-// Every figure comes from the quote; the DATES are derived from the trial
-// length at render time rather than read from the quote's charge_date —
-// a quote fetched at app open can be hours old by the time the paywall
-// shows, and Stripe anchors the trial at checkout COMPLETION, so the
-// freshest honest date is "now + trial_days". Residual drift only exists
-// while the payment window itself sits open; it can only move the charge
-// LATER (more free days), and the reminder email states the subscription's
-// real trial end.
-function chargeInstant(quote: Quote): string {
-  return new Date(Date.now() + quote.trial_days * 24 * 60 * 60 * 1000).toISOString();
-}
 
 function TrialTimeline({
   quote,
@@ -117,20 +102,20 @@ function TrialTimeline({
   );
 }
 
-// The one consent card: price line, timeline, reminder choice, statement
-// note. Used by the main ask AND the trial-restart (paused) screen — every
-// screen that starts a card-upfront trial owes the same dates and control.
+// The one consent card: price line, timeline, statement note. Used by the
+// main ask AND the trial-restart (paused) screen — every screen that starts
+// a card-upfront trial owes the same dates. The reminder-timing control
+// lives on the next screen (pro/Remind.tsx); the timeline reflects the
+// current choice.
 function OfferCard({
   copy,
   quote,
   remindDays,
-  onRemindDays,
   locale,
 }: {
   copy: NonNullable<ReturnType<typeof rungCopy>>;
   quote: Quote;
   remindDays: number;
-  onRemindDays: (d: number) => void;
   locale: string;
 }) {
   return (
@@ -152,52 +137,75 @@ function OfferCard({
         remindDays={remindDays}
         locale={locale}
       />
-      <div className="mt-1 border-t border-hairsoft pt-3">
-        <p className="text-[12px] font-semibold">When should we remind you?</p>
-        <div className="mt-2 flex gap-2" role="group" aria-label="When should we remind you?">
-          {[2, 1].map((d) => (
-            <button
-              key={d}
-              aria-pressed={remindDays === d}
-              onClick={() => onRemindDays(d)}
-              className={`rounded-lg border px-3 py-1.5 text-left text-[11.5px] font-semibold tabular-nums transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-acc-bd ${
-                remindDays === d
-                  ? // the app's proven filled-selection idiom — the tinted
-                    // acc-a/acc-tx pair fails AA at this size (4.36:1)
-                    "border-acc-bd bg-acc-tx text-white dark:bg-accent"
-                  : "border-hair bg-win text-sec hover:text-text"
-              }`}
-            >
-              {d === 1 ? "1 day before" : `${d} days before`}
-              <span className={`block text-[10.5px] font-medium ${remindDays === d ? "" : "text-ter"}`}>
-                {remindDate(chargeInstant(quote), d, locale)}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
       <p className="mt-3 text-[11px] text-ter">{STATEMENT_NOTE}</p>
     </div>
   );
 }
 
-export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout, onRecover, onDismiss, caughtThisWeek, handoffURL, checkoutError, busy }: PaywallProps) {
+export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout, onRecover, onDismiss, caughtThisWeek, handoffURL, checkoutError, busy, dots, accountsWatched }: PaywallProps) {
   // The decline walk: the offer → (first ✕) the standing lower price →
-  // (second ✕ or "No thanks") closed.
+  // (second ✕ or "No thanks") closed. ask advances offer → remind; the
+  // reminder screen owns checkout.
   const [declined, setDeclined] = useState(false);
   const [remindDays, setRemindDays] = useState(1);
+  const [ask, setAsk] = useState<"offer" | "remind">("offer");
+  // The amount the buyer committed to, kept for the activation facts —
+  // license state doesn't echo the price back.
+  const [committedAmount, setCommittedAmount] = useState<string | null>(null);
   const locale = typeof navigator !== "undefined" ? navigator.language : "en-GB";
   const fullCopy = quote ? rungCopy("full", quote, locale) : null;
 
+  // A quote whose TERMS changed (the worker's quote_stale refusal reloads
+  // it) bounces the ask back to the offer: re-consent must happen on the
+  // screen that states the new terms, never on the reminder screen
+  // mid-flight. Compared by terms, not object identity — useQuote re-quotes
+  // on a 15-minute TTL and every fetch parses fresh, so an identity compare
+  // would throw the buyer off the commit screen on a routine re-quote. And
+  // never while a payment window is open: yanking the handoff line invites
+  // the re-click that orphans a live Session's activation poll.
+  const termsSig = (q: Quote) => `${q.trial_days}|${JSON.stringify(q.prices)}`;
+  const seenQuote = useRef<Quote | null>(quote);
+  useEffect(() => {
+    // Reloads pass through null (useQuote clears synchronously), so compare
+    // against the last NON-null quote or the bounce never fires.
+    if (quote && seenQuote.current && !handoffURL && termsSig(quote) !== termsSig(seenQuote.current))
+      setAsk("offer");
+    if (quote) seenQuote.current = quote;
+  }, [quote, handoffURL]);
+
   if (license.active) {
+    // Screen 5, facts only: what is watched, what it does, when the reminder
+    // lands, what is charged and when. Never invent a fact — a missing one
+    // (a reload dropped the committed amount) omits its row.
+    const charge = license.trial?.charge_date;
+    const chargeLong = charge
+      ? new Date(charge).toLocaleDateString(locale, { day: "numeric", month: "long" })
+      : null;
+    const facts: string[] = [];
+    if (accountsWatched && accountsWatched > 0)
+      facts.push(`Watching ${accountsWatched} ${accountsWatched === 1 ? "account" : "accounts"}`);
+    facts.push("Switches you before the wall");
+    if (charge) facts.push(`Reminder email — ${remindDate(charge, remindDays, locale)}`);
+    if (chargeLong && committedAmount) facts.push(`${committedAmount} once — ${chargeLong}`);
     return (
-      <section className="mx-auto mt-16 w-[440px] max-w-[92vw] text-center" aria-live="polite">
+      <section
+        className="mx-auto w-[440px] max-w-[92vw] animate-[rise-in_200ms_ease-out_both] text-center"
+        aria-live="polite"
+      >
+        {dots && <StepDots step={dots.base + 2} total={dots.total} />}
         <p className="text-[15px] font-semibold text-ok-tx">Pro is on</p>
-        <p className="mt-1.5 text-[12.5px] text-sec">
-          The autopilot is watching every account. You can close this and get back to work.
-        </p>
+        <ul className="mx-auto mt-3 w-[320px] max-w-full rounded-[11px] border border-hair bg-panel text-left">
+          {facts.map((f) => (
+            <li
+              key={f}
+              className="border-b border-hairsoft px-4 py-2 text-[12.5px] tabular-nums last:border-b-0"
+            >
+              {f}
+            </li>
+          ))}
+        </ul>
         {onDismiss && (
-          <button className={`mt-4 ${btnPrimary}`} onClick={onDismiss}>
+          <button className={`mt-5 ${btnPrimary}`} onClick={onDismiss}>
             Open the cockpit
           </button>
         )}
@@ -206,9 +214,52 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
   }
 
   const paused = license.status === "lapsed" || license.status === "revoked";
+
+  // The decline offer only exists while it is genuinely LOWER: under an
+  // active launch window full already sells at the discount amount, and
+  // striking through the same price it offers would be a lying screen —
+  // in that configuration the close just closes.
+  const declineCopy = quote ? rungCopy("discount_trial", quote, locale) : null;
+  const hasLowerOffer =
+    declineCopy?.echo.amount_minor !== undefined &&
+    fullCopy?.echo.amount_minor !== undefined &&
+    declineCopy.echo.amount_minor < fullCopy.echo.amount_minor;
+  const close = () => {
+    if (!declined && hasLowerOffer) {
+      setDeclined(true);
+      setAsk("offer");
+    } else onDismiss?.();
+  };
+
+  const commitCopy = quote
+    ? rungCopy(declined && !paused ? "discount_trial" : "full", quote, locale)
+    : null;
+  if (ask === "remind" && commitCopy && quote) {
+    return (
+      <Remind
+        copy={commitCopy}
+        quote={quote}
+        remindDays={remindDays}
+        onRemindDays={setRemindDays}
+        locale={locale}
+        busy={busy}
+        handoffURL={handoffURL}
+        checkoutError={checkoutError}
+        onCommit={() => {
+          setCommittedAmount(commitCopy.amount);
+          onCheckout(commitCopy.rung, commitCopy.echo, remindDays);
+        }}
+        onBack={() => setAsk("offer")}
+        onClose={!paused && onDismiss ? close : undefined}
+        dots={dots && { step: dots.base + 1, total: dots.total }}
+      />
+    );
+  }
+
   if (paused) {
     return (
-      <section className="mx-auto mt-16 w-[460px] max-w-[92vw]">
+      <section className="mx-auto w-[460px] max-w-[92vw] animate-[rise-in_200ms_ease-out_both]">
+        {dots && <StepDots step={dots.base} total={dots.total} />}
         <h2 className="text-[15px] font-semibold">Your trial ended — the autopilot is paused</h2>
         <p className="mt-1.5 text-[12.5px] leading-relaxed text-sec">
           Your schedules are kept and nothing was deleted. Switching, statusline, and analytics keep
@@ -225,23 +276,12 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
             {checkoutError}
           </p>
         )}
-        {handoffURL && (
-          <p className="mt-3 text-[11.5px] text-sec" role="status" data-testid="checkout-handoff" data-url={handoffURL}>
-            Checkout is open in the payment window — finish there, or start again here.
-          </p>
-        )}
         {/* Restarting the trial is the SAME card-upfront consent as the
-            first one — the exact dates and the reminder control are owed
-            here too, not just on the first ask. */}
+            first one — the exact dates are owed here too, and the reminder
+            screen (with its control) follows before checkout. */}
         {fullCopy && quote ? (
           <>
-            <OfferCard
-              copy={fullCopy}
-              quote={quote}
-              remindDays={remindDays}
-              onRemindDays={setRemindDays}
-              locale={locale}
-            />
+            <OfferCard copy={fullCopy} quote={quote} remindDays={remindDays} locale={locale} />
             <p className="mt-3 text-[11.5px] text-sec">No payment due today.</p>
           </>
         ) : quoteFailed ? (
@@ -261,10 +301,10 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
         <div className="mt-3 flex items-center gap-4">
           <button
             className={btnPrimary}
-            disabled={!fullCopy || busy}
-            onClick={() => fullCopy && onCheckout("full", fullCopy.echo, remindDays)}
+            disabled={!fullCopy}
+            onClick={() => setAsk("remind")}
           >
-            {busy ? "Opening checkout…" : fullCopy ? fullCopy.cta : "Turn on the autopilot"}
+            {fullCopy && quote ? `Try it free for ${quote.trial_days} days` : "Turn on the autopilot"}
           </button>
           <button className={btnGhost} onClick={onRecover}>
             Restore a purchase
@@ -280,9 +320,18 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
     // paywall that hides the price. Without terms there is no decline offer
     // either: the ✕ just closes.
     return (
-      <section className="relative mx-auto mt-14 w-[460px] max-w-[92vw]">
+      <section className="relative mx-auto w-[460px] max-w-[92vw] animate-[rise-in_200ms_ease-out_both]">
+        {dots && <StepDots step={dots.base} total={dots.total} />}
         {onDismiss && <CloseButton onClick={onDismiss} />}
         <h2 className="text-[16px] font-semibold">Turn on the autopilot</h2>
+        {/* A quote_stale refusal lands HERE first (the reload nulls the
+            quote) — the remedy for the button that was pressed must not be
+            lost to the loading state. */}
+        {checkoutError && (
+          <p className="mt-3 rounded-lg border border-hair bg-panel px-3 py-2 text-[11.5px] text-sec" role="alert" data-testid="checkout-error">
+            {checkoutError}
+          </p>
+        )}
         <div className="mt-4 rounded-[11px] border border-hair bg-panel p-4">
           {quoteFailed ? (
             <>
@@ -305,39 +354,14 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
     );
   }
 
-  // The decline offer only exists while it is genuinely LOWER: under an
-  // active launch window full already sells at the discount amount, and
-  // striking through the same price it offers would be a lying screen —
-  // in that configuration the close just closes.
-  const declineCopy = quote ? rungCopy("discount_trial", quote, locale) : null;
-  const hasLowerOffer =
-    declineCopy?.echo.amount_minor !== undefined &&
-    fullCopy?.echo.amount_minor !== undefined &&
-    declineCopy.echo.amount_minor < fullCopy.echo.amount_minor;
-  const close = () => {
-    if (!declined && hasLowerOffer) setDeclined(true);
-    else onDismiss?.();
-  };
-
   return (
-    <section className="relative mx-auto mt-14 w-[460px] max-w-[92vw]">
+    <section className="relative mx-auto w-[460px] max-w-[92vw] animate-[rise-in_200ms_ease-out_both]">
+      {dots && <StepDots step={dots.base} total={dots.total} />}
       {onDismiss && <CloseButton onClick={close} />}
       <h2 className="text-[16px] font-semibold">{copy.headline}</h2>
       <p className="mt-2 text-[12.5px] leading-relaxed text-sec">{copy.lede}</p>
 
-      <OfferCard
-        copy={copy}
-        quote={quote}
-        remindDays={remindDays}
-        onRemindDays={setRemindDays}
-        locale={locale}
-      />
-
-      {handoffURL && (
-        <p className="mt-3 text-[11.5px] text-sec" role="status" data-testid="checkout-handoff" data-url={handoffURL}>
-          Checkout is open in the payment window — finish there, or start again here.
-        </p>
-      )}
+      <OfferCard copy={copy} quote={quote} remindDays={remindDays} locale={locale} />
 
       {licenseErrorCopy(license.error_code) && (
         <p className="mt-3 rounded-lg border border-hair bg-panel px-3 py-2 text-[11.5px] text-sec" role="alert">
@@ -345,6 +369,8 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
         </p>
       )}
 
+      {/* A quote_stale refusal bounces here with the reloaded terms — its
+          remedy line renders beside the terms being re-consented to. */}
       {checkoutError && (
         <p className="mt-3 rounded-lg border border-hair bg-panel px-3 py-2 text-[11.5px] text-sec" role="alert" data-testid="checkout-error">
           {checkoutError}
@@ -353,8 +379,8 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
 
       <p className="mt-4 text-center text-[11.5px] text-sec">No payment due today.</p>
       <div className="mt-2 flex flex-col gap-2.5">
-        <button className={btnPrimary} disabled={busy} onClick={() => onCheckout(copy.rung, copy.echo, remindDays)}>
-          {busy ? "Opening checkout…" : copy.cta}
+        <button className={btnPrimary} onClick={() => setAsk("remind")}>
+          Try it free for {quote.trial_days} days
         </button>
         <div className="flex items-center justify-between">
           {declined && onDismiss ? (

@@ -33,7 +33,7 @@ export function StashPanel({ stash }: { stash: StashEntry[] }) {
       </h2>
       <p className="mt-0.5 text-[11px] leading-relaxed text-sec">
         A switch found these signed in but not in your fleet, so it kept them —
-        adopt one to watch it here, or discard it to delete its stored credential.
+        add one to watch it here, or discard it to delete its stored credential.
       </p>
       <ul className="mt-2 flex flex-col">
         {stash.map((e) => (
@@ -63,7 +63,7 @@ export function StashPanel({ stash }: { stash: StashEntry[] }) {
                 onClick={() => run(e.fingerprint, () => adoptStash(e.fingerprint))}
                 className="rounded-md bg-acc-tx px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-50 dark:bg-accent"
               >
-                {busy === e.fingerprint ? "Adopting…" : "Adopt account"}
+                {busy === e.fingerprint ? "Adding…" : "Add account"}
               </button>
               <button
                 disabled={busy !== null}

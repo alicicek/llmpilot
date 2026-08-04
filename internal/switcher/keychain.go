@@ -183,6 +183,31 @@ func (k *Keychain) List(ctx context.Context, service string) ([]string, error) {
 	return parseDumpAccounts(out, service), nil
 }
 
+// Services enumerates every service name that holds at least one item, in
+// ONE dump. Attribute-only, exactly like List — no secret is read and no ACL
+// prompt can fire. Callers asking about several dirs at once use this so a
+// fleet of N folders costs one enumeration rather than N.
+func (k *Keychain) Services(ctx context.Context) (map[string]bool, error) {
+	if err := k.interlock(); err != nil {
+		return nil, err
+	}
+	args := []string{"dump-keychain"}
+	if k.File != "" {
+		args = append(args, k.File)
+	}
+	out, err := k.runner()(ctx, nil, "/usr/bin/security", args...)
+	if err != nil {
+		return nil, fmt.Errorf("keychain enumerate: %w", err)
+	}
+	found := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if v, ok := dumpAttr(strings.TrimSpace(line), "svce"); ok && v != "" {
+			found[v] = true
+		}
+	}
+	return found, nil
+}
+
 // parseDumpAccounts extracts acct attributes for items whose svce matches.
 // dump-keychain emits one block per item ("keychain: ..." then attributes);
 // acct/svce lines look like `    "acct"<blob>="value"`.

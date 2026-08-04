@@ -89,7 +89,11 @@ final class CockpitWindowController: NSWindowController, NSWindowDelegate, WKNav
     func open(url: URL) {
         origin = (url.host, url.port)
         if window == nil {
-            let win = NSWindow(
+            // EditableWindow, not NSWindow: this hosts the cockpit's own
+            // paste targets (the add-account code field, the licence
+            // recovery field), and the app-wide menu cannot be relied on to
+            // deliver ⌘V here — same reasoning as the sign-in window.
+            let win = EditableWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered, defer: false)
@@ -197,7 +201,8 @@ final class CheckoutWindowController: NSWindowController, NSWindowDelegate, WKNa
 
     func open(url: URL) {
         if window == nil {
-            let win = NSWindow(
+            // Card details get pasted here too.
+            let win = EditableWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 480, height: 720),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered, defer: false)

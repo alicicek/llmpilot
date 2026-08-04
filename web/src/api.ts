@@ -93,6 +93,11 @@ export interface DetectedDir {
   /** this dir's sign-in was already migrated into the fleet (its source
    *  copy retired) — informational only, never offer a verb on it. */
   moved: boolean;
+  /** false only when the dir is CONFIRMED to hold no credential: it still
+   *  names an account in .claude.json, but the sign-in itself is gone, so
+   *  adopt and move can only refuse. Older daemons omit it — absent reads
+   *  as signed in, which is the pre-existing behavior. */
+  signed_in?: boolean;
 }
 
 export async function fetchConfig(): Promise<Config> {

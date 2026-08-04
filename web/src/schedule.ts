@@ -1,4 +1,4 @@
-import { normalizeState, type State } from "./api.ts";
+import { ApiError, normalizeState, type State } from "./api.ts";
 
 // Mirror of store.Schedule (internal/store/schedule.go). Hour/Minute are the
 // TRIGGER (nudge) wall-clock time; the reset lands 5h later — the UI always
@@ -76,8 +76,10 @@ async function mutate(path: string, method: string, body?: unknown): Promise<Res
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
-    const payload = (await res.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(payload?.error ?? `${method} ${path}: HTTP ${res.status}`);
+    // Keep the daemon's machine code: a tier boundary (pro_required) must
+    // reach the UI as itself, not flattened into failure prose.
+    const payload = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+    throw new ApiError(payload?.error ?? `${method} ${path}: HTTP ${res.status}`, payload?.code);
   }
   return res;
 }

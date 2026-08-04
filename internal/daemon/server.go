@@ -17,6 +17,7 @@ import (
 	"github.com/alicicek/llmpilot/internal/analytics"
 	"github.com/alicicek/llmpilot/internal/claudecfg"
 	"github.com/alicicek/llmpilot/internal/detect"
+	"github.com/alicicek/llmpilot/internal/pilot"
 	"github.com/alicicek/llmpilot/internal/store"
 	"github.com/alicicek/llmpilot/internal/switcher"
 	"github.com/alicicek/llmpilot/pilotapi"
@@ -417,6 +418,9 @@ func (d *Daemon) handleScheduleCreate(w http.ResponseWriter, r *http.Request) {
 	if !requireJSON(w, r) {
 		return
 	}
+	if d.schedulingBlocked(w) {
+		return
+	}
 	d.schedMu.Lock()
 	defer d.schedMu.Unlock()
 	var req struct {
@@ -471,6 +475,9 @@ func (d *Daemon) handleScheduleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	next := append(scheds, sched)
 	if err := d.syncTriggers(r.Context(), next); err != nil {
+		if proRefusal(w, err) {
+			return
+		}
 		httpError(w, http.StatusBadGateway, fmt.Errorf("launchd sync failed — schedule not saved: %w", err))
 		return
 	}
@@ -484,6 +491,9 @@ func (d *Daemon) handleScheduleCreate(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleScheduleUpdate(w http.ResponseWriter, r *http.Request) {
 	if !requireJSON(w, r) {
+		return
+	}
+	if d.schedulingBlocked(w) {
 		return
 	}
 	d.schedMu.Lock()
@@ -522,6 +532,9 @@ func (d *Daemon) handleScheduleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	scheds[idx] = updated
 	if err := d.syncTriggers(r.Context(), scheds); err != nil {
+		if proRefusal(w, err) {
+			return
+		}
 		httpError(w, http.StatusBadGateway, fmt.Errorf("launchd sync failed — schedule not moved: %w", err))
 		return
 	}
@@ -559,6 +572,9 @@ func (d *Daemon) handleScheduleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.syncTriggers(r.Context(), kept); err != nil {
+		if proRefusal(w, err) {
+			return
+		}
 		httpError(w, http.StatusBadGateway, fmt.Errorf("launchd sync failed — schedule not removed: %w", err))
 		return
 	}
@@ -643,14 +659,29 @@ func (d *Daemon) handleDetect(w http.ResponseWriter, r *http.Request) {
 		Email      string `json:"email"`
 		Registered bool   `json:"registered"`
 		Moved      bool   `json:"moved"`
+		// SignedIn is false only when the dir is CONFIRMED empty of
+		// credentials — the surfaces use it to stop offering verbs that can
+		// only refuse. Unknown reports true.
+		SignedIn bool `json:"signed_in"`
+	}
+	signedIn := map[string]bool{}
+	if d.SignedInDirs != nil {
+		signedIn = d.SignedInDirs(r.Context(), detected)
 	}
 	out := make([]detectedOut, 0, len(detected))
 	for _, det := range detected {
+		present := true
+		if d.SignedInDirs != nil {
+			if v, ok := signedIn[det.Dir.Path()]; ok {
+				present = v
+			}
+		}
 		out = append(out, detectedOut{
 			ConfigDir:  det.Dir.Path(),
 			Email:      det.Account.EmailAddress,
 			Registered: alreadyRegistered(det, existing),
 			Moved:      moved[det.Dir.Path()],
+			SignedIn:   present,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -948,6 +979,39 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func httpError(w http.ResponseWriter, code int, err error) {
 	writeJSON(w, code, map[string]string{"error": err.Error()})
+}
+
+// proRefusal answers a tier boundary as an OFFER and reports true. Routing a
+// "you have not bought this" through the generic error path is how a paywall
+// ends up wearing an alert banner and internal launchd wording; the cockpit
+// renders these codes as a calm card instead.
+func proRefusal(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, pilot.ErrNotLicensed):
+		writeJSON(w, http.StatusPaymentRequired, map[string]string{
+			"error": "Fresh windows run on your schedule — that is the autopilot's job.",
+			"code":  "pro_required",
+		})
+		return true
+	case errors.Is(err, pilot.ErrNotAvailable):
+		writeJSON(w, http.StatusPaymentRequired, map[string]string{
+			"error": "This build was compiled without the autopilot. Watching, switching, the statusline, and history keep working here.",
+			"code":  "pro_unavailable",
+		})
+		return true
+	}
+	return false
+}
+
+// schedulingBlocked is the EARLY gate: refuse before touching launchd or the
+// store, so a free buyer never sees a half-done write reported as a failure.
+// A nil gate means no engine is compiled in — that case is answered by
+// proRefusal at the sync site, which knows which of the two it is.
+func (d *Daemon) schedulingBlocked(w http.ResponseWriter) bool {
+	if d.EntitlementAllowed != nil && !d.EntitlementAllowed("scheduling", time.Now()) {
+		return proRefusal(w, pilot.NotLicensed("scheduling"))
+	}
+	return false
 }
 
 // httpWorkerError forwards a worker refusal with its machine code intact

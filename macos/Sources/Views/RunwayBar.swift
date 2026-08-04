@@ -22,12 +22,17 @@ struct RunwayBar: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Theme.rail)
-                    // Terminus tick sits UNDER the fill: visible whenever
-                    // headroom exists, covered only by a genuine 100%.
+                    // Terminus tick sits UNDER the fill, and only from warn
+                    // up: that is where the fill's rounded end starts to
+                    // pass for a full bar, so the tick marks the real end
+                    // and the gap before it IS the headroom. On a near-empty
+                    // track it would just be a speck with nothing to
+                    // reference — it fades in when it earns its place.
                     Capsule()
                         .fill(Theme.railEnd)
                         .frame(width: 1.5)
                         .frame(maxWidth: .infinity, alignment: .trailing)
+                        .opacity(bucket.percent >= 70 ? 1 : 0)
                     Capsule()
                         .fill(drained ? Theme.drained : Theme.severity(bucket.percent))
                         .frame(width: max(3, geo.size.width * CGFloat(min(bucket.percent, 100)) / 100))

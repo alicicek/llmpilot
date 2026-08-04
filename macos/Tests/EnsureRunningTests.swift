@@ -187,4 +187,53 @@ final class EnsureRunningTests: XCTestCase {
         XCTAssertEqual(items.mainSets, [true, false])
         XCTAssertFalse(model.startAtLogin)
     }
+
+    // MARK: - First-run login-item default
+
+    func testFirstRunDefaultsStartAtLoginOnExactlyOnce() async {
+        let api = StubAPI()
+        let (model, items) = makeModel(api)
+        await model.defaultStartAtLoginOnce()
+        XCTAssertEqual(items.mainSets, [true])
+        XCTAssertTrue(model.startAtLogin)
+        XCTAssertTrue(defaults.bool(forKey: FleetViewModel.startAtLoginDefaultedKey))
+
+        // Relaunch over the same defaults: the one-shot never re-registers —
+        // the gear toggle (and System Settings revocations) own it from here.
+        let (model2, items2) = makeModel(api)
+        await model2.defaultStartAtLoginOnce()
+        XCTAssertEqual(items2.mainSets, [])
+        _ = model
+    }
+
+    func testTranslocatedFirstRunDefersTheLoginItemDefault() async {
+        let api = StubAPI()
+        let (model, items) = makeModel(api)
+        model.bundleLocationBlocked = { true }
+        await model.defaultStartAtLoginOnce()
+        XCTAssertEqual(items.mainSets, [], "registering from a DMG/translocated path would pin a doomed path")
+        XCTAssertFalse(defaults.bool(forKey: FleetViewModel.startAtLoginDefaultedKey),
+                       "a deferred default must not burn the one-shot")
+
+        // Next launch from Applications: the default applies.
+        model.bundleLocationBlocked = { false }
+        await model.defaultStartAtLoginOnce()
+        XCTAssertEqual(items.mainSets, [true])
+    }
+
+    func testFailedLoginItemDefaultDoesNotBurnTheOneShot() async {
+        let api = StubAPI()
+        let items = FakeLoginItems()
+        items.setMainShouldThrow = true
+        let (model, _) = makeModel(api, items: items)
+        await model.defaultStartAtLoginOnce()
+        XCTAssertFalse(defaults.bool(forKey: FleetViewModel.startAtLoginDefaultedKey),
+                       "a refused registration must retry next launch, not lose the default forever")
+
+        // Next launch, BTM cooperates: the default lands and the key burns.
+        items.setMainShouldThrow = false
+        await model.defaultStartAtLoginOnce()
+        XCTAssertEqual(items.mainSets, [true, true])
+        XCTAssertTrue(defaults.bool(forKey: FleetViewModel.startAtLoginDefaultedKey))
+    }
 }

@@ -329,6 +329,13 @@ func newDaemon(st *store.Store) *daemon.Daemon {
 		d.Switch = switchCloser(st, sw.KeepWarm, swapFn, d.QuarantineDeadLineage, kwOpts, 0)
 		d.AutoSwitch = switchCloser(st, sw.KeepWarm, swapFn, d.QuarantineDeadLineage, kwOpts, 1)
 		d.MovedDirs = sw.MovedDirs
+		d.SignedInDirs = func(ctx context.Context, ds []detect.Detected) map[string]bool {
+			dirs := make([]claudecfg.Dir, 0, len(ds))
+			for _, det := range ds {
+				dirs = append(dirs, det.Dir)
+			}
+			return sw.SignedInDirs(ctx, dirs)
+		}
 		d.MoveIntoFleet = func(ctx context.Context, det detect.Detected, label string) (daemon.MoveResult, error) {
 			res, err := sw.MoveIntoFleet(ctx, det.Dir, label)
 			if err != nil {

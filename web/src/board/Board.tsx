@@ -56,14 +56,14 @@ function findSelected(lanes: LaneData[], selectedId: string | null, nowMinutes: 
   return null;
 }
 
-export default function Board({ state, schedules, nowMinutes, onSwitch, onCreate, onMove, onDelete }: BoardProps) {
+export default function Board({ state, schedules, nowMinutes, onSwitch, onCreate, onMove, onDelete, canSchedule }: BoardProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const reducedMotion = useReducedMotion();
 
   if (state.accounts.length === 0) {
     return (
       <div className="p-8 text-[12.5px] text-ter">
-        No accounts adopted yet — nothing here is scheduled.
+        No accounts added yet — nothing here is scheduled.
       </div>
     );
   }
@@ -92,6 +92,7 @@ export default function Board({ state, schedules, nowMinutes, onSwitch, onCreate
             onSwitch={() => void onSwitch(account.id)}
             onSelect={setSelectedId}
             onCreate={(hour, minute) => void onCreate({ account_id: account.id, hour, minute })}
+            canSchedule={canSchedule}
             onMove={(id, hour, minute) => void onMove(id, hour, minute)}
             onDelete={(id) => {
               if (id === selectedId) setSelectedId(null);

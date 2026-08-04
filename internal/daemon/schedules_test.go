@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicicek/llmpilot/internal/pilot"
 	"github.com/alicicek/llmpilot/internal/store"
 )
 
@@ -340,5 +341,86 @@ func TestScheduleSameLabelAccountsCoexist(t *testing.T) {
 	// the same account re-booking the same time still conflicts
 	if code, _ := create("acct-one"); code != http.StatusConflict {
 		t.Fatalf("same-account duplicate must 409, got %d", code)
+	}
+}
+
+// A tier boundary must arrive as an OFFER, never as a failure: refused
+// EARLY (nothing written, no launchd call), with the machine code the
+// cockpit renders as a card. This is the guard's fail case — before it,
+// a free buyer clicking the timeline got a 502 reading "launchd sync
+// failed", which describes a broken machine rather than an unbought feature.
+func TestScheduleRefusesWithoutEntitlement(t *testing.T) {
+	st := testStore(t)
+	var syncCalls int
+	d := &Daemon{
+		Store: st,
+		TriggerSync: func(context.Context, []store.Schedule) error {
+			syncCalls++
+			return nil
+		},
+		EntitlementAllowed: func(string, time.Time) bool { return false },
+	}
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/v1/schedules", "application/json",
+		strings.NewReader(`{"account_id":"a","hour":9,"minute":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("create without entitlement = %d (%s), want 402", resp.StatusCode, body)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["code"] != "pro_required" {
+		t.Fatalf("code = %q, want pro_required", got["code"])
+	}
+	if strings.Contains(got["error"], "launchd") || strings.Contains(got["error"], "entitlement") {
+		t.Fatalf("refusal copy leaks internals: %q", got["error"])
+	}
+	if syncCalls != 0 {
+		t.Fatalf("launchd sync ran %d times on a refused create — the gate must come first", syncCalls)
+	}
+	scheds, err := st.Schedules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scheds) != 0 {
+		t.Fatalf("refused create still wrote %d schedules", len(scheds))
+	}
+}
+
+// The same boundary reached through the ENGINE (source builds, and official
+// builds whose licence lapsed) is classified too, so no path reports a
+// paywall as a launchd failure.
+func TestScheduleSyncGateIsClassifiedNotAnError(t *testing.T) {
+	d := &Daemon{
+		Store:       testStore(t),
+		TriggerSync: func(context.Context, []store.Schedule) error { return pilot.NotAvailable("scheduling") },
+	}
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/v1/schedules", "application/json",
+		strings.NewReader(`{"account_id":"a","hour":9,"minute":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("engine-gated create = %d (%s), want 402", resp.StatusCode, body)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["code"] != "pro_unavailable" {
+		t.Fatalf("code = %q, want pro_unavailable", got["code"])
 	}
 }

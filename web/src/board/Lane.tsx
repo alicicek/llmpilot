@@ -17,6 +17,7 @@ export interface LaneProps {
   onCreate: (hour: number, minute: number) => void;
   onMove: (id: string, hour: number, minute: number) => void;
   onDelete: (id: string) => void;
+  canSchedule?: boolean;
 }
 
 export default function Lane({
@@ -31,6 +32,7 @@ export default function Lane({
   onCreate,
   onMove,
   onDelete,
+  canSchedule,
 }: LaneProps) {
   return (
     <div className="flex border-b border-hairsoft">
@@ -46,6 +48,7 @@ export default function Lane({
           onCreate={onCreate}
           onMove={onMove}
           onDelete={onDelete}
+          canSchedule={canSchedule}
         />
       </div>
     </div>

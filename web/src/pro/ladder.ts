@@ -62,6 +62,17 @@ export function localAmount(
   return null;
 }
 
+// The charge instant: every date the ask states derives from the trial
+// length at RENDER time rather than the quote's charge_date — a quote
+// fetched at app open can be hours old by the time the paywall shows, and
+// Stripe anchors the trial at checkout COMPLETION, so the freshest honest
+// date is "now + trial_days". Residual drift only exists while the payment
+// window itself sits open; it can only move the charge LATER (more free
+// days), and the reminder email states the subscription's real trial end.
+export function chargeInstant(quote: Quote): string {
+  return new Date(Date.now() + quote.trial_days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 /** remindDate resolves the reminder stop's calendar date from the quoted
  *  charge instant and the buyer's chosen offset — the picker always shows
  *  the real date beside the offset (the honest form of the control). */

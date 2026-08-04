@@ -17,4 +17,8 @@ export interface BoardProps {
   onCreate: (input: { account_id: string; hour: number; minute: number }) => Promise<void>;
   onMove: (id: string, hour: number, minute: number) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  /** False when this build/licence cannot save a schedule. Lanes then
+   *  explain what a fresh window is instead of inviting a click that the
+   *  daemon must refuse. */
+  canSchedule?: boolean;
 }
