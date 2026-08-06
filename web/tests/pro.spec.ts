@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { walkBenefits, walkProblem, walkToPrice, walkToPriceFromStart } from "./flow.ts";
 
 // The pro surfaces run entirely off the ?pro= license fixture + ?fixtures= board
 // fixture — no daemon license calls — so these are deterministic and network
@@ -19,51 +20,74 @@ const DAY = 24 * 60 * 60 * 1000;
 const gb = (daysFromNow: number) =>
   new Date(Date.now() + daysFromNow * DAY).toLocaleDateString("en-GB", { day: "numeric", month: "long" });
 
-test("the wall → the offer → the reminder screen → checkout handoff → activation facts", async ({
+test("the full ladder: problem → benefits → receipt → reminder → price → handoff → activation facts", async ({
   page,
 }) => {
   await page.goto("/?fixtures=1&pro=paywall");
 
-  // The wall: pain named, the switch shown happening (two fixture lanes +
-  // the ACTIVE badge), the free/paid split said out loud.
-  await expect(page.getByRole("heading", { name: "Never hit a wall mid-thought" })).toBeVisible();
+  // ① the wall: the pain named, on the product's own runway bar.
+  await expect(page.getByRole("heading", { name: /You know this moment/ })).toBeVisible();
+  await expect(page.getByTestId("edu-wall-lanes")).toBeVisible();
+  // No exit before the price: the corridor is one-way (SPEC-127 D9).
+  await expect(page.getByTestId("paywall-close")).toBeHidden();
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // ② the blind spot: three fixture identities, so the pair variant.
+  await expect(page.getByTestId("edu-blind-pair")).toBeVisible();
+  await expect(page.getByText(/3 Claude accounts are signed in on this Mac/)).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // ④ the switch, on the real fixture lanes.
+  await expect(page.getByRole("heading", { name: /It moves you/ })).toBeVisible();
   await expect(page.getByText("kai@example.dev").first()).toBeVisible();
   await expect(page.getByText("mira@example.dev")).toBeVisible();
-  // Both lanes carry the badge (the idle one invisible, for stable layout);
-  // the first lane is the active account at open.
   await expect(page.getByText("ACTIVE").first()).toBeVisible();
-  await expect(page.getByText(/Watching and switching by hand are free/)).toBeVisible();
-  await page.getByRole("button", { name: "Turn on the autopilot" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
 
-  // The offer: terms only — the reminder control moved to its own screen.
+  // ⑤ the scheduled window: the real board, and the bar that proves it.
+  await expect(page.getByTestId("edu-windows-board")).toBeVisible();
+  await expect(page.getByTestId("edu-windows-block")).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // ⑥ the receipt: the free column is honestly full, and THIS is where the
+  // trial is announced — the reminder screen would be a non-sequitur first.
+  await expect(page.getByTestId("receipt-table")).toBeVisible();
+  await expect(page.getByText("Watching and switching by hand stay free, forever.")).toBeVisible();
+  await expect(page.getByTestId("receipt-trial")).toContainText("free for 4 days");
+  // Still no price this far in.
+  await expect(page.getByText(/£9\.99/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // ⑦ the reminder: it names the trial it is about, states NO amount, and
+  // locks Continue until a day is actually chosen.
+  await expect(page.getByTestId("remind-headline")).toHaveText(`Your 4 free days end ${gb(4)}.`);
+  await expect(page.getByText(/£9\.99/)).toHaveCount(0);
+  await expect(page.getByTestId("remind-continue")).toBeDisabled();
+  await page.getByRole("button", { name: "2 days before" }).click();
+  await expect(page.getByText(`The amber dot is your reminder email — ${gb(2)}`)).toBeVisible();
+  await expect(page.getByTestId("remind-continue")).toBeEnabled();
+  await page.getByTestId("remind-continue").click();
+
+  // ⑧ the price: every consent fact on the one screen with the money button.
   await expect(page.getByRole("heading", { name: "Try the autopilot free for 4 days" })).toBeVisible();
+  await expect(page.getByText(/£9\.99/).first()).toBeVisible();
   await expect(page.getByText("No payment due today.")).toBeVisible();
   await expect(page.getByText(/charged once\. We cancel the renewal/i)).toBeVisible();
-  await expect(page.getByText("When should we remind you?")).toBeHidden();
+  await expect(page.getByText(/LINK\.COM\* LLMPILOT\.DEV/)).toBeVisible();
   // The removed rungs stay removed.
   await expect(page.getByRole("button", { name: "Start without a card" })).toBeHidden();
   await expect(page.getByRole("button", { name: "Keep using the free tools for now" })).toBeHidden();
 
-  // The reminder screen: the headline IS the confirmation — it restates the
-  // live choice as a real date and follows the control.
-  await page.getByRole("button", { name: "Try it free for 4 days" }).click();
-  await expect(page.getByText("BEFORE ANYTHING IS CHARGED")).toBeVisible();
-  await expect(page.getByTestId("remind-headline")).toHaveText(`We'll remind you on ${gb(3)}`);
-  await page.getByRole("button", { name: /2 days before/ }).click();
-  await expect(page.getByTestId("remind-headline")).toHaveText(`We'll remind you on ${gb(2)}`);
-  // The commit screen states the exact amount and the charge date.
-  await expect(page.getByText(`£9.99 once on ${gb(4)}`)).toBeVisible();
-
-  // The commit CTA lives HERE, not on the offer — and the reminder choice
-  // RIDES the checkout call (the fixture handoff echoes what was posted).
-  await page.getByRole("button", { name: "Start the 4-day free trial" }).click();
+  // Checkout starts HERE, and the reminder choice made two screens back
+  // RIDES the call (the fixture handoff echoes what was posted).
+  await page.getByTestId("checkout-start").click();
   await expect(page.getByTestId("checkout-handoff")).toBeVisible();
   await expect(page.getByTestId("checkout-handoff")).toHaveAttribute(
     "data-url",
     /pay\/full\?remind=2$/,
   );
 
-  // The silent activation lands over SSE — facts only, then the cockpit.
+  // ⑨ the silent activation lands over SSE — facts only, then the cockpit.
   await expect(page.getByText("Pro is on")).toBeVisible();
   await expect(page.getByText("Watching 3 accounts")).toBeVisible();
   await expect(page.getByText("Switches you before the wall")).toBeVisible();
@@ -71,50 +95,71 @@ test("the wall → the offer → the reminder screen → checkout handoff → ac
   await expect(page.getByText("alex@example.dev")).toBeVisible();
 });
 
-test("✕ surfaces the decline offer once; its commit CTA carries the lower price; the second ✕ closes for real", async ({
+test("✕ on the price surfaces the decline offer once; the second ✕ closes for real", async ({
   page,
 }) => {
   await page.goto("/?fixtures=1&pro=paywall");
-  await page.getByRole("button", { name: "Turn on the autopilot" }).click();
+  await walkToPriceFromStart(page);
   await expect(page.getByRole("heading", { name: "Try the autopilot free for 4 days" })).toBeVisible();
 
   // First ✕ is the reject: the standing lower price surfaces, honestly framed.
   await page.getByTestId("paywall-close").click();
   await expect(page.getByRole("heading", { name: "Same trial, lower price" })).toBeVisible();
-  await expect(page.getByText("£9.99")).toBeVisible(); // struck beside the new price
-
-  // The reminder screen commits at the declined price.
-  await page.getByRole("button", { name: "Try it free for 4 days" }).click();
+  await expect(page.getByText(/£9\.99/).first()).toBeVisible(); // struck beside the new price
   await expect(page.getByRole("button", { name: "Start the trial at £5.99" })).toBeVisible();
 
-  // Second ✕ (from the reminder screen) closes for real — free tools remain.
+  // Second ✕ closes for real — the free tools remain.
   await page.getByTestId("paywall-close").click();
   await expect(page.getByRole("button", { name: "Start the trial at £5.99" })).toBeHidden();
   await expect(page.getByText("alex@example.dev")).toBeVisible();
 });
 
-test("double ✕ on the offer closes without a re-trap", async ({ page }) => {
+test("the reminder day can still be changed after the price is seen", async ({ page }) => {
+  // Forward-only is not the same as trapped: the choice made on ⑦ is
+  // reachable again from ⑧ without leaving the flow.
   await page.goto("/?fixtures=1&pro=paywall");
-  await page.getByRole("button", { name: "Turn on the autopilot" }).click();
-  await page.getByTestId("paywall-close").click();
-  await expect(page.getByRole("heading", { name: "Same trial, lower price" })).toBeVisible();
-  await page.getByTestId("paywall-close").click();
-  await expect(page.getByRole("heading", { name: "Same trial, lower price" })).toBeHidden();
-  await expect(page.getByText("alex@example.dev")).toBeVisible();
+  await walkToPriceFromStart(page, 1);
+  await page.getByRole("button", { name: "Change the reminder day" }).click();
+  await expect(page.getByTestId("remind-headline")).toBeVisible();
+  await page.getByRole("button", { name: "2 days before" }).click();
+  await page.getByTestId("remind-continue").click();
+  await page.getByTestId("checkout-start").click();
+  await expect(page.getByTestId("checkout-handoff")).toHaveAttribute(
+    "data-url",
+    /pay\/full\?remind=2$/,
+  );
 });
 
-test("paused paywall (trial restart) states the full consent and walks the same reminder screen", async ({
+test("paused paywall (trial restart) states the full consent, keeps an exit, and walks to a commit", async ({
   page,
 }) => {
+  // A lapsed licence never enters the guided flow (that needs status
+  // "none"), so this is the banner-opened overlay — no education screens,
+  // and every screen keeps its own ✕ because the corridor rule is a
+  // property of onboarding, not of the paywall.
   await page.goto("/?fixtures=1&pro=paused");
   await page.getByRole("button", { name: "Turn on the autopilot" }).click();
   await expect(page.getByRole("heading", { name: /Your trial ended/ })).toBeVisible();
   // Restarting a card-upfront trial owes the same consent as the first one.
   await expect(page.getByText(/charged once\. We cancel the renewal/i)).toBeVisible();
   await expect(page.getByText("No payment due today.")).toBeVisible();
+  await expect(page.getByTestId("paywall-close")).toBeVisible();
   await page.getByRole("button", { name: "Try it free for 4 days" }).click();
   await expect(page.getByRole("group", { name: "When should we remind you?" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start the 4-day free trial" })).toBeVisible();
+  await page.getByRole("button", { name: "1 day before" }).click();
+  await page.getByTestId("remind-continue").click();
+  await expect(page.getByTestId("checkout-start")).toBeVisible();
+});
+
+test("a lapsed user can always leave the paused screen", async ({ page }) => {
+  // The 1.2.6 paused screen shipped with no ✕ at all. Harmless then; a trap
+  // now that SPEC-127 D9 has removed every other exit.
+  await page.goto("/?fixtures=1&pro=paused");
+  await page.getByRole("button", { name: "Turn on the autopilot" }).click();
+  await expect(page.getByRole("heading", { name: /Your trial ended/ })).toBeVisible();
+  await page.getByTestId("paywall-close").click();
+  await expect(page.getByRole("heading", { name: /Your trial ended/ })).toBeHidden();
+  await expect(page.getByText("alex@example.dev")).toBeVisible();
 });
 
 test("Settings → License shows the trial and cancels it in one click", async ({ page }) => {
@@ -175,21 +220,33 @@ async function noSeriousAxe(page: import("@playwright/test").Page) {
 // contrast defect) — and this also exercises the reduced-motion rendering
 // the motion budget requires.
 
-test("axe: the wall has no serious violations", async ({ page }) => {
+test("axe: the education screens have no serious violations", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/?fixtures=1&pro=paywall");
-  await expect(page.getByRole("heading", { name: "Never hit a wall mid-thought" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /You know this moment/ })).toBeVisible();
+  await noSeriousAxe(page);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByTestId(/^edu-blind-/)).toBeVisible();
+  await noSeriousAxe(page);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByTestId("edu-windows-board")).toBeVisible();
   await noSeriousAxe(page);
 });
 
-test("axe: offer and reminder screens have no serious violations", async ({ page }) => {
+test("axe: receipt, reminder and price screens have no serious violations", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/?fixtures=1&pro=paywall");
-  await page.getByRole("button", { name: "Turn on the autopilot" }).click();
-  await expect(page.getByText(/charged once\. We cancel the renewal/i)).toBeVisible();
+  await walkProblem(page);
+  await walkBenefits(page);
+  await expect(page.getByTestId("receipt-table")).toBeVisible();
   await noSeriousAxe(page);
-  await page.getByRole("button", { name: "Try it free for 4 days" }).click();
-  await expect(page.getByText("BEFORE ANYTHING IS CHARGED")).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByTestId("remind-headline")).toBeVisible();
+  await noSeriousAxe(page);
+  await page.getByRole("button", { name: "1 day before" }).click();
+  await page.getByTestId("remind-continue").click();
+  await expect(page.getByText(/charged once\. We cancel the renewal/i)).toBeVisible();
   await noSeriousAxe(page);
 });
 

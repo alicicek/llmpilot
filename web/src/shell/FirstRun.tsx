@@ -137,12 +137,13 @@ export function FirstRun({
   };
 
   return (
-    <div className="w-[520px] max-w-[92vw] animate-[rise-in_200ms_ease-out_both]">
+    <div className="w-[620px] max-w-[92vw] animate-[rise-in_200ms_ease-out_both]">
       {dots && <StepDots {...dots} />}
-      <h1 className="text-[15px] font-bold tracking-[-0.01em]">Your accounts</h1>
-      <p className="mt-1.5 text-[12px] leading-relaxed text-sec">
-        llmpilot found the Claude sign-ins on this Mac. Add them and it watches every limit live —
-        switching before a wall, fresh windows on your schedule.
+      <h1 className="text-[19px] font-semibold leading-[1.3] tracking-[-0.015em]">
+        Let's find <span className="text-acc-tx">yours</span>.
+      </h1>
+      <p className="mt-[9px] text-[12.5px] leading-relaxed text-sec">
+        llmpilot found these Claude sign-ins on this Mac. Add them and it watches every limit live.
       </p>
 
       {detected === null ? (

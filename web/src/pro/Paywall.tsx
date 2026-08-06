@@ -3,20 +3,32 @@ import type { License, Quote, QuoteEcho, Rung } from "../api.ts";
 import { StepDots } from "../shell/StepDots.tsx";
 import { licenseErrorCopy } from "./errors.ts";
 import { CloseButton } from "./CloseButton.tsx";
+import { Receipt } from "./Receipt.tsx";
 import { Remind } from "./Remind.tsx";
 import { chargeInstant, remindDate, rungCopy, STATEMENT_NOTE } from "./ladder.ts";
 
-// The reshaped paywall (owner 2026-07-31, reworked for SPEC 1.2.6): ONE
-// offer — the free trial that converts to £9.99 charged once, lifetime —
-// rendered from the server quote in two steps. The OFFER states the terms
-// (headline, timeline, no payment due today); its CTA advances to the
-// REMINDER screen (pro/Remind.tsx), which owns the reminder-timing choice
-// and the trial-starting CTA — checkout begins there. Pressing close IS the
-// decline: the first ✕ surfaces the standing £5.99 offer once, the second ✕
-// closes for real, from either step. Copy obeys VOICE.md; every figure comes
-// from the quote — no quote, no consent, no checkout. The reminder choice is
-// a REAL control: it rides the checkout call, lands on the license row, and
-// the worker's hourly sweep honors it.
+// The ask, in three steps (SPEC-127, reordered from 1.2.6's two):
+//
+//   ⑥ RECEIPT  free-vs-Pro boundary, and where the free trial is ANNOUNCED
+//   ⑦ REMINDER the timing choice, stating no amount
+//   ⑧ PRICE    every consent fact, and the only checkout button
+//
+// The price moved LAST and the reminder moved ahead of it. That makes ⑧ the
+// single screen carrying trial length, exact amount, charge date, reminder
+// date and statement descriptor — sitting immediately above the button that
+// spends money, rather than split across two screens as in 1.2.6.
+//
+// Pressing close on ⑧ IS the decline: the first ✕ surfaces the standing
+// lower offer once, the second closes for real. A lapsed licence never sees
+// that ladder — it is not being asked for the first time.
+//
+// Every figure comes from the server quote: no quote, no consent, no
+// checkout. The reminder choice is a REAL control — it rides the checkout
+// call, lands on the license row, and the worker's hourly sweep honors it.
+//
+// Inside the guided first run the ✕ appears on ⑧ ONLY (SPEC-127 D9: one-way
+// corridor). A paywall reopened later from the banner is not a guided run,
+// so every one of its screens keeps a ✕ — `dots` is what tells them apart.
 
 interface PaywallProps {
   license: License;
@@ -47,6 +59,11 @@ interface PaywallProps {
   dots?: { base: number; total: number };
   /** fleet size for the activation facts; 0/undefined omits the line. */
   accountsWatched?: number;
+  /** How many of those the autopilot can actually SWITCH to. Watch-only
+   *  (pinned) accounts are excluded: ⑥'s headroom claim is about the paid
+   *  feature, and counting accounts it can never switch to would overstate
+   *  exactly the thing being sold. */
+  accountsSwitchable?: number;
 }
 
 // bg-acc-tx (dark:bg-accent) keeps white text ≥4.5:1 at this size — the app's
@@ -142,13 +159,18 @@ function OfferCard({
   );
 }
 
-export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout, onRecover, onDismiss, caughtThisWeek, handoffURL, checkoutError, busy, dots, accountsWatched }: PaywallProps) {
-  // The decline walk: the offer → (first ✕) the standing lower price →
-  // (second ✕ or "No thanks") closed. ask advances offer → remind; the
-  // reminder screen owns checkout.
+export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout, onRecover, onDismiss, caughtThisWeek, handoffURL, checkoutError, busy, dots, accountsWatched, accountsSwitchable }: PaywallProps) {
+  // The decline walk: the price screen → (first ✕) the standing lower price
+  // → (second ✕ or "No thanks") closed. ask advances receipt → remind →
+  // price; the PRICE screen owns checkout.
   const [declined, setDeclined] = useState(false);
-  const [remindDays, setRemindDays] = useState(1);
-  const [ask, setAsk] = useState<"offer" | "remind">("offer");
+  // null until ⑦ is answered: the reminder is a real choice, not a default
+  // the buyer is assumed into.
+  const [remindDays, setRemindDays] = useState<number | null>(null);
+  const [ask, setAsk] = useState<"receipt" | "remind" | "price">("receipt");
+  // Inside the guided first run this paywall is the corridor's only door, so
+  // ⑥ and ⑦ carry no ✕. Reopened later (no step dots) every screen keeps one.
+  const guided = dots !== undefined;
   // The amount the buyer committed to, kept for the activation facts —
   // license state doesn't echo the price back.
   const [committedAmount, setCommittedAmount] = useState<string | null>(null);
@@ -156,9 +178,9 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
   const fullCopy = quote ? rungCopy("full", quote, locale) : null;
 
   // A quote whose TERMS changed (the worker's quote_stale refusal reloads
-  // it) bounces the ask back to the offer: re-consent must happen on the
-  // screen that states the new terms, never on the reminder screen
-  // mid-flight. Compared by terms, not object identity — useQuote re-quotes
+  // it) restarts the ask at ⑥: the buyer must walk the new terms rather than
+  // sit on a commit screen quoting the old ones. Compared by terms, not
+  // object identity — useQuote re-quotes
   // on a 15-minute TTL and every fetch parses fresh, so an identity compare
   // would throw the buyer off the commit screen on a routine re-quote. And
   // never while a payment window is open: yanking the handoff line invites
@@ -169,7 +191,7 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
     // Reloads pass through null (useQuote clears synchronously), so compare
     // against the last NON-null quote or the bounce never fires.
     if (quote && seenQuote.current && !handoffURL && termsSig(quote) !== termsSig(seenQuote.current))
-      setAsk("offer");
+      setAsk("receipt");
     if (quote) seenQuote.current = quote;
   }, [quote, handoffURL]);
 
@@ -185,14 +207,15 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
     if (accountsWatched && accountsWatched > 0)
       facts.push(`Watching ${accountsWatched} ${accountsWatched === 1 ? "account" : "accounts"}`);
     facts.push("Switches you before the wall");
-    if (charge) facts.push(`Reminder email — ${remindDate(charge, remindDays, locale)}`);
+    if (charge && remindDays !== null)
+      facts.push(`Reminder email — ${remindDate(charge, remindDays, locale)}`);
     if (chargeLong && committedAmount) facts.push(`${committedAmount} once — ${chargeLong}`);
     return (
       <section
         className="mx-auto w-[440px] max-w-[92vw] animate-[rise-in_200ms_ease-out_both] text-center"
         aria-live="polite"
       >
-        {dots && <StepDots step={dots.base + 2} total={dots.total} />}
+        {dots && <StepDots step={dots.base + 3} total={dots.total} />}
         <p className="text-[15px] font-semibold text-ok-tx">Pro is on</p>
         <ul className="mx-auto mt-3 w-[320px] max-w-full rounded-[11px] border border-hair bg-panel text-left">
           {facts.map((f) => (
@@ -224,42 +247,143 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
     declineCopy?.echo.amount_minor !== undefined &&
     fullCopy?.echo.amount_minor !== undefined &&
     declineCopy.echo.amount_minor < fullCopy.echo.amount_minor;
+  // Which reminder offsets this trial can even offer. trial_days is
+  // server-controlled, so a short enough trial leaves NOTHING to pick — and a
+  // question with no answers would lock its own Continue forever behind a
+  // suppressed toolbar. When there is no question, ⑦ is skipped.
+  const remindOffsets = quote ? [2, 1].filter((d) => d < quote.trial_days) : [];
+  const askReminder = () => {
+    if (remindOffsets.length > 0) {
+      setAsk("remind");
+      return;
+    }
+    setRemindDays(1);
+    setAsk("price");
+  };
+
+  // A lapsed licence is not being asked for the first time, so it never sees
+  // the decline ladder — its ✕ just closes.
   const close = () => {
-    if (!declined && hasLowerOffer) {
+    if (!paused && !declined && hasLowerOffer) {
       setDeclined(true);
-      setAsk("offer");
+      // Declining from ⑥ or ⑦ skips the reminder question, so landing on ⑧
+      // with no answer would render a live-looking button that spends
+      // nothing. Ask first, then price. (Only the reopened paywall reaches
+      // this: inside the guided flow ⑥ and ⑦ carry no ✕.)
+      if (remindDays === null) askReminder();
+      else setAsk("price");
     } else onDismiss?.();
   };
 
-  const commitCopy = quote
+  const copy = quote
     ? rungCopy(declined && !paused ? "discount_trial" : "full", quote, locale)
     : null;
-  if (ask === "remind" && commitCopy && quote) {
+
+  // ⑦ the reminder — states no amount, so it needs only the quote's dates.
+  if (ask === "remind" && quote) {
     return (
       <Remind
-        copy={commitCopy}
         quote={quote}
         remindDays={remindDays}
         onRemindDays={setRemindDays}
         locale={locale}
-        busy={busy}
-        handoffURL={handoffURL}
-        checkoutError={checkoutError}
-        onCommit={() => {
-          setCommittedAmount(commitCopy.amount);
-          onCheckout(commitCopy.rung, commitCopy.echo, remindDays);
-        }}
-        onBack={() => setAsk("offer")}
-        onClose={!paused && onDismiss ? close : undefined}
+        onContinue={() => setAsk("price")}
+        onClose={!guided && onDismiss ? close : undefined}
         dots={dots && { step: dots.base + 1, total: dots.total }}
       />
     );
   }
 
+  // ⑧ the price — every consent fact, and the only checkout button.
+  if (ask === "price" && copy && quote) {
+    return (
+      <section className="relative mx-auto w-[620px] max-w-[92vw] animate-[rise-in_200ms_ease-out_both]">
+        {dots && <StepDots step={dots.base + 2} total={dots.total} />}
+        {onDismiss && <CloseButton onClick={close} />}
+        <h2 className="text-[19px] font-semibold leading-[1.3] tracking-[-0.015em]">
+          {copy.headline}
+        </h2>
+        <p className="mt-[9px] text-[12.5px] leading-relaxed text-sec">{copy.lede}</p>
+
+        <OfferCard copy={copy} quote={quote} remindDays={remindDays ?? 1} locale={locale} />
+
+        {licenseErrorCopy(license.error_code) && (
+          <p className="mt-3 rounded-lg border border-hair bg-panel px-3 py-2 text-[11.5px] text-sec" role="alert">
+            {licenseErrorCopy(license.error_code)}
+          </p>
+        )}
+
+        {handoffURL && (
+          <p
+            className="mt-3 text-[11.5px] text-sec"
+            role="status"
+            data-testid="checkout-handoff"
+            data-url={handoffURL}
+          >
+            Checkout is open in the payment window — finish there, or start again here.
+          </p>
+        )}
+        {/* The remedy for the button that was pressed renders beside it: a
+            quote_stale refusal reloads the terms onto this same screen. */}
+        {checkoutError && (
+          <p className="mt-3 rounded-lg border border-hair bg-panel px-3 py-2 text-[11.5px] text-sec" role="alert" data-testid="checkout-error">
+            {checkoutError}
+          </p>
+        )}
+
+        <p className="mt-4 text-center text-[11.5px] text-sec">No payment due today.</p>
+        <div className="mt-2 flex flex-col gap-2.5">
+          <button
+            className={`w-full py-2.5 ${btnPrimary}`}
+            disabled={busy}
+            data-testid="checkout-start"
+            onClick={() => {
+              // Checkout must never post an assumed default, but refusing
+              // SILENTLY is worse than the default was: it renders a live
+              // button that does nothing. Send them to the question instead.
+              if (remindDays === null) {
+                askReminder();
+                return;
+              }
+              setCommittedAmount(copy.amount);
+              onCheckout(copy.rung, copy.echo, remindDays);
+            }}
+          >
+            {busy ? "Opening checkout…" : copy.cta}
+          </button>
+          <div className="flex items-center justify-between">
+            {/* The reminder day stays reachable even after a decline: losing
+                that route was half of what made the declined offer unbuyable.
+                "No thanks" only appears once there IS an answer to change. */}
+            {declined && onDismiss && remindDays !== null ? (
+              <button className={btnGhost} onClick={onDismiss}>
+                No thanks
+              </button>
+            ) : remindOffsets.length > 0 ? (
+              <button className={btnGhost} onClick={askReminder}>
+                {remindDays === null ? "Choose the reminder day" : "Change the reminder day"}
+              </button>
+            ) : (
+              <span />
+            )}
+            <button className={btnGhost} onClick={onRecover}>
+              Restore a purchase
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   if (paused) {
     return (
-      <section className="mx-auto w-[460px] max-w-[92vw] animate-[rise-in_200ms_ease-out_both]">
+      <section className="relative mx-auto w-[460px] max-w-[92vw] animate-[rise-in_200ms_ease-out_both]">
         {dots && <StepDots step={dots.base} total={dots.total} />}
+        {/* Every other paywall state has carried a ✕; this one never did
+            (1.2.6 shipped it that way). Harmless while other screens offered
+            exits — but SPEC-127 D9 removed those, so without this a lapsed
+            user has NO way out of the window but a reload. */}
+        {onDismiss && <CloseButton onClick={onDismiss} />}
         <h2 className="text-[15px] font-semibold">Your trial ended — the autopilot is paused</h2>
         <p className="mt-1.5 text-[12.5px] leading-relaxed text-sec">
           Your schedules are kept and nothing was deleted. Switching, statusline, and analytics keep
@@ -281,7 +405,7 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
             screen (with its control) follows before checkout. */}
         {fullCopy && quote ? (
           <>
-            <OfferCard copy={fullCopy} quote={quote} remindDays={remindDays} locale={locale} />
+            <OfferCard copy={fullCopy} quote={quote} remindDays={remindDays ?? 1} locale={locale} />
             <p className="mt-3 text-[11.5px] text-sec">No payment due today.</p>
           </>
         ) : quoteFailed ? (
@@ -302,7 +426,10 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
           <button
             className={btnPrimary}
             disabled={!fullCopy}
-            onClick={() => setAsk("remind")}
+            // Same skip path as the receipt: a restart quoted with a trial
+            // too short to offer any reminder offset would otherwise land on
+            // a screen whose Continue nothing on it can enable.
+            onClick={askReminder}
           >
             {fullCopy && quote ? `Try it free for ${quote.trial_days} days` : "Turn on the autopilot"}
           </button>
@@ -314,7 +441,6 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
     );
   }
 
-  const copy = quote ? rungCopy(declined ? "discount_trial" : "full", quote, locale) : null;
   if (!copy || !quote) {
     // No server quote means no honest terms to consent to — never render a
     // paywall that hides the price. Without terms there is no decline offer
@@ -354,47 +480,14 @@ export function Paywall({ license, quote, quoteFailed, onRetryQuote, onCheckout,
     );
   }
 
+  // ⑥ the receipt — the ask's entry point, and where the trial is announced.
   return (
-    <section className="relative mx-auto w-[460px] max-w-[92vw] animate-[rise-in_200ms_ease-out_both]">
-      {dots && <StepDots step={dots.base} total={dots.total} />}
-      {onDismiss && <CloseButton onClick={close} />}
-      <h2 className="text-[16px] font-semibold">{copy.headline}</h2>
-      <p className="mt-2 text-[12.5px] leading-relaxed text-sec">{copy.lede}</p>
-
-      <OfferCard copy={copy} quote={quote} remindDays={remindDays} locale={locale} />
-
-      {licenseErrorCopy(license.error_code) && (
-        <p className="mt-3 rounded-lg border border-hair bg-panel px-3 py-2 text-[11.5px] text-sec" role="alert">
-          {licenseErrorCopy(license.error_code)}
-        </p>
-      )}
-
-      {/* A quote_stale refusal bounces here with the reloaded terms — its
-          remedy line renders beside the terms being re-consented to. */}
-      {checkoutError && (
-        <p className="mt-3 rounded-lg border border-hair bg-panel px-3 py-2 text-[11.5px] text-sec" role="alert" data-testid="checkout-error">
-          {checkoutError}
-        </p>
-      )}
-
-      <p className="mt-4 text-center text-[11.5px] text-sec">No payment due today.</p>
-      <div className="mt-2 flex flex-col gap-2.5">
-        <button className={btnPrimary} onClick={() => setAsk("remind")}>
-          Try it free for {quote.trial_days} days
-        </button>
-        <div className="flex items-center justify-between">
-          {declined && onDismiss ? (
-            <button className={btnGhost} onClick={onDismiss}>
-              No thanks
-            </button>
-          ) : (
-            <span />
-          )}
-          <button className={btnGhost} onClick={onRecover}>
-            Restore a purchase
-          </button>
-        </div>
-      </div>
-    </section>
+    <Receipt
+      quote={quote}
+      accountsSwitchable={accountsSwitchable}
+      onContinue={askReminder}
+      onClose={!guided && onDismiss ? close : undefined}
+      dots={dots && { step: dots.base, total: dots.total }}
+    />
   );
 }

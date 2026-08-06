@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { walkBenefits, walkProblem } from "./flow.ts";
 
 // The guided tour points at REAL cockpit elements. This file drops the
 // config's "already seen the tour" storage so these run as a genuine
@@ -145,20 +146,38 @@ test("the guide follows the first-run flow rather than being consumed by it", as
   // — this is the path a new paying user actually takes.
   await mockDaemon(page, UNLICENSED);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Never hit a wall mid-thought" })).toBeVisible();
-  await page.getByTestId("wall-close").click();
+  await walkProblem(page);
+  await walkBenefits(page);
+  // No quote is mocked here, so the ask lands on its no-terms state — which
+  // still owes an exit, and is the flow's only one.
+  await page.getByTestId("paywall-close").click();
 
   await expect(page.getByText("one@example.dev")).toBeVisible();
   await expect(page.getByText("STEP 1 OF 4")).toBeVisible();
 });
 
-test("the wall keeps an exit of its own", async ({ page }) => {
+test("no screen before the ask offers a way out of the flow", async ({ page }) => {
+  // SPEC-127 D9, the owner's one-way corridor: the education screens commit
+  // the user forward. Every one of them still has a working Continue — that
+  // is the difference between a corridor and a trap — and the exit appears
+  // once the ask does.
   await mockDaemon(page, UNLICENSED);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Never hit a wall mid-thought" })).toBeVisible();
-  // The toolbar and board are suppressed behind it, so this ✕ is the only
-  // way out until two screens deeper.
-  await page.getByTestId("wall-close").click();
-  await expect(page.getByRole("heading", { name: "Never hit a wall mid-thought" })).toBeHidden();
+  await expect(page.getByRole("heading", { name: /You know this moment/ })).toBeVisible();
+  await expect(page.getByTestId("paywall-close")).toBeHidden();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByTestId(/^edu-blind-/)).toBeVisible();
+  await expect(page.getByTestId("paywall-close")).toBeHidden();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("heading", { name: /It moves you/ })).toBeVisible();
+  await expect(page.getByTestId("paywall-close")).toBeHidden();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByTestId("edu-windows-board")).toBeVisible();
+  await expect(page.getByTestId("paywall-close")).toBeHidden();
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // The ask: the door finally exists, and it works.
+  await expect(page.getByTestId("paywall-close")).toBeVisible();
+  await page.getByTestId("paywall-close").click();
   await expect(page.getByText("one@example.dev")).toBeVisible();
 });

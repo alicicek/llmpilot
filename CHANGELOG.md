@@ -4,6 +4,39 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.7] - 2026-08-06
+
+### Changed
+
+- **First run explains the problem before it asks you for anything.** It opens
+  on the moment you already know — a session limit filling up and stopping you
+  mid-thought — then shows the accounts already signed in on this Mac and the
+  headroom you could not see, and only then asks to add them. The autopilot
+  switching and the scheduled window each get a screen of their own, shown on
+  your own accounts once they are added.
+- **The price comes last, on the screen that takes the payment.** Everything
+  you are agreeing to — the trial length, the exact amount, the date you are
+  charged, the day we email you, and how it appears on your statement — now
+  sits together on the one screen with the payment button, instead of being
+  split across two.
+- **You choose when to be reminded before you see a price.** The reminder
+  screen states no amount; it names the day your free days end and asks which
+  day the email should land. Your choice carries through to the payment
+  screen, and it stays changeable from there.
+- **A short comparison of free and Pro** appears before the ask, with the free
+  column showing what it honestly is: watching every limit, switching by hand,
+  the statusline and analytics all stay free.
+
+### Fixed
+
+- **Add account no longer tells you to sign in to an account you are already
+  using.** A second folder holding an account llmpilot already watches is now
+  named as exactly that — one account means one limit, so the extra folder
+  adds no headroom — instead of reading as a signed-out account needing a
+  fresh login.
+- **The paused screen can be closed.** When a trial had ended, that screen
+  offered no way out except reloading the window.
+
 ## [1.2.6] - 2026-08-04
 
 ### Added

@@ -50,10 +50,15 @@ function openExternal(url: string) {
 function DetectedSection({
   detected,
   fleetDir,
+  fleetEmails,
   onChanged,
 }: {
   detected: DetectedDir[];
   fleetDir: string;
+  /** emails already in the fleet — a signed-out FOLDER whose account is live
+   *  in another folder is not a signed-out ACCOUNT, and must not be told to
+   *  sign in again. */
+  fleetEmails: readonly string[];
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState<{ dir: string; action: "adopt" | "move" } | null>(null);
@@ -129,12 +134,27 @@ function DetectedSection({
             ) : d.signed_in === false ? (
               // The folder names an account but holds no sign-in. Both verbs
               // refuse here, so neither is offered — the user gets the one
-              // thing that changes the state instead.
-              <p className="mt-1 text-[10.5px] leading-relaxed text-ter">
-                Signed out — this folder remembers the account, but its sign-in is gone. Run{" "}
-                <code className="font-semibold">claude</code> in that folder and sign in again to
-                use it here.
-              </p>
+              // thing that changes the state instead. WHICH thing depends on
+              // whether the account itself is gone: an identity already
+              // watched from another folder is signed in perfectly well, and
+              // telling its owner to "sign in again" reads as the app not
+              // knowing the account it is actively using (owner 2026-08-05).
+              // Case-folded: .claude.json can hold "Alex@Example.dev" for an
+              // account the fleet knows as "alex@example.dev", and a raw
+              // compare would fall back to the sign-in-again nonsense this
+              // branch exists to remove.
+              fleetEmails.some((e) => e.toLowerCase() === d.email.toLowerCase()) ? (
+                <p className="mt-1 text-[10.5px] leading-relaxed text-ter">
+                  A second folder for an account llmpilot already watches. One account means one
+                  limit, so adding this folder would add no headroom.
+                </p>
+              ) : (
+                <p className="mt-1 text-[10.5px] leading-relaxed text-ter">
+                  Signed out — this folder remembers the account, but its sign-in is gone. Run{" "}
+                  <code className="font-semibold">claude</code> in that folder and sign in again to
+                  use it here.
+                </p>
+              )
             ) : (
               <>
                 <p className="mt-1 text-[10px] leading-relaxed text-ter">
@@ -211,6 +231,8 @@ export function AddAccountDialog(props: {
   /** the fleet's own config dir — the one folder that is never listed, since
    *  the account signed in there is already switchable. */
   fleetDir: string;
+  /** every email the fleet already watches, in any folder. */
+  fleetEmails: readonly string[];
   onDetectedChange: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -349,6 +371,7 @@ export function AddAccountDialog(props: {
         <DetectedSection
           detected={props.detected}
           fleetDir={props.fleetDir}
+          fleetEmails={props.fleetEmails}
           onChanged={onDetectedChange.current}
         />
       )}

@@ -533,6 +533,7 @@ export default function App() {
               license={license}
               tour={showOnboarding}
               state={state}
+              detected={detected}
               quote={quote}
               quoteFailed={quoteFailed}
               onRetryQuote={reloadQuote}
@@ -601,6 +602,7 @@ export default function App() {
         onOpenChange={setAddOpen}
         detected={detected}
         fleetDir={(state?.accounts ?? []).find((a) => !a.pinned)?.config_dir ?? ""}
+        fleetEmails={(state?.accounts ?? []).map((a) => a.email).filter(Boolean)}
         onDetectedChange={refreshDetected}
       />
       <SettingsDialog
