@@ -1,0 +1,96 @@
+{
+  "module": "history-burn",
+  "source": {
+    "web": "web/src/history/burnMath.ts hoursWithActivityToday/hourlyRate",
+    "swift": "macos/Sources/Support/HistoryMath.swift BurnMath.hoursWithActivityToday/hourlyRate"
+  },
+  "note": "Each case carries a 'fn' selector alongside input/want. Pins the floor-at-1 rule (Math.max(1, hours)) even for an all-zero weekday row, and the weekday index rule: getUTCDay on `${todayDateStr}T00:00:00Z`, 0=Sunday, matching hour_weekday's own row indexing (7 rows, Sunday=0) — 2026-07-13 is a Monday (weekday 1), 2026-07-12 is a Sunday (weekday 0), 2026-07-10 is a Friday (weekday 5).",
+  "cases": [
+    {
+      "name": "hoursWithActivityToday: an all-zero weekday row still floors at 1, never 0",
+      "fn": "hoursWithActivityToday",
+      "input": {
+        "hourWeekday": [
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+        ],
+        "todayDateStr": "2026-07-13"
+      },
+      "want": 1
+    },
+    {
+      "name": "hoursWithActivityToday: three nonzero hours on a Friday (weekday index 5)",
+      "fn": "hoursWithActivityToday",
+      "input": {
+        "hourWeekday": [
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,100,0,0,0,0,50,0,0,0,0,0,0,0,1,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+        ],
+        "todayDateStr": "2026-07-10"
+      },
+      "want": 3
+    },
+    {
+      "name": "hoursWithActivityToday: Sunday maps to row index 0",
+      "fn": "hoursWithActivityToday",
+      "input": {
+        "hourWeekday": [
+          [0,0,0,0,0,0,0,0,10,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,20]
+        ],
+        "todayDateStr": "2026-07-12"
+      },
+      "want": 2
+    },
+    {
+      "name": "hourlyRate: mixed priced+unpriced cells over 3 activity hours",
+      "fn": "hourlyRate",
+      "input": {
+        "cellsToday": [
+          { "account_id": "a", "project": "llmpilot", "model": "claude-sonnet-5", "day": "2026-07-10", "messages": 10, "tokens": { "input": 2000000, "output": 1000000, "cache_creation": 500000, "cache_read": 4000000 } },
+          { "account_id": "a", "project": "llmpilot", "model": "claude-opus-4-8", "day": "2026-07-10", "messages": 5, "tokens": { "input": 100000, "output": 50000, "cache_creation": 0, "cache_read": 0 } }
+        ],
+        "activityHours": 3
+      },
+      "want": 8.608333333333333
+    },
+    {
+      "name": "hourlyRate: same cells at the floored 1-hour minimum equals the raw total",
+      "fn": "hourlyRate",
+      "input": {
+        "cellsToday": [
+          { "account_id": "a", "project": "llmpilot", "model": "claude-sonnet-5", "day": "2026-07-10", "messages": 10, "tokens": { "input": 2000000, "output": 1000000, "cache_creation": 500000, "cache_read": 4000000 } },
+          { "account_id": "a", "project": "llmpilot", "model": "claude-opus-4-8", "day": "2026-07-10", "messages": 5, "tokens": { "input": 100000, "output": 50000, "cache_creation": 0, "cache_read": 0 } }
+        ],
+        "activityHours": 1
+      },
+      "want": 25.825
+    },
+    {
+      "name": "hourlyRate: zero activity hours short-circuits to zero rather than dividing",
+      "fn": "hourlyRate",
+      "input": {
+        "cellsToday": [
+          { "account_id": "a", "project": "llmpilot", "model": "claude-sonnet-5", "day": "2026-07-10", "messages": 10, "tokens": { "input": 2000000, "output": 1000000, "cache_creation": 500000, "cache_read": 4000000 } }
+        ],
+        "activityHours": 0
+      },
+      "want": 0
+    }
+  ]
+}

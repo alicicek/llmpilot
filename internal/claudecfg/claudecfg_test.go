@@ -179,3 +179,43 @@ func TestVersionDetection(t *testing.T) {
 		})
 	}
 }
+
+// TierLabel maps ONLY the raw vocabulary it knows; anything else is "" —
+// a surface must never show a guessed tier (owner 2026-08-12).
+func TestTierLabelMapsKnownVocabularyAndNeverGuesses(t *testing.T) {
+	cases := map[string]string{
+		"default_claude_max_20x": "Max 20×",
+		"default_claude_max_5x":  "Max 5×",
+		"default_claude_pro":     "Pro",
+		"default_claude":         "",
+		"":                       "",
+		"some_future_tier":       "",
+	}
+	for raw, want := range cases {
+		a := OAuthAccount{OrganizationRateLimitTier: raw}
+		if got := a.TierLabel(); got != want {
+			t.Errorf("TierLabel(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// TierMultiplier: the same never-guess rule as TierLabel — the adaptive
+// ceiling treats 0 as "safest", so an unknown raw value maps to 0, never
+// to a flattering multiple (owner 2026-08-13). Team/Enterprise raw values
+// are unobserved as of 2026-08-13 and must land on 0.
+func TestTierMultiplierMapsKnownVocabularyAndNeverGuesses(t *testing.T) {
+	cases := map[string]int{
+		"default_claude_max_20x": 20,
+		"default_claude_max_5x":  5,
+		"default_claude_pro":     1,
+		"default_claude":         0,
+		"":                       0,
+		"team_premium_something": 0,
+	}
+	for raw, want := range cases {
+		a := OAuthAccount{OrganizationRateLimitTier: raw}
+		if got := a.TierMultiplier(); got != want {
+			t.Errorf("TierMultiplier(%q) = %d, want %d", raw, got, want)
+		}
+	}
+}

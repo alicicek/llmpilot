@@ -52,6 +52,14 @@ struct RunwayBar: View {
                 .frame(width: 92, alignment: .leading)
                 .lineLimit(1)
         }
+        // The bar itself carries no text — without this, VO reads four
+        // separate stops (label, an unlabeled fill shape, a ring, a
+        // percent). One element, label from the visible short label,
+        // value from the visible percent (tabular source, same string
+        // the "N%" Text already renders).
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(bucket.shortLabel)
+        .accessibilityValue("\(bucket.percentInt)%")
     }
 }
 

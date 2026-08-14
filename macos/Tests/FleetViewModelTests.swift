@@ -37,6 +37,18 @@ final class FleetViewModelTests: XCTestCase {
         XCTAssertEqual(model.autopilotLine, "autopilot on · switches at 85%")
     }
 
+    func testAutopilotLineDefaultConfigIsAdaptiveNeverAFabricated90() async throws {
+        // A default install has NO threshold_percent on the wire — that is
+        // adaptive mode, and the menu bar must not invent a "90%" the
+        // autopilot no longer uses (review P1, owner 2026-08-13).
+        let api = StubAPI()
+        api.stateResult = .success(Fixtures.twoAccounts())
+        api.configResult = DaemonConfig(autopilot: .init(disabled: false, thresholdPercent: nil))
+        let model = makeModel(api)
+        try await model.refresh()
+        XCTAssertEqual(model.autopilotLine, "autopilot on · switches before the wall")
+    }
+
     func testRefreshFailureIsDown() async {
         let api = StubAPI()
         api.stateResult = .failure(DaemonError.down)
@@ -199,8 +211,7 @@ final class FleetViewModelTests: XCTestCase {
         model.startupProbeNanos = 1_000_000 // keep the probe loop fast
         await model.ensureRunning()
         XCTAssertEqual(model.status, .down)
-        let err = model.lastError ?? ""
-        XCTAssertTrue(err.contains("never became reachable"), err)
+        XCTAssertEqual(model.lastError, FleetViewModel.daemonUnreachableError)
     }
 
     func testEnsureRunningClearsErrorOnceReachable() async {
@@ -318,6 +329,10 @@ final class FleetViewModelTests: XCTestCase {
         let model = makeModel(api)
         model.bundlePath = "/Applications/llmpilot.app"
         model.daemonExecutable = { exe }
+        // Hermetic against ambient env: these tests prove the bounce paths,
+        // so the sandbox interlock must be off regardless of the shell that
+        // launched xcodebuild. The interlock test flips it on explicitly.
+        model.sandboxInterlocked = false
         return model
     }
 
@@ -375,6 +390,31 @@ final class FleetViewModelTests: XCTestCase {
                        "a daemon whose executable was deleted under it is what an update leaves behind")
         await model.restartStaleDaemon()
         XCTAssertEqual(restarts.value, 1, "one bounce per launch — retrying would loop")
+    }
+
+    // launchctl ignores $HOME: from inside an e2e sandbox the probed gui
+    // domain is still the developer's REAL daemon, and kickstart -k is a
+    // SIGKILL into the credential-write hazard window. Proven live
+    // 2026-08-07: an e2e-native.sh run bounced the machine's production
+    // daemon (pid 7587) before this interlock existed.
+    // Pin the DEFAULT, not just the seam: under XCTest the interlock must be
+    // on with no test setting it — deleting the XCTestConfigurationFilePath
+    // clause from FleetViewModel would leave every other test green while
+    // xcodebuild test resumed bouncing the dev machine's live daemon.
+    func testInterlockDefaultsOnUnderXCTest() {
+        XCTAssertTrue(makeModel(StubAPI()).sandboxInterlocked,
+                      "hosted test processes must default to interlocked")
+    }
+
+    func testSandboxedRunNeverBouncesTheRealDaemon() async throws {
+        let model = staleModel(.executableGone) // the strongest "stale" signal
+        model.sandboxInterlocked = true
+        let restarts = Counter()
+        model.restartAgent = { () -> String? in restarts.bump(); return nil }
+        try await model.refresh()
+        await model.restartStaleDaemon()
+        XCTAssertEqual(restarts.value, 0,
+                       "LLMPILOT_TEST runs must never touch the real launchd domain")
     }
 
     func testParsesThePIDLaunchctlPrints() {

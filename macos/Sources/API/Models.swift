@@ -18,6 +18,10 @@ struct DaemonState: Decodable, Equatable {
     /// binary on disk: an in-place update replaces the bundle while the old
     /// process keeps running. nil from a daemon too old to report it.
     var version: String? = nil
+    /// Plan-ordered switch/rotation history (web/src/api.ts DaemonEvent).
+    /// Empty array when none — an older daemon or a fresh install must still
+    /// decode.
+    var events: [DaemonEvent]
     var asOf: Date
 
     enum CodingKeys: String, CodingKey {
@@ -27,12 +31,13 @@ struct DaemonState: Decodable, Equatable {
         case stash
         case license = "license_status"
         case version
+        case events
         case asOf = "as_of"
     }
 
     init(accounts: [AccountState], activeID: String?, schedules: [Schedule],
          stash: [StashEntry] = [], license: String? = nil,
-         version: String? = nil, asOf: Date)
+         version: String? = nil, events: [DaemonEvent] = [], asOf: Date)
     {
         self.accounts = accounts
         self.activeID = activeID
@@ -40,6 +45,7 @@ struct DaemonState: Decodable, Equatable {
         self.stash = stash
         self.license = license
         self.version = version
+        self.events = events
         self.asOf = asOf
     }
 
@@ -54,11 +60,29 @@ struct DaemonState: Decodable, Equatable {
         stash = try c.decodeIfPresent([StashEntry].self, forKey: .stash) ?? []
         license = try c.decodeIfPresent(String.self, forKey: .license)
         version = try c.decodeIfPresent(String.self, forKey: .version)
+        events = try c.decodeIfPresent([DaemonEvent].self, forKey: .events) ?? []
         asOf = try c.decode(Date.self, forKey: .asOf)
     }
 
     /// A trialing or lifetime grant is the only "Pro is on" state.
     var licensed: Bool { license == "trialing" || license == "lifetime" }
+}
+
+/// One fleet-history entry (web/src/api.ts `DaemonEvent`): a switch,
+/// rotation, or other plan-ordered occurrence the daemon recorded. `kind` is
+/// an OPEN string passed through from the daemon — unknown kinds render,
+/// never error (same rule as `Bucket.kind`).
+struct DaemonEvent: Decodable, Equatable {
+    var at: Date
+    var kind: String
+    var accountID: String?
+    var message: String
+    var late: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case at, kind, message, late
+        case accountID = "account_id"
+    }
 }
 
 struct AccountState: Decodable, Equatable, Identifiable {
@@ -71,10 +95,18 @@ struct AccountState: Decodable, Equatable, Identifiable {
     /// The daemon's authoritative stale mark: the stored token expired while
     /// idle, so `snapshot` is frozen at last-known until the account wakes.
     var stale: Bool?
+    /// The account's own config dir (pilotapi/types.go `config_dir`).
+    /// Global-swappable fleet accounts all carry the GLOBAL dir here
+    /// (internal/daemon/server.go:592-593); pinned/watched accounts carry
+    /// their own folder. The Add-account sheet uses the first unpinned
+    /// account's dir — i.e. the global dir — to hide the fleet's OWN folder
+    /// from the detected list (web App.tsx:604 fleetDir).
+    var configDir: String?
 
     enum CodingKeys: String, CodingKey {
         case id, label, email, pinned, snapshot, stale
         case tokenNote = "token_note"
+        case configDir = "config_dir"
     }
 }
 
@@ -154,19 +186,33 @@ struct DetectedDir: Decodable, Equatable, Identifiable {
     /// predate the field — absence decodes to false, never fails the row
     /// (a field the emitter omits must still decode).
     var moved: Bool
+    /// false only when the dir is CONFIRMED to hold no credential: it still
+    /// names an account in .claude.json, but the sign-in itself is gone, so
+    /// adopt and move can only refuse (mirrors web/src/api.ts DetectedDir).
+    /// Older daemons omit it — absent reads as signed in, the pre-existing
+    /// behavior (internal/daemon/server.go:662-665).
+    var signedIn: Bool?
+    /// The subscription tier's DISPLAY label ("Max 20×", "Pro") — mapped
+    /// daemon-side by the claudecfg adapter, which owns the raw vocabulary.
+    /// Absent when unknown (older daemons, unrecognized tier): a surface
+    /// shows nothing rather than a guess (owner 2026-08-12).
+    var tier: String?
 
     var id: String { configDir }
 
     enum CodingKeys: String, CodingKey {
         case configDir = "config_dir"
-        case email, registered, moved
+        case email, registered, moved, tier
+        case signedIn = "signed_in"
     }
 
-    init(configDir: String, email: String, registered: Bool, moved: Bool = false) {
+    init(configDir: String, email: String, registered: Bool, moved: Bool = false, signedIn: Bool? = nil, tier: String? = nil) {
         self.configDir = configDir
         self.email = email
         self.registered = registered
         self.moved = moved
+        self.signedIn = signedIn
+        self.tier = tier
     }
 
     init(from decoder: Decoder) throws {
@@ -175,6 +221,8 @@ struct DetectedDir: Decodable, Equatable, Identifiable {
         email = try c.decodeIfPresent(String.self, forKey: .email) ?? ""
         registered = try c.decodeIfPresent(Bool.self, forKey: .registered) ?? false
         moved = try c.decodeIfPresent(Bool.self, forKey: .moved) ?? false
+        signedIn = try c.decodeIfPresent(Bool.self, forKey: .signedIn)
+        tier = try c.decodeIfPresent(String.self, forKey: .tier)
     }
 }
 

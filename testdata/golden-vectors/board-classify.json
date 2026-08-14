@@ -1,0 +1,103 @@
+{
+  "module": "board-classify",
+  "source": {
+    "web": "web/src/board/classify.ts",
+    "swift": "macos/Sources/Support/BoardClassify.swift"
+  },
+  "note": "classify's priority order is blocked > ran > (charging|missed) > upcoming, with `reset <= now` and `trigger <= now` both INCLUSIVE boundaries; inWindow itself is EXCLUSIVE at the start (a trigger exactly at mid.start opened the window, so it is not blocked by it). chipDot: chained always wins (green), regardless of the chip class. chipCopy's blocked branch computes retries=fmtHM(mid.end) and landsAt=fmtHM((mid.end + WINDOW_HOURS*60) % DAY_MIN).",
+  "cases": [
+    {
+      "name": "laneSchedules: sorts by reset and tags the chained pair (trigger === prev reset)",
+      "fn": "laneSchedules",
+      "input": {
+        "accountId": "acc",
+        "schedules": [
+          { "id": "a", "account_id": "acc", "hour": 0, "minute": 0 },
+          { "id": "b", "account_id": "acc", "hour": 5, "minute": 0 }
+        ]
+      },
+      "want": [
+        { "id": "a", "trigger": 0, "reset": 300, "chained": false },
+        { "id": "b", "trigger": 300, "reset": 600, "chained": true }
+      ]
+    },
+    {
+      "name": "classify: trigger === now, chained -> charging (inclusive boundary)",
+      "fn": "classify",
+      "input": { "ls": { "trigger": 300, "reset": 600, "chained": true }, "nowMinutes": 300, "mid": null },
+      "want": "charging"
+    },
+    {
+      "name": "classify: reset === now -> ran, outranks the trigger check (inclusive boundary)",
+      "fn": "classify",
+      "input": { "ls": { "trigger": 60, "reset": 360, "chained": false }, "nowMinutes": 360, "mid": null },
+      "want": "ran"
+    },
+    {
+      "name": "classify: exclusive window start — trigger === mid.start is NOT blocked (it opened the window)",
+      "fn": "classify",
+      "input": { "ls": { "trigger": 300, "reset": 600, "chained": false }, "nowMinutes": 200, "mid": { "start": 300, "end": 600 } },
+      "want": "upcoming"
+    },
+    {
+      "name": "classify: chained -> charging (same trigger/reset as the missed case, chained flips the outcome)",
+      "fn": "classify",
+      "input": { "ls": { "trigger": 0, "reset": 300, "chained": true }, "nowMinutes": 50, "mid": null },
+      "want": "charging"
+    },
+    {
+      "name": "classify: not chained -> missed (same trigger/reset as the charging case above)",
+      "fn": "classify",
+      "input": { "ls": { "trigger": 0, "reset": 300, "chained": false }, "nowMinutes": 50, "mid": null },
+      "want": "missed"
+    },
+    {
+      "name": "chipDot: chained + blocked -> green (chained wins over the amber-risk class)",
+      "fn": "chipDot",
+      "input": { "cls": "blocked", "chained": true },
+      "want": "green"
+    },
+    {
+      "name": "chipDot: blocked, not chained -> amber",
+      "fn": "chipDot",
+      "input": { "cls": "blocked", "chained": false },
+      "want": "amber"
+    },
+    {
+      "name": "chipCopy: ran (chained trigLine variant)",
+      "fn": "chipCopy",
+      "input": { "ls": { "trigger": 0, "reset": 300, "chained": true }, "cls": "ran", "mid": null },
+      "want": { "suffix": "✓︎ ran today", "suffixTone": "ok", "trigLine": "⛓︎ 00:00 · rides the reset", "trigTone": "ter" }
+    },
+    {
+      "name": "chipCopy: blocked — retries=fmtHM(mid.end), landsAt=fmtHM(mid.end + WINDOW_HOURS*60)",
+      "fn": "chipCopy",
+      "input": { "ls": { "trigger": 120, "reset": 420, "chained": false }, "cls": "blocked", "mid": { "start": 100, "end": 250 } },
+      "want": { "suffix": "today ≈ 09:10 ⚠︎", "suffixTone": "amber", "trigLine": "▲︎ 02:00 → blocked today · retries 04:10", "trigTone": "amber" }
+    },
+    {
+      "name": "chipCopy: missed",
+      "fn": "chipCopy",
+      "input": { "ls": { "trigger": 0, "reset": 300, "chained": false }, "cls": "missed", "mid": null },
+      "want": { "suffix": "from tomorrow", "suffixTone": "sec", "trigLine": "▲︎ 00:00 · missed today", "trigTone": "amber" }
+    },
+    {
+      "name": "chipCopy: charging (suffix null)",
+      "fn": "chipCopy",
+      "input": { "ls": { "trigger": 0, "reset": 300, "chained": true }, "cls": "charging", "mid": null },
+      "want": { "suffix": null, "suffixTone": "ok", "trigLine": "⛓︎ 00:00 · rides the reset", "trigTone": "ter" }
+    },
+    {
+      "name": "chipCopy: upcoming, chained (suffix null, chained trigLine)",
+      "fn": "chipCopy",
+      "input": { "ls": { "trigger": 0, "reset": 300, "chained": true }, "cls": "upcoming", "mid": null },
+      "want": { "suffix": null, "suffixTone": "sec", "trigLine": "⛓︎ 00:00 · rides the reset", "trigTone": "ter" }
+    },
+    {
+      "name": "chipCopy: upcoming, not chained (suffix 'assumes idle')",
+      "fn": "chipCopy",
+      "input": { "ls": { "trigger": 0, "reset": 300, "chained": false }, "cls": "upcoming", "mid": null },
+      "want": { "suffix": "assumes idle", "suffixTone": "sec", "trigLine": "▲︎ 00:00", "trigTone": "ter" }
+    }
+  ]
+}

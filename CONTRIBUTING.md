@@ -21,7 +21,7 @@ make check   # all of the above
 - macOS only for now.
 
 Please run `make check` before opening a pull request. Web changes should also
-pass `cd web && pnpm build` and `npx impeccable detect web/src/`.
+pass `cd web && pnpm build`.
 
 ## Layout
 

@@ -49,20 +49,52 @@ func (d *Daemon) maybeRotate(ctx context.Context) {
 	d.mu.Unlock()
 	cands := make([]pilotapi.Candidate, 0, len(accs))
 	for _, a := range accs {
-		// Never nominate an unswitchable TARGET: a quarantined account's
-		// credential provably cannot refresh (switching to it strands the
-		// user on a dead session), and Swap refuses pinned accounts outright.
+		// Never pass an unusable TARGET: a quarantined account's credential
+		// provably cannot refresh — switching to it strands the user on a
+		// dead session, and naming it as headroom would be a false claim.
 		// The ACTIVE account stays in the set either way — the policy needs
-		// it to decide to rotate AWAY.
-		if a.ID != activeID && (quarantined[a.ID] || (d.Pinned != nil && d.Pinned(a))) {
+		// it to decide to rotate AWAY. PINNED lanes stay in too, FLAGGED:
+		// the policy never nominates one (and the guard below refuses if it
+		// did), but its hold branch must see their usage to name a
+		// watch-only lane that holds the fleet's only headroom (LAYER 2).
+		if a.ID != activeID && quarantined[a.ID] {
 			continue
+		}
+		// Derived, same as State — the registry never stores Pinned for
+		// real accounts; `a` is a loop copy, nothing writes back. NEVER
+		// flagged on the ACTIVE lane: the policy reads a pinned active as
+		// "don't touch" and goes silent at 100% (no rotation, no hold, no
+		// nudge — reviewer P1), while rotating AWAY only writes the global
+		// slot, which is safe. Production hits this when the watch-only
+		// account's email is also signed into the default dir.
+		if a.ID != activeID && d.Pinned != nil && d.Pinned(a) {
+			a.Pinned = true
 		}
 		snap, err := d.Store.Snapshot(a.ID)
 		if err != nil {
 			d.Log.Warn("load snapshot", "account", a.ID, "err", err)
 			continue
 		}
-		cands = append(cands, pilotapi.Candidate{Account: a, Snapshot: snap, Stale: stale[a.ID]})
+		cand := pilotapi.Candidate{Account: a, Snapshot: snap, Stale: stale[a.ID]}
+		// Adaptive time-to-wall inputs (owner 2026-08-13): smoothed burn
+		// per bucket from the history ring — absent when the evidence bars
+		// aren't met, and the policy then falls back to the fixed
+		// threshold. Tier only for the ACTIVE lane (see the field's doc).
+		if snap != nil {
+			burn := map[string]float64{}
+			for _, b := range snap.Buckets {
+				if rate, ok := d.burnRate(a.ID, b.Kind, b.Scope, time.Now()); ok {
+					burn[pilotapi.BucketKey(b.Kind, b.Scope)] = rate
+				}
+			}
+			if len(burn) > 0 {
+				cand.Burn = burn
+			}
+		}
+		if a.ID == activeID && d.TierMultiplier != nil {
+			cand.TierMultiplier = d.TierMultiplier(ctx, a)
+		}
+		cands = append(cands, cand)
 	}
 	d.mu.Lock()
 	last := d.lastSwitch
@@ -83,6 +115,17 @@ func (d *Daemon) maybeRotate(ctx context.Context) {
 		}
 		d.holdOnce(ctx, "hold|"+dec.From.ID+"|"+kind,
 			store.Event{Kind: "autopilot_hold", AccountID: dec.From.ID, Message: dec.Reason})
+		d.noticeWatchOnlyHeadroom(ctx, dec)
+		return
+	}
+	if dec.To.Pinned || (d.Pinned != nil && d.Pinned(dec.To)) {
+		// Structural, not conventional (the same closure as the stale
+		// routing below): Swap refuses pinned accounts, so a policy that
+		// nominates one anyway must hold here — never burn the cooldown on
+		// a switch that can only fail.
+		d.holdOnce(ctx, "pinned-target|"+dec.To.ID,
+			store.Event{Kind: "autopilot_hold", AccountID: dec.To.ID,
+				Message: dec.Reason + " — held: " + dec.To.Label + " is watch-only"})
 		return
 	}
 	d.mu.Lock()
@@ -154,6 +197,83 @@ func (d *Daemon) maybeRotate(ctx context.Context) {
 		d.NotifyUser(ctx, "llmpilot", ev.Message)
 	}
 	d.Log.Info("autopilot", "event", ev.Kind, "msg", ev.Message)
+}
+
+// noticeWatchOnlyHeadroom is LAYER 2 of the watch-only safety net (owner
+// 2026-08-12): when a hold reports that the fleet's only headroom sits on a
+// watch-only (pinned) lane, nudge the user — moving the lane into the fleet
+// is a consented two-click action the autopilot must never take itself.
+// Deduped per account, 24h-class: in-memory for the common path, the event
+// log as the durable memory across restarts (checkUnregistered's
+// discipline). The nudge ends on its own once the lane is moved — a
+// switchable lane with headroom means the fleet switches instead of holding.
+func (d *Daemon) noticeWatchOnlyHeadroom(ctx context.Context, dec *pilotapi.Decision) {
+	lane := dec.PinnedHeadroom
+	if lane.ID == "" {
+		return
+	}
+	// The banner is a user-facing CLAIM, so verify it against daemon-owned
+	// state at banner time, never on the policy's word alone (the same
+	// structural discipline as the pinned-target guard): the lane must
+	// still exist in the registry and still be pinned — a "Move into the
+	// fleet" landing mid-poll makes the in-flight decision's claim false —
+	// and a stale or quarantined credential is not headroom. Verified
+	// BEFORE the dedupe stamp: a refused banner must never spend the 24h
+	// window.
+	// A nil d.Pinned skips the pin re-check but is unreachable through
+	// production wiring: without the rule, line ~70 never flags a candidate,
+	// the policy's pinned scan can never select one, and PinnedHeadroom
+	// stays zero — only a scripted test policy gets here. Do not "harden"
+	// it into a refusal; nil means unverifiable, not false.
+	fresh, ok := d.accountByID(lane.ID)
+	if !ok || (d.Pinned != nil && !d.Pinned(fresh)) {
+		return
+	}
+	d.mu.Lock()
+	_, laneStale := d.stale[lane.ID]
+	_, laneQuarantined := d.quarantine[lane.ID]
+	d.mu.Unlock()
+	if laneStale || laneQuarantined {
+		return
+	}
+	now := time.Now()
+	d.mu.Lock()
+	if last, seen := d.lastWatchOnly[lane.ID]; seen && now.Sub(last) < 24*time.Hour {
+		d.mu.Unlock()
+		return
+	}
+	d.lastWatchOnly[lane.ID] = now // test-and-set: concurrent polls can't double-notify
+	d.mu.Unlock()
+	// 500, not the unregistered-notice's 50: this fleet also generates most
+	// of the log volume (thresholds, holds, switches), and a nudge evicted
+	// from the tail inside its own 24h window would re-banner after a
+	// restart. Events reads the whole file either way — the tail size is
+	// free.
+	if evs, err := d.Store.Events(500); err == nil {
+		for _, e := range evs {
+			if e.Kind == "watch_only_headroom" && e.AccountID == lane.ID && now.Sub(e.At) < 24*time.Hour {
+				// Notified before a restart: remember the REAL time so the
+				// next nudge lands 24h after that one, not 24h after boot.
+				d.mu.Lock()
+				d.lastWatchOnly[lane.ID] = e.At
+				d.mu.Unlock()
+				return
+			}
+		}
+	}
+	// Named from the resolved registry row, not the in-flight decision —
+	// the row is the daemon's own truth (reviewer N2).
+	msg := fresh.Label + " has headroom, but it's watch-only — move it into the fleet and the autopilot can use it"
+	if err := d.Store.AppendEvent(store.Event{Kind: "watch_only_headroom", AccountID: lane.ID, Message: msg}); err != nil {
+		// The event is the durable dedupe memory — losing it risks a repeat
+		// nudge after a restart, never silence. Notify anyway.
+		d.Log.Error("append event", "err", err)
+	}
+	d.notify(ctx)
+	if d.NotifyUser != nil {
+		d.NotifyUser(ctx, "llmpilot", msg)
+	}
+	d.Log.Info("watch-only headroom notice", "account", lane.ID)
 }
 
 // holdOnce surfaces one autopilot_hold event per distinct reason CLASS (key)

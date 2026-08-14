@@ -1,0 +1,20 @@
+{
+  "module": "board-schedule",
+  "source": {
+    "web": "web/src/schedule.ts",
+    "swift": "macos/Sources/Support/BoardSchedule.swift"
+  },
+  "note": "Constants: WINDOW_HOURS=5, DAY_MIN=1440, MIN_GAP_MIN=315, SNAP_MIN=15. nextBookableReset cases pin: (1) the >=315 acceptance boundary (not a strict >), (2) floorRaw NOT modded before the ceil-snap loop start (the midnight-wrap case), and (3) null only when a FULL day's scan finds no slot.",
+  "cases": [
+    { "name": "triggerMinutes: basic hour/minute conversion", "fn": "triggerMinutes", "input": { "hour": 9, "minute": 30 }, "want": 570 },
+    { "name": "circularGap: wrap seam near midnight (0 vs 1439)", "fn": "circularGap", "input": { "a": 0, "b": 1439 }, "want": 1 },
+    { "name": "resetMinutes: midnight wrap (23:00 trigger -> 04:00 reset)", "fn": "resetMinutes", "input": { "hour": 23, "minute": 0 }, "want": 240 },
+    { "name": "fmtHM: negative minutes wrap to previous day", "fn": "fmtHM", "input": { "minutes": -15 }, "want": "23:45" },
+    { "name": "fmtHM: minutes beyond one day wrap forward", "fn": "fmtHM", "input": { "minutes": 1500 }, "want": "01:00" },
+    { "name": "nextBookableReset: empty lane books at the floor", "fn": "nextBookableReset", "input": { "nowMinutes": 0, "existingResets": [], "activeEndMinutes": null }, "want": { "hour": 5, "minute": 0 } },
+    { "name": "nextBookableReset: full lane (4 evenly-spaced resets) returns null", "fn": "nextBookableReset", "input": { "nowMinutes": 0, "existingResets": [0, 360, 720, 1080], "activeEndMinutes": null }, "want": null },
+    { "name": "nextBookableReset: mid-window account floors on activeEnd+window, not now+window", "fn": "nextBookableReset", "input": { "nowMinutes": 100, "existingResets": [], "activeEndMinutes": 200 }, "want": { "hour": 8, "minute": 30 } },
+    { "name": "nextBookableReset: exact 315-minute gap is accepted (>=, not >)", "fn": "nextBookableReset", "input": { "nowMinutes": 1, "existingResets": [0], "activeEndMinutes": null }, "want": { "hour": 5, "minute": 15 } },
+    { "name": "nextBookableReset: floor beyond one day wraps via modulo, not pre-clamped", "fn": "nextBookableReset", "input": { "nowMinutes": 1200, "existingResets": [], "activeEndMinutes": null }, "want": { "hour": 1, "minute": 0 } }
+  ]
+}

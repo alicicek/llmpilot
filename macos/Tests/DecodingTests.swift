@@ -142,6 +142,20 @@ final class DecodingTests: XCTestCase {
         let dirs = try DaemonDates.decoder().decode([DetectedDir]?.self, from: Data("null".utf8))
         XCTAssertEqual(dirs ?? [], [])
     }
+
+    /// The tier display label rides the wire when the daemon knows it and
+    /// is simply absent otherwise (older daemons, unrecognized raw tier) —
+    /// absence must decode to nil, never fail the row (owner 2026-08-12).
+    func testDetectDecodesTierWhenPresentAndNilWhenAbsent() throws {
+        let json = """
+        [{"config_dir": "/Users/x/.claude", "email": "a@example.dev",
+          "registered": false, "tier": "Max 20×"},
+         {"config_dir": "/Users/x/.claude-b", "email": "b@example.dev", "registered": false}]
+        """
+        let dirs = try DaemonDates.decoder().decode([DetectedDir].self, from: Data(json.utf8))
+        XCTAssertEqual(dirs.first?.tier, "Max 20×")
+        XCTAssertNil(dirs.last?.tier)
+    }
 }
 
 /// A FRESH install has zero accounts and Go marshals nil slices as JSON

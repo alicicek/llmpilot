@@ -1,0 +1,15 @@
+{
+  "module": "board-geometry",
+  "source": {
+    "web": "web/src/board/geometry.ts",
+    "swift": "macos/Sources/Support/BoardGeometry.swift"
+  },
+  "note": "toPx rounds to 1 decimal place (Math.round(minutes*PPM*10)/10), matching the mockup's px-per-minute — the toPx(37) case exercises that rounding (37 * 1160/1440 * 10 = 298.05555..., rounds to 298, /10 = 29.8).",
+  "cases": [
+    { "name": "toPx: 0 minutes -> 0px", "fn": "toPx", "input": { "minutes": 0 }, "want": 0 },
+    { "name": "toPx: 1 minute", "fn": "toPx", "input": { "minutes": 1 }, "want": 0.8 },
+    { "name": "toPx: 37 minutes rounds to 1 decimal", "fn": "toPx", "input": { "minutes": 37 }, "want": 29.8 },
+    { "name": "toPx: last minute of the day", "fn": "toPx", "input": { "minutes": 1439 }, "want": 1159.2 },
+    { "name": "toPct: quarter of the day", "fn": "toPct", "input": { "minutes": 360 }, "want": 25 }
+  ]
+}

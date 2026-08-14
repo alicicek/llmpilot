@@ -40,9 +40,22 @@ final class FleetViewModel: ObservableObject {
     @Published private(set) var autopilot: DaemonConfig.Autopilot?
     @Published private(set) var switchingID: String?
     @Published private(set) var detected: [DetectedDir] = []
+    /// Whether /v1/detect has answered at least once this session — the
+    /// corridor distinguishes "still detecting" from "found nothing" on
+    /// this (review 2026-08-11 P2-8).
+    @Published private(set) var detectAnswered = false
     @Published private(set) var adoptingDir: String?
     @Published var lastError: String?
     @Published var now = Date()
+    /// Set by the menu bar's upsell row: "the user wants the autopilot" —
+    /// NOT "open the paywall". NativeCockpitRootView.consumePendingPaywall
+    /// clears it once a license is resolved and routes by the FLOW decision:
+    /// the first-run corridor when it holds (the flag is consumed by the
+    /// flow already teaching-then-asking), the reopened paywall only for a
+    /// board-visible user. A flag rather than a direct call because
+    /// `openPaywall()` is private to that view and needs state
+    /// (`cockpit.license`) this view model doesn't have.
+    @Published var pendingOpenPaywall = false
 
     @AppStorage("privacyMode") var privacyMode = false
     @AppStorage("iconMode") private var iconModeRaw = IconMode.ring.rawValue
@@ -97,6 +110,17 @@ final class FleetViewModel: ObservableObject {
         }
         return false
     }
+    /// Whether this bundle is an INSTALLED copy — `/Applications` or the
+    /// per-user `~/Applications`. Gates the stale-enrollment re-enroll in
+    /// `ensureRunning`: that repair rewrites the user's LaunchAgent to this
+    /// bundle's path, which is only ever the right answer for a copy that
+    /// lives where an installed app lives. Injectable so both branches are
+    /// testable without moving the test runner.
+    var bundleIsInstalled: @Sendable () -> Bool = {
+        let path = Bundle.main.bundlePath
+        return path.hasPrefix("/Applications/")
+            || path.hasPrefix(DaemonLauncher.userHome() + "/Applications/")
+    }
     /// First-launch flag store + window opener, injectable for tests. The
     /// default opener no-ops under XCTest so hosted unit tests never spawn a
     /// real cockpit window. cfprefsd keys UserDefaults by uid + bundle id and
@@ -110,11 +134,11 @@ final class FleetViewModel: ObservableObject {
         }
         return .standard
     }()
-    var openWindow: (URL) -> Void = { url in
-        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
-        else { return }
-        CockpitWindowController.shared.open(url: url)
-    }
+    /// The URL argument is unused since the chunk 6A cutover — kept so tests
+    /// injecting this seam (and the readiness check in maybeAutoOpenWindow)
+    /// don't need to change — but production wiring lives in init(), which
+    /// needs `self` to hand to NativeCockpitWindowController.open(fleet:).
+    var openWindow: (URL) -> Void = { _ in }
 
     static let firstLaunchKey = "firstLaunchWindowShown"
     static let startAtLoginDefaultedKey = "startAtLoginDefaulted"
@@ -124,6 +148,18 @@ final class FleetViewModel: ObservableObject {
     init(api: DaemonAPI, trialMarker: TrialMarkerStore = KeychainTrialMarker(), autostart: Bool = true) {
         self.api = api
         self.trialMarker = trialMarker
+        // Chunk 6A cutover: the native window is now THE app cockpit.
+        // Assigned here (not as the property's default value) because it
+        // needs `self` — a property initializer runs before `self` exists.
+        // Tests override this seam directly, so the XCTest guard below is
+        // defense in depth, not the only thing stopping a hosted test from
+        // spawning a real window.
+        openWindow = { [weak self] _ in
+            guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+            else { return }
+            guard let self else { return }
+            NativeCockpitWindowController.shared.open(fleet: self)
+        }
         if autostart {
             start()
             // Parallel tasks: ensureRunning must set its in-flight flag
@@ -189,6 +225,24 @@ final class FleetViewModel: ObservableObject {
         }
     }
 
+    /// Sandbox interlock: launchctl ignores $HOME, so the gui domain the
+    /// stale check probes — and `kickstart -k` SIGKILLs — is always the REAL
+    /// user's `dev.llmpilot.daemon`, even when the app runs inside an e2e
+    /// sandbox with a fake HOME and its own fixture daemon. A sandboxed run
+    /// seeing the developer's live /Applications daemon as "stale" would
+    /// bounce it mid-credential-write (the #1 hazard window).
+    ///
+    /// XCTest engages it too: hosted unit tests call ensureRunning() through
+    /// helpers that stub the API but not this seam's defaults, and the real
+    /// launchctl probe then judged the developer's live daemon stale against
+    /// the TEST-HOST bundle path — every `xcodebuild test` run was bouncing
+    /// it (proven live 2026-08-07, pids 7587→35775). Tests that exercise the
+    /// bounce paths set this to false explicitly and inject both seams.
+    /// DaemonLauncher.launchdMutationRefusal is the floor beneath this seam.
+    var sandboxInterlocked: Bool =
+        ProcessInfo.processInfo.environment["LLMPILOT_TEST"] == "1"
+            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
     /// Sparkle replaces the app bundle in place but never restarts the
     /// daemon: it is a separate launchd job, so it keeps executing the
     /// PREVIOUS build out of the bundle the updater moved aside, and the user
@@ -205,6 +259,7 @@ final class FleetViewModel: ObservableObject {
     /// executable is gone and there is no path to compare. A vanished
     /// executable IS the signal.
     func restartStaleDaemon() async {
+        guard !sandboxInterlocked else { return }
         guard !restartedThisLaunch else { return }
         let probe = self.daemonExecutable
         let state = await Task.detached(operation: { probe() }).value
@@ -225,7 +280,16 @@ final class FleetViewModel: ObservableObject {
             // side (no Keychain, no network) — fetch it every refresh so
             // OTHER Claude sign-ins on the Mac stay visible after the first
             // account is adopted, not just while the fleet is empty.
-            detected = (try? await api.detect()) ?? []
+            // A FAILED re-detect keeps the last known answer rather than
+            // blanking it, and `detectAnswered` records that a first answer
+            // exists at all — the corridor's accounts step renders a real
+            // "Finding your accounts…" state off that instead of flashing
+            // the empty state during the gap (review 2026-08-11 P2-8: the
+            // non-optional `[]` default made that state unreachable).
+            if let d = try? await api.detect() {
+                detected = d
+                detectAnswered = true
+            }
         } catch {
             // An action-triggered refresh must not downgrade a live SSE
             // connection — only the connect loop decides "down" once live.
@@ -248,8 +312,10 @@ final class FleetViewModel: ObservableObject {
         maybeAutoOpenWindow()
     }
 
+    // App-voice, no plumbing shouting: the failure card already says what
+    // to do (Try again); this is the persistent-case escalation detail.
     static let daemonUnreachableError =
-        "the daemon never became reachable — run `llmpilot daemon status` in a terminal"
+        "The engine started but never answered. If this keeps happening, `llmpilot daemon status` in a terminal shows why."
 
     /// Auto-open the cockpit window exactly once EVER — but burn the one-shot
     /// only after the window is confirmed VISIBLE. macOS cooperative
@@ -260,13 +326,20 @@ final class FleetViewModel: ObservableObject {
     /// a refused surface retries on the next launch. In-run repeats are
     /// stopped by `autoOpenAttempted`, not the flag.
     private var autoOpenAttempted = false
-    var windowVisible: () -> Bool = { CockpitWindowController.shared.isWindowVisible }
+    var windowVisible: () -> Bool = { NativeCockpitWindowController.shared.isWindowVisible }
     /// Sampled more than once: the user may cmd-tab back a few seconds after
     /// launch — one early sample would miss that, never burn the flag, and
     /// reopen the window on every launch.
     var visibilitySampleDelays: [TimeInterval] = [1.5, 5, 15]
-    var scheduleVisibilityCheck: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    // @MainActor-typed rather than plain: the work always runs on main (it
+    // reads window state and writes defaults), and this is what lets the
+    // closure cross into the delayed dispatch without tripping strict
+    // Sendable checking (the Xcode-surfaced warning, 2026-08-08).
+    var scheduleVisibilityCheck: (TimeInterval, @escaping @MainActor () -> Void) -> Void = { delay, work in
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            work()
+        }
     }
 
     private func maybeAutoOpenWindow() {
@@ -304,15 +377,22 @@ final class FleetViewModel: ObservableObject {
         }
     }
 
-    func adopt(_ dir: String) async {
+    /// Reports whether the adopt LANDED — the onboarding corridor's
+    /// automatic adoption shows a failure line off this (audit 2026-08-11:
+    /// its screen claims "llmpilot is adding them", and a refusal used to
+    /// surface only as the board's flash banner after the corridor closed).
+    @discardableResult
+    func adopt(_ dir: String) async -> Bool {
         adoptingDir = dir
         lastError = nil
         defer { adoptingDir = nil }
         do {
             try await api.adopt(configDir: dir)
             try? await refresh()
+            return true
         } catch {
             lastError = error.localizedDescription
+            return false
         }
     }
 
@@ -391,12 +471,41 @@ final class FleetViewModel: ObservableObject {
         }
 
         // launchd needs a beat to bring the socket up.
-        for _ in 0..<20 {
-            if (try? await refresh()) != nil { return }
-            try? await Task.sleep(nanoseconds: startupProbeNanos)
+        if await probeUntilLive() { return }
+
+        // One-shot repair: an agent that reports .enabled yet never spawns
+        // is a STALE enrollment — launchd still points at a moved or
+        // rebuilt bundle (hit live 2026-08-08: "spawn scheduled" forever at
+        // a DerivedData path after Xcode runs). Re-enroll from THIS bundle
+        // and give the socket one more window before giving up.
+        // ...but ONLY from an installed bundle. Re-enrolling rewrites the
+        // user's LaunchAgent to point at whatever bundle is running, so an
+        // un-installed copy — above all a DerivedData build, which launchd
+        // refuses to spawn because it is ad-hoc signed — would destroy a
+        // working /Applications enrollment while fixing nothing. A build
+        // that can't be spawned must fail loudly, not take the real one
+        // down with it.
+        let items = loginItems
+        let staleStatus = await Task.detached { items.agentStatus() }.value
+        if staleStatus == .enabled, bundleIsInstalled() {
+            _ = await Task.detached {
+                try? items.unregisterAgent()
+                try? items.registerAgent()
+            }.value
+            if await probeUntilLive() { return }
         }
+
         status = .down
         lastError = Self.daemonUnreachableError
+    }
+
+    /// Poll /v1/state briefly while launchd brings the agent's socket up.
+    private func probeUntilLive() async -> Bool {
+        for _ in 0..<20 {
+            if (try? await refresh()) != nil { return true }
+            try? await Task.sleep(nanoseconds: startupProbeNanos)
+        }
+        return false
     }
 
     /// First run defaults the login item ON (owner, SPEC 1.2.6): the daemon
@@ -512,8 +621,14 @@ final class FleetViewModel: ObservableObject {
     var autopilotLine: String {
         guard let autopilot else { return "autopilot —" }
         if autopilot.disabled == true { return "autopilot off" }
-        let threshold = Int((autopilot.thresholdPercent ?? 90).rounded())
-        return "autopilot on · switches at \(threshold)%"
+        // No explicit threshold = adaptive time-to-wall (owner
+        // 2026-08-13). The old `?? 90` fabricated a number the autopilot
+        // no longer uses — a default install would have read a false 90
+        // (review P1); only a user-set fixed threshold names a percent.
+        guard let percent = autopilot.thresholdPercent else {
+            return "autopilot on · switches before the wall"
+        }
+        return "autopilot on · switches at \(Int(percent.rounded()))%"
     }
 
     /// What the collapsed menu-bar icon renders: the ACTIVE account's session

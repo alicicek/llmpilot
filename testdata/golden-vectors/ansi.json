@@ -1,0 +1,301 @@
+{
+  "module": "ansi",
+  "source": {
+    "web": "web/src/shell/ansi.ts",
+    "swift": "macos/Sources/Support/Ansi.swift"
+  },
+  "note": "Pins the ANSI SGR vocabulary the Go statusline renderer actually emits: reset(0), dim(2), classic FG 30-37, bright FG 90-97 (same table minus 60), 256-color 38;5;n (fixed <16, 6x6x6 cube, grayscale ramp), truecolor 38;2;r;g;b. Any other SGR code is silently ignored (tolerance case). color is omitted (null) when unset; dim is always present.",
+  "cases": [
+    {
+      "name": "empty input",
+      "input": "",
+      "want": []
+    },
+    {
+      "name": "plain text, no escapes",
+      "input": "just plain text",
+      "want": [
+        {
+          "text": "just plain text",
+          "color": null,
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "text before first escape",
+      "input": "hello \u001b[31mworld",
+      "want": [
+        {
+          "text": "hello ",
+          "color": null,
+          "dim": false
+        },
+        {
+          "text": "world",
+          "color": "#ff6f61",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "classic FG red",
+      "input": "\u001b[31mred text",
+      "want": [
+        {
+          "text": "red text",
+          "color": "#ff6f61",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "classic FG full table 30-37",
+      "input": "\u001b[30ma\u001b[31mb\u001b[32mc\u001b[33md\u001b[34me\u001b[35mf\u001b[36mg\u001b[37mh",
+      "want": [
+        {
+          "text": "a",
+          "color": "#a5a5ac",
+          "dim": false
+        },
+        {
+          "text": "b",
+          "color": "#ff6f61",
+          "dim": false
+        },
+        {
+          "text": "c",
+          "color": "#3ddc68",
+          "dim": false
+        },
+        {
+          "text": "d",
+          "color": "#ffb340",
+          "dim": false
+        },
+        {
+          "text": "e",
+          "color": "#6aa8ff",
+          "dim": false
+        },
+        {
+          "text": "f",
+          "color": "#e58cff",
+          "dim": false
+        },
+        {
+          "text": "g",
+          "color": "#54d1db",
+          "dim": false
+        },
+        {
+          "text": "h",
+          "color": "#f5f5f7",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "bright FG 90-97 maps to same table minus 60",
+      "input": "\u001b[90ma\u001b[91mb\u001b[92mc\u001b[93md\u001b[94me\u001b[95mf\u001b[96mg\u001b[97mh",
+      "want": [
+        {
+          "text": "a",
+          "color": "#a5a5ac",
+          "dim": false
+        },
+        {
+          "text": "b",
+          "color": "#ff6f61",
+          "dim": false
+        },
+        {
+          "text": "c",
+          "color": "#3ddc68",
+          "dim": false
+        },
+        {
+          "text": "d",
+          "color": "#ffb340",
+          "dim": false
+        },
+        {
+          "text": "e",
+          "color": "#6aa8ff",
+          "dim": false
+        },
+        {
+          "text": "f",
+          "color": "#e58cff",
+          "dim": false
+        },
+        {
+          "text": "g",
+          "color": "#54d1db",
+          "dim": false
+        },
+        {
+          "text": "h",
+          "color": "#f5f5f7",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "dim sets dim true",
+      "input": "\u001b[2mdim text",
+      "want": [
+        {
+          "text": "dim text",
+          "color": null,
+          "dim": true
+        }
+      ]
+    },
+    {
+      "name": "reset clears color and dim",
+      "input": "\u001b[31;2mred dim\u001b[0mplain again",
+      "want": [
+        {
+          "text": "red dim",
+          "color": "#ff6f61",
+          "dim": true
+        },
+        {
+          "text": "plain again",
+          "color": null,
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "reset mid-line then new color",
+      "input": "\u001b[34mblue\u001b[0mreset\u001b[35mmagenta",
+      "want": [
+        {
+          "text": "blue",
+          "color": "#6aa8ff",
+          "dim": false
+        },
+        {
+          "text": "reset",
+          "color": null,
+          "dim": false
+        },
+        {
+          "text": "magenta",
+          "color": "#e58cff",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "256 color cube step",
+      "input": "\u001b[38;5;196mcube-red",
+      "want": [
+        {
+          "text": "cube-red",
+          "color": "rgb(255,0,0)",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "256 color low fixed palette <16",
+      "input": "\u001b[38;5;9mfixed-bright-red",
+      "want": [
+        {
+          "text": "fixed-bright-red",
+          "color": "#ff0000",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "256 color grayscale ramp",
+      "input": "\u001b[38;5;244mgray",
+      "want": [
+        {
+          "text": "gray",
+          "color": "rgb(128,128,128)",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "256 color cube first entry (n=16)",
+      "input": "\u001b[38;5;16mcube-black",
+      "want": [
+        {
+          "text": "cube-black",
+          "color": "rgb(0,0,0)",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "truecolor rgb",
+      "input": "\u001b[38;2;120;200;40mtruecolor",
+      "want": [
+        {
+          "text": "truecolor",
+          "color": "rgb(120,200,40)",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "unknown SGR code is ignored, buffer keeps flowing",
+      "input": "\u001b[1mbold-ignored\u001b[31mred",
+      "want": [
+        {
+          "text": "bold-ignored",
+          "color": null,
+          "dim": false
+        },
+        {
+          "text": "red",
+          "color": "#ff6f61",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "multiple spans separated by resets",
+      "input": "\u001b[31ma\u001b[0m \u001b[32mb",
+      "want": [
+        {
+          "text": "a",
+          "color": "#ff6f61",
+          "dim": false
+        },
+        {
+          "text": " ",
+          "color": null,
+          "dim": false
+        },
+        {
+          "text": "b",
+          "color": "#3ddc68",
+          "dim": false
+        }
+      ]
+    },
+    {
+      "name": "dim persists across a color-only escape",
+      "input": "\u001b[2;33mdim-yellow\u001b[34mdim-blue-still",
+      "want": [
+        {
+          "text": "dim-yellow",
+          "color": "#ffb340",
+          "dim": true
+        },
+        {
+          "text": "dim-blue-still",
+          "color": "#6aa8ff",
+          "dim": true
+        }
+      ]
+    }
+  ]
+}

@@ -26,10 +26,13 @@
   only to switch the active account (atomic, tempfile + rename).
 - **Local cache under `$LLMPILOT_HOME`** (default `~/.llmpilot`) — usage
   percentages, reset timestamps, and schedules. **Never tokens.**
-- **A loopback socket** — every surface (menu bar, cockpit, statusline, CLI)
-  reads the daemon over `127.0.0.1` / a unix socket. Routes that reveal or
-  mutate a license require an install-scoped token, so another local process
-  cannot read or change your entitlement.
+- **A loopback socket** — every surface reads the daemon over `127.0.0.1` / a
+  unix socket: the menu bar, the cockpit (a native window in the app, or a
+  browser page opened with `llmpilot open` on a CLI-only install), the
+  statusline, and the CLI. Routes that reveal or mutate a license require an
+  install-scoped `Authorization: Bearer` token — the same token either
+  cockpit form presents — so another local process cannot read or change
+  your entitlement.
 
 ## Network egress, in full
 

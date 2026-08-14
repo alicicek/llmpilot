@@ -59,6 +59,22 @@ targets:
         SWIFT_VERSION: "5.0"
         GENERATE_INFOPLIST_FILE: true
         CODE_SIGN_IDENTITY: "-"
+  # UI smoke bundle — its own scheme, NEVER in the default test action: it
+  # launches the real app, so it only runs inside the e2e-native.sh sandbox
+  # (the test itself XCTSkips outside LLMPILOT_TEST=1).
+  llmpilotUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: llmpilot
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: true
+        CODE_SIGN_IDENTITY: "-"
+        TEST_TARGET_NAME: llmpilot
 schemes:
   llmpilot:
     build:
@@ -68,3 +84,11 @@ schemes:
     test:
       targets:
         - llmpilotTests
+  llmpilotUITests:
+    build:
+      targets:
+        llmpilot: all
+        llmpilotUITests: [test]
+    test:
+      targets:
+        - llmpilotUITests

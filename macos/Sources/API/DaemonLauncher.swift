@@ -35,8 +35,35 @@ enum DaemonLauncher {
         return nil
     }
 
+    /// Floor interlock for every launchctl MUTATION in this file: launchctl
+    /// ignores $HOME, so `gui/<uid>/dev.llmpilot.daemon` is ALWAYS the real
+    /// user's daemon — bootout/bootstrap would stop it and repoint the label
+    /// at a sandbox plist that the harness then deletes; kickstart -k is a
+    /// SIGKILL into the credential-write hazard window. Two callers must
+    /// never mutate it:
+    /// - XCTest (hosted unit tests reached these through un-stubbed seams —
+    ///   proven live 2026-08-07);
+    /// - harnesses that opt in via LLMPILOT_NO_LAUNCHD=1 (e2e-native.sh —
+    ///   its fixture daemon runs in the foreground, launchd has no role).
+    /// Deliberately NOT keyed on LLMPILOT_TEST alone: e2e-firstrun.sh
+    /// legitimately bootstraps a sandbox agent under LLMPILOT_TEST, behind
+    /// its own already-loaded-label preconditions. A floor here means the
+    /// view model cannot forget to check — refusal copy is returned like any
+    /// other launch error.
+    static var launchdMutationRefusal: String? {
+        let env = ProcessInfo.processInfo.environment
+        if env["XCTestConfigurationFilePath"] != nil {
+            return "refusing to touch the real launchd domain from a test process"
+        }
+        if env["LLMPILOT_NO_LAUNCHD"] == "1" {
+            return "LLMPILOT_NO_LAUNCHD is set — refusing to touch the real launchd domain"
+        }
+        return nil
+    }
+
     /// Returns nil on success, or what-happened + what-to-do-next copy.
     static func start() -> String? {
+        if let refusal = launchdMutationRefusal { return refusal }
         guard let bin = findBinary() else {
             return "llmpilot CLI not found — install it first, then relaunch"
         }
@@ -132,7 +159,8 @@ enum DaemonLauncher {
     /// against a pre-update daemon until they next log out.
     /// Returns nil on success, or what-happened copy.
     static func restartAgent() -> String? {
-        run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/dev.llmpilot.daemon"])
+        if let refusal = launchdMutationRefusal { return refusal }
+        return run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/dev.llmpilot.daemon"])
     }
 
     /// Runs a command and returns stdout, or nil if it could not run.

@@ -104,7 +104,14 @@ export function SettingsDialog(props: {
         </Row>
         <Row
           label="Auto-switch"
-          hint={`Switches to the account with headroom near ${cfg?.autopilot?.threshold_percent ?? 90}%.`}
+          // No explicit threshold = adaptive time-to-wall (2026-08-13) —
+          // the old `?? 90` fabricated a number the autopilot no longer
+          // uses on a default install.
+          hint={
+            cfg?.autopilot?.threshold_percent != null
+              ? `Switches to the account with headroom near ${cfg.autopilot.threshold_percent}%.`
+              : "Switches when an account is ≈8 min from its limit, judged from live burn."
+          }
         >
           <Toggle
             on={autoOn}

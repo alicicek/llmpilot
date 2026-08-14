@@ -149,6 +149,15 @@ type Daemon struct {
 	NotifyUser  UserNotifier
 	ActiveEmail ActiveEmailFn
 
+	// TierMultiplier reports an account's plan usage-multiple of Pro (1,
+	// 5, 20; 0 = unknown) via the claudecfg adapter — the adaptive
+	// ceiling's input. The rotation path asks ONLY about the ACTIVE
+	// account: its config dir is the one whose signed-in identity is
+	// verifiably its own (the global slot holds the active identity; a
+	// non-active fleet account's tier is not on disk anywhere). nil =
+	// always unknown.
+	TierMultiplier func(ctx context.Context, acct store.Account) int
+
 	// AutoSwitch is the UNATTENDED counterpart of Switch, used for every
 	// autopilot-initiated rotation of a non-stale target. Same swap, same
 	// switch-time freshen — but built with a refresh-budget RESERVE, so a
@@ -308,6 +317,7 @@ type Daemon struct {
 	lastUnknown         string               // last unregistered email surfaced (once per email)
 	lastRotateFail      string               // last failure event text — repeats log, not spam
 	lastHold            string               // last autopilot_hold text — one event per distinct reason
+	lastWatchOnly       map[string]time.Time // last watch-only headroom nudge per account — 24h dedupe (LAYER 2)
 	licenseStatus       string               // last online status projection; no token/id/PII
 	licenseError        string               // last terminal licensing refusal code, "" when none
 	cooldown            map[string]coolState // per-account 429 gate (usage+refresh share Anthropic's limit)
@@ -330,6 +340,7 @@ type Daemon struct {
 	loginAttempts map[string]loginAttempt
 
 	events       *broadcaster
+	notices      *noticeBus
 	once         sync.Once
 	revalidateCh chan struct{}
 
@@ -356,11 +367,13 @@ func (d *Daemon) init() {
 		d.tokenNotes = map[string]string{}
 		d.quarantine = map[string]string{}
 		d.stale = map[string]time.Time{}
+		d.lastWatchOnly = map[string]time.Time{}
 		d.cooldown = map[string]coolState{}
 		d.loginAttempts = map[string]loginAttempt{}
 		d.loginResults = map[string]loginResult{}
 		d.history = map[string][]HistorySample{}
 		d.events = newBroadcaster()
+		d.notices = newNoticeBus()
 		d.revalidateCh = make(chan struct{}, 1)
 		if d.Log == nil {
 			d.Log = slog.Default()
@@ -1091,4 +1104,59 @@ func (d *Daemon) History(accountID, kind, scope string) []HistorySample {
 	out := make([]HistorySample, len(h))
 	copy(out, h)
 	return out
+}
+
+// Adaptive time-to-wall's data bar (owner 2026-08-13): a slope needs this
+// much recent evidence before the policy may act on it — below either bar
+// the bucket reports NO data and the policy falls back to the fixed
+// threshold. The ring is in-memory by design, so every daemon restart
+// starts below the bar and adaptive re-earns trust from live polls.
+const (
+	burnWindow     = 15 * time.Minute
+	burnMinSamples = 4
+	burnMinSpan    = 10 * time.Minute
+)
+
+// burnRate reports one bucket's smoothed burn (percent per MINUTE) over
+// the recent window, or ok=false when the data cannot support a
+// projection. ANY drop inside the window — a real reset or jitter-scale
+// noise — triggers the cut: only the segment after the last drop counts,
+// re-checked against the same evidence bars. (The negative clamp below is
+// a belt for future cut changes, not the jitter handler — review N1.)
+func (d *Daemon) burnRate(accountID, kind, scope string, now time.Time) (float64, bool) {
+	d.mu.Lock()
+	ring := d.history[historyKey(accountID, kind, scope)]
+	recent := make([]HistorySample, 0, len(ring))
+	for _, s := range ring {
+		if now.Sub(s.At) <= burnWindow {
+			recent = append(recent, s)
+		}
+	}
+	d.mu.Unlock()
+	for i := len(recent) - 1; i > 0; i-- {
+		if recent[i].Percent < recent[i-1].Percent {
+			recent = recent[i:] // a reset — the slope starts after it
+			break
+		}
+	}
+	if len(recent) < burnMinSamples {
+		return 0, false
+	}
+	span := recent[len(recent)-1].At.Sub(recent[0].At)
+	if span < burnMinSpan {
+		return 0, false
+	}
+	rate := (recent[len(recent)-1].Percent - recent[0].Percent) / span.Minutes()
+	if rate < 0 {
+		// Unreachable after the backward cut (adjacent pairs are
+		// non-decreasing) — kept as a BELT for any future cut change: a
+		// negative slope must clamp to idle-not-negative, never poison
+		// TimeToWall (review P3: the earlier comment credited this line
+		// with jitter handling; jitter is actually handled by the cut).
+		rate = 0
+	}
+	if rate > pilotapi.MaxPlausibleBurn {
+		rate = pilotapi.MaxPlausibleBurn
+	}
+	return rate, true
 }

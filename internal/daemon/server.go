@@ -48,6 +48,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/state", d.handleState)
 	mux.HandleFunc("GET /v1/events", d.handleEvents)
+	mux.HandleFunc("GET /v1/notices", d.handleNotices)
 	mux.HandleFunc("POST /v1/switch", d.handleSwitch)
 	mux.HandleFunc("GET /v1/schedules", d.handleSchedulesList)
 	mux.HandleFunc("POST /v1/schedules", d.handleScheduleCreate)
@@ -172,6 +173,70 @@ func writeSSE(w http.ResponseWriter, st State) {
 		return
 	}
 	fmt.Fprintf(w, "event: state\ndata: %s\n\n", data)
+}
+
+// handleNotices streams live user-facing notifications to a connected
+// native app — the SSE counterpart of NotifyUser's fan-out (notices.go).
+// Auth-guarded: while /v1/state already serves account emails without auth
+// on the loopback port, notices are a PUSH surface — gating them keeps a
+// consistent rule that anything the daemon actively sends a client rides
+// the install token, and costs the app (which holds the token anyway)
+// nothing.
+func (d *Daemon) handleNotices(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		httpError(w, http.StatusInternalServerError, errors.New("streaming unsupported"))
+		return
+	}
+	// Subscribe BEFORE writing headers: the earlier this subscriber lands in
+	// the bus, the smaller the window where a notice dispatched while this
+	// connection was being established takes the fallback path instead of
+	// reaching the about-to-be-live stream (see noticeBus.dispatch).
+	ch := d.notices.subscribe()
+	defer d.notices.unsubscribe(ch)
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	fl.Flush()
+
+	// A wedged client socket (app suspended across sleep/wake, half-open
+	// TCP) would otherwise block Fprintf FOREVER — outside the select, so
+	// ctx.Done() never runs, unsubscribe never fires, and the pinned
+	// subscriber suppresses the osascript fallback while every notice is
+	// silently dropped (review 2026-08-08 P1-2). A short write deadline
+	// turns the stall into a write error → return → unsubscribe → fallback.
+	rc := http.NewResponseController(w)
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case n := <-ch:
+			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := writeNoticeSSE(w, n); err != nil {
+				return
+			}
+			// rc.Flush (not fl.Flush) so a deadline hit during the flush —
+			// the call that actually touches the socket — is caught NOW,
+			// not one notice later.
+			if err := rc.Flush(); err != nil {
+				return
+			}
+			_ = rc.SetWriteDeadline(time.Time{})
+		}
+	}
+}
+
+func writeNoticeSSE(w http.ResponseWriter, n Notice) error {
+	data, err := json.Marshal(n)
+	if err != nil {
+		return nil // malformed notice: skip it, keep the stream
+	}
+	_, err = fmt.Fprintf(w, "event: notice\ndata: %s\n\n", data)
+	return err
 }
 
 func (d *Daemon) handleSwitch(w http.ResponseWriter, r *http.Request) {
@@ -663,6 +728,11 @@ func (d *Daemon) handleDetect(w http.ResponseWriter, r *http.Request) {
 		// credentials — the surfaces use it to stop offering verbs that can
 		// only refuse. Unknown reports true.
 		SignedIn bool `json:"signed_in"`
+		// Tier is the subscription tier's DISPLAY label ("Max 20×", "Pro")
+		// or absent when unknown — claudecfg owns the raw-vocabulary
+		// mapping (owner 2026-08-12: surfaces show the tier beside each
+		// found account).
+		Tier string `json:"tier,omitempty"`
 	}
 	signedIn := map[string]bool{}
 	if d.SignedInDirs != nil {
@@ -682,6 +752,7 @@ func (d *Daemon) handleDetect(w http.ResponseWriter, r *http.Request) {
 			Registered: alreadyRegistered(det, existing),
 			Moved:      moved[det.Dir.Path()],
 			SignedIn:   present,
+			Tier:       det.Account.TierLabel(),
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

@@ -51,6 +51,25 @@ extension DaemonAPI {
     func cockpitURL() -> URL? { baseURL() }
 }
 
+/// The user-facing message for a non-2xx daemon response. The daemon wraps
+/// every error as `{"error":"…"}` (httpError, server.go:980-982) — showing
+/// the raw body would put JSON braces in a flash banner, so unwrap the
+/// envelope first and only fall back to the raw text for non-JSON bodies.
+func daemonErrorMessage(from data: Data, code: Int) -> String {
+    if let env = try? JSONDecoder().decode(ErrorEnvelope.self, from: data),
+       !env.error.isEmpty {
+        return env.error
+    }
+    // Any OTHER JSON object body ({"error":""}, {"ok":true}, …) would put
+    // braces in a banner — the generic status line beats leaked JSON.
+    if let obj = try? JSONSerialization.jsonObject(with: data), obj is [String: Any] {
+        return "http \(code)"
+    }
+    let raw = String(data: data, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return raw?.isEmpty == false ? raw! : "http \(code)"
+}
+
 struct HTTPDaemonClient: DaemonAPI {
     /// $LLMPILOT_HOME or ~/.llmpilot — same resolution as internal/store.
     static func home() -> URL {
@@ -107,7 +126,7 @@ struct HTTPDaemonClient: DaemonAPI {
         }
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard code == 200 else {
-            throw DaemonError.http(code, String(data: data, encoding: .utf8) ?? "http \(code)")
+            throw DaemonError.http(code, daemonErrorMessage(from: data, code: code))
         }
         return data
     }
@@ -137,9 +156,7 @@ struct HTTPDaemonClient: DaemonAPI {
         }
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200...299).contains(code) else {
-            let msg = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw DaemonError.http(code, msg?.isEmpty == false ? msg! : "http \(code)")
+            throw DaemonError.http(code, daemonErrorMessage(from: data, code: code))
         }
         return data
     }

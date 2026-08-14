@@ -19,7 +19,14 @@ struct MenuBarView: View {
                 Divider()
                 upsellRow
             }
-            if let err = model.lastError {
+            // Suppressed while the start-failed card shows — that card owns
+            // the failure and renders the same detail in place; a second,
+            // red, truncated copy of it here was double-reporting (owner
+            // 2026-08-08). Action errors while live (switch 409s etc.)
+            // still surface.
+            if let err = model.lastError,
+                !(model.status == .down && model.startGate == nil)
+            {
                 Text(err)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.crit)
@@ -31,6 +38,18 @@ struct MenuBarView: View {
             footer
         }
         .frame(width: 344)
+        // Owner 2026-08-08 ("make this really simple"): the engine is
+        // infrastructure, not a character in the UI — opening the popover
+        // IS the retry. A dead connection kicks the ensure-running machine
+        // silently (idempotent; ensureInFlight guards re-entry) instead of
+        // asking the user to press a "Start daemon" button. The two gates
+        // that genuinely need a human (Login Items approval, move to
+        // Applications) keep their own screens and are not auto-retried.
+        .onAppear {
+            if model.status == .down, model.startGate == nil {
+                Task { await model.ensureRunning() }
+            }
+        }
     }
 
     private var header: some View {
@@ -50,23 +69,34 @@ struct MenuBarView: View {
         .padding(.vertical, 8)
     }
 
+    // No plumbing vocabulary — "daemon" never appears in the UI (owner
+    // 2026-08-08); the states describe what the USER has: live data,
+    // something starting, or nothing yet.
     private var headerLine: String {
         switch model.status {
-        case .live: return "daemon live"
-        case .starting: return "starting the daemon…"
+        case .live: return "live"
+        case .starting: return "starting…"
         case .connecting: return "connecting…"
-        case .down: return "daemon not running"
+        case .down: return "offline"
         }
     }
 
     /// Official builds always ship the engine, so an unlicensed state is an
-    /// upsell — the row opens the cockpit, where onboarding and the paywall live.
+    /// upsell — the row opens the cockpit and sets
+    /// FleetViewModel.pendingOpenPaywall, and the WINDOW routes the intent
+    /// by its flow decision (NativeCockpitRootView.consumePendingPaywall):
+    /// a first-run user lands on the guided corridor, which teaches then
+    /// asks; only a board-visible user goes straight to the reopened
+    /// paywall. A flag rather than a method call because `openPaywall()` is
+    /// private to that view and needs state (`cockpit.license`) this view
+    /// doesn't have.
     private var upsellRow: some View {
         Button {
-            if let url = model.cockpitURL {
-                CockpitWindowController.shared.open(url: url)
-                dismiss()
-            }
+            // No cockpitURL guard — web-cockpit vestige; the native window
+            // needs no URL and handles offline itself.
+            model.pendingOpenPaywall = true
+            NativeCockpitWindowController.shared.open(fleet: model)
+            dismiss()
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "bolt.fill").font(.system(size: 10))
@@ -76,7 +106,6 @@ struct MenuBarView: View {
             .foregroundStyle(Theme.accent)
         }
         .buttonStyle(.borderless)
-        .disabled(model.cockpitURL == nil)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .accessibilityIdentifier("upsell")
@@ -91,19 +120,19 @@ struct MenuBarView: View {
             case .moveToApplications:
                 moveGate
             case nil:
-                daemonDown
+                startFailed
             }
         case .starting:
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("starting the daemon…")
+                Text("starting…")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
             .padding(12)
             .accessibilityIdentifier("starting-line")
         case .connecting:
-            Text("connecting to daemon…")
+            Text("connecting…")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .padding(12)
@@ -278,18 +307,30 @@ struct MenuBarView: View {
         .padding(.vertical, 7)
     }
 
-    private var daemonDown: some View {
+    /// Reached only AFTER an automatic start failed (opening this popover
+    /// already triggered one — see the root .onAppear), so the copy owns
+    /// the failure instead of introducing the machinery: what happened,
+    /// then the one thing to do next.
+    private var startFailed: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Daemon not running — nothing here is live.")
+            Text("llmpilot couldn't start its background engine.")
                 .font(.system(size: 12, weight: .semibold))
-            Text("The daemon polls your accounts and performs switches; without it this menu has no data.")
+            Text("It watches your accounts and switches for you — llmpilot normally starts it on its own; this attempt didn't take.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Start daemon") {
+            Button("Try again") {
                 Task { await model.ensureRunning() }
             }
             .controlSize(.small)
+            // The detail lives IN the card, quiet — not as a second red
+            // line under it.
+            if let detail = model.lastError {
+                Text(detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(12)
     }
@@ -307,7 +348,13 @@ struct MenuBarView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Found logged-in Claude Code accounts. Adding reads usage only — macOS asks to allow Keychain access once per account.")
+                // The header must match what the rows can actually do
+                // (review 2026-08-11 NEW-4): an all-phantom machine offers
+                // only sign-in remedies, not adds.
+                Text(
+                    unregistered.allSatisfy { $0.signedIn == false }
+                        ? "These folders' sign-ins have expired — sign in again to add them."
+                        : "Found logged-in Claude Code accounts. Adding reads usage only — macOS asks to allow Keychain access once per account.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -334,11 +381,26 @@ struct MenuBarView: View {
                             }
                         }
                         Spacer()
-                        Button(model.adoptingDir == d.configDir ? "adding…" : "Add") {
-                            Task { await model.adopt(d.configDir) }
+                        if d.signedIn == false {
+                            // A phantom folder (identity block kept, credential
+                            // gone — the 1.2.6 lesson): adopting it can only
+                            // produce the raw engine refusal, so the row offers
+                            // the actual remedy instead (review 2026-08-11
+                            // P2-6; same idiom as AddAccountSheet).
+                            Text("Signed out")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                            Button("Sign in") {
+                                LoginWindowController.shared.open()
+                            }
+                            .controlSize(.small)
+                        } else {
+                            Button(model.adoptingDir == d.configDir ? "adding…" : "Add") {
+                                Task { await model.adopt(d.configDir) }
+                            }
+                            .controlSize(.small)
+                            .disabled(model.adoptingDir != nil)
                         }
-                        .controlSize(.small)
-                        .disabled(model.adoptingDir != nil)
                     }
                 }
             }
@@ -349,15 +411,17 @@ struct MenuBarView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Button {
-                if let url = model.cockpitURL {
-                    CockpitWindowController.shared.open(url: url)
-                    dismiss()
-                }
+                // Always enabled (owner 2026-08-08): the native window has a
+                // proper full-page connectivity state — being able to LOOK
+                // must never depend on the engine being up, and the old
+                // cockpitURL guard was web-cockpit vestige (the native
+                // window needs no URL).
+                NativeCockpitWindowController.shared.open(fleet: model)
+                dismiss()
             } label: {
                 Label("Open cockpit", systemImage: "macwindow")
                     .font(.system(size: 11.5, weight: .semibold))
             }
-            .disabled(model.cockpitURL == nil || model.status != .live)
             .keyboardShortcut("o")
             Button {
                 LoginWindowController.shared.open()

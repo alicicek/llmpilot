@@ -15,6 +15,11 @@ enum LoginItemStatus: Equatable {
 protocol LoginItems: Sendable {
     func agentStatus() -> LoginItemStatus
     func registerAgent() throws
+    /// The stale-enrollment repair path (FleetViewModel.ensureRunning): an
+    /// agent that reports .enabled yet never spawns is enrolled against a
+    /// moved/rebuilt bundle — unregistering and re-registering re-points it
+    /// at THIS bundle.
+    func unregisterAgent() throws
     func mainAppStatus() -> LoginItemStatus
     func setMainApp(enabled: Bool) throws
     func openLoginItemsSettings()
@@ -32,6 +37,10 @@ struct SMLoginItems: LoginItems {
 
     func registerAgent() throws {
         try SMAppService.agent(plistName: agentPlistName).register()
+    }
+
+    func unregisterAgent() throws {
+        try SMAppService.agent(plistName: agentPlistName).unregister()
     }
 
     func mainAppStatus() -> LoginItemStatus { Self.map(SMAppService.mainApp.status) }
@@ -65,6 +74,7 @@ struct DisabledLoginItems: LoginItems {
     struct Unavailable: Error {}
     func agentStatus() -> LoginItemStatus { .notFound }
     func registerAgent() throws { throw Unavailable() }
+    func unregisterAgent() throws { throw Unavailable() }
     func mainAppStatus() -> LoginItemStatus { .notFound }
     func setMainApp(enabled: Bool) throws { throw Unavailable() }
     func openLoginItemsSettings() {}

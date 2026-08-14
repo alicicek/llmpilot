@@ -162,6 +162,46 @@ type OAuthAccount struct {
 	OrganizationRateLimitTier string `json:"organizationRateLimitTier"`
 }
 
+// TierLabel maps organizationRateLimitTier's raw vocabulary to the display
+// name a surface may show ("Max 20×", "Max 5×", "Pro"), or "" when the raw
+// value is unknown — never a guess. The raw strings are Claude Code
+// internals (observed live: "default_claude_max_20x"), so the mapping lives
+// HERE, in the adapter that owns that vocabulary, and only the display
+// label ever crosses the wire.
+func (a *OAuthAccount) TierLabel() string {
+	t := strings.ToLower(a.OrganizationRateLimitTier)
+	switch {
+	case strings.Contains(t, "max_20x"):
+		return "Max 20×"
+	case strings.Contains(t, "max_5x"):
+		return "Max 5×"
+	case strings.Contains(t, "pro"):
+		return "Pro"
+	default:
+		return ""
+	}
+}
+
+// TierMultiplier maps organizationRateLimitTier to the plan's usage
+// multiple of Pro (20, 5, 1), or 0 when the raw value is unknown — never a
+// guess. The autopilot's adaptive ceiling keys off this STRUCTURAL fact
+// (how much bigger the bucket is), so the raw vocabulary never leaves this
+// adapter; Team/Enterprise raw values are unobserved as of 2026-08-13 and
+// correctly map to 0 (the policy treats unknown at the safest ceiling).
+func (a *OAuthAccount) TierMultiplier() int {
+	t := strings.ToLower(a.OrganizationRateLimitTier)
+	switch {
+	case strings.Contains(t, "max_20x"):
+		return 20
+	case strings.Contains(t, "max_5x"):
+		return 5
+	case strings.Contains(t, "pro"):
+		return 1
+	default:
+		return 0
+	}
+}
+
 // OAuthAccount reads this dir's logged-in account identity. It returns
 // (nil, nil) when the config file does not exist or carries no oauthAccount —
 // a dir that was never logged in is not an error.

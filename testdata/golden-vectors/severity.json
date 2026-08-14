@@ -1,0 +1,23 @@
+{
+  "module": "severity",
+  "source": {
+    "web": "web/src/board/severity.ts bucketSeverity",
+    "swift": "macos/Sources/Support/CockpitTheme.swift CockpitTheme.severityBand"
+  },
+  "note": "Pins the FULL bucket-severity rule, not just percent thresholds: a server-supplied severity string ('critical'/'warning') overrides the percent bands; any other value falls through to percent (warn >= 70, crit >= 90). The `want` vocabulary is the web's Severity type: calm | warn | crit.",
+  "cases": [
+    { "name": "zero is calm", "input": { "percent": 0 }, "want": "calm" },
+    { "name": "mid-range is calm", "input": { "percent": 34 }, "want": "calm" },
+    { "name": "just under warn is calm", "input": { "percent": 69.9 }, "want": "calm" },
+    { "name": "warn threshold is warn", "input": { "percent": 70 }, "want": "warn" },
+    { "name": "just under crit is warn", "input": { "percent": 89.9 }, "want": "warn" },
+    { "name": "crit threshold is crit", "input": { "percent": 90 }, "want": "crit" },
+    { "name": "near max is crit", "input": { "percent": 99 }, "want": "crit" },
+    { "name": "max is crit", "input": { "percent": 100 }, "want": "crit" },
+    { "name": "server critical override beats a calm percent", "input": { "percent": 10, "severity": "critical" }, "want": "crit" },
+    { "name": "server warning override beats a calm percent", "input": { "percent": 10, "severity": "warning" }, "want": "warn" },
+    { "name": "server warning override beats a crit percent", "input": { "percent": 95, "severity": "warning" }, "want": "warn" },
+    { "name": "unknown server severity falls through to percent", "input": { "percent": 10, "severity": "nominal" }, "want": "calm" },
+    { "name": "unknown server severity falls through to a crit percent", "input": { "percent": 95, "severity": "nominal" }, "want": "crit" }
+  ]
+}

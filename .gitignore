@@ -36,8 +36,12 @@ docs/goldens/
 CLAUDE.md
 design/
 
+# local-only: sandboxed fresh-machine dev harness (throwaway home/keychain)
+scripts/dev-freshuser.sh
+
 HANDOFF.md
 go.work*
 .wrangler/
 AGENTS.md
 mp-checkout-*.png
+/llmpilot-debug

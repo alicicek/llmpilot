@@ -1,0 +1,37 @@
+{
+  "module": "history-pricing",
+  "source": {
+    "web": "web/src/history/pricing.ts priceFor/valueOf",
+    "swift": "macos/Sources/Support/HistoryMath.swift HistoryPricing.priceFor/valueOf"
+  },
+  "note": "Each case carries a 'fn' selector (priceFor|valueOf) alongside the README's input/want. TRAPS pinned: (1) TABLE match is LISTED-ORDER first-startsWith-wins, not the file's own claimed 'longest prefix' — with today's table the two interpretations happen to agree numerically (no real prefix collides, and both haiku tiers price identically), so this file can only pin the loop's ORDER, not a numerically-observable ordering difference. (2) priceFor is case-SENSITIVE (unlike colors.ts familyOf, which lowercases first) — an uppercase model id that would otherwise match falls through to unpriced. want is null for an unpriced model in both priceFor (no Price object) and valueOf (no dollar figure).",
+  "cases": [
+    { "name": "priceFor: fable exact prefix", "fn": "priceFor", "input": { "modelID": "claude-fable-5" }, "want": { "input": 10, "output": 50 } },
+    { "name": "priceFor: fable with dated suffix", "fn": "priceFor", "input": { "modelID": "claude-fable-5-20260601" }, "want": { "input": 10, "output": 50 } },
+    { "name": "priceFor: mythos exact prefix", "fn": "priceFor", "input": { "modelID": "claude-mythos-5" }, "want": { "input": 10, "output": 50 } },
+    { "name": "priceFor: opus with model-number suffix", "fn": "priceFor", "input": { "modelID": "claude-opus-4-8" }, "want": { "input": 5, "output": 25 } },
+    { "name": "priceFor: sonnet with model-number suffix", "fn": "priceFor", "input": { "modelID": "claude-sonnet-5" }, "want": { "input": 3, "output": 15 } },
+    { "name": "priceFor: haiku via the 'claude-haiku' entry", "fn": "priceFor", "input": { "modelID": "claude-haiku-3" }, "want": { "input": 1, "output": 5 } },
+    { "name": "priceFor: haiku via the 'claude-3-5-haiku' entry (does not match 'claude-haiku')", "fn": "priceFor", "input": { "modelID": "claude-3-5-haiku-20241022" }, "want": { "input": 1, "output": 5 } },
+    { "name": "priceFor: unknown model is unpriced", "fn": "priceFor", "input": { "modelID": "gpt-4" }, "want": null },
+    { "name": "priceFor: case-sensitive miss on an otherwise-matching prefix", "fn": "priceFor", "input": { "modelID": "Claude-Opus-4-8" }, "want": null },
+    {
+      "name": "valueOf: full formula across input/output/cache_creation/cache_read",
+      "fn": "valueOf",
+      "input": {
+        "modelID": "claude-sonnet-5",
+        "tokens": { "input": 2000000, "output": 1000000, "cache_creation": 500000, "cache_read": 4000000 }
+      },
+      "want": 24.075
+    },
+    {
+      "name": "valueOf: unpriced model returns null regardless of token volume",
+      "fn": "valueOf",
+      "input": {
+        "modelID": "gpt-4",
+        "tokens": { "input": 1000000, "output": 1000000, "cache_creation": 0, "cache_read": 0 }
+      },
+      "want": null
+    }
+  ]
+}

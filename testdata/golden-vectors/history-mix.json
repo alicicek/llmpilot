@@ -1,0 +1,170 @@
+{
+  "module": "history-mix",
+  "source": {
+    "web": "web/src/history/ModelMix.tsx buildSegments, web/src/history/Projects.tsx topProjects, web/src/history/BurnRate.tsx projectWallMs, web/src/history/Delight.tsx HOBBIT_TOKENS/factor-string rule",
+    "swift": "macos/Sources/Support/HistoryMath.swift HistoryAggregate.buildSegments/topProjects, BurnMath.projectWallMs, HistoryDelight.hobbitFactorString"
+  },
+  "note": "Each case carries a 'fn' selector alongside input/want. buildSegments.input is a pre-grouped FamilyGroup[] (the shape the web function itself takes) — pins that a known family with tokens==0 is dropped from its own slot, and that an all-zero-tokens 'Other' fold is dropped entirely rather than emitted empty. topProjects.input is raw cells (its own true signature) — pins the TOP_N=5 boundary both just past it (6 projects -> 1 'other') and exactly at it (5 projects -> no 'other'). projectWallMs pins: <2 samples -> null; the last-30-minute sample window (inclusive) is preferred when it has >=2 points, even when using ALL samples would yield a DIFFERENT (here: null, since the unfiltered fit is non-monotonic) result; a recent window with <2 points falls back to the last two samples overall; slope<=0 (flat or decreasing) -> null. hobbitFactorString pins HOBBIT_TOKENS=125000, the >=100 en-US-grouped-integer vs <100 one-decimal split, and totalTokens<=0 -> null (no footer).",
+  "cases": [
+    {
+      "name": "buildSegments: a zero-token known family is dropped, unknown families fold into a nonzero Other",
+      "fn": "buildSegments",
+      "input": {
+        "groups": [
+          { "family": "Fable", "tokens": 2000, "value": 0.06, "unpricedIds": [] },
+          { "family": "Opus", "tokens": 0, "value": 0, "unpricedIds": [] },
+          { "family": "gpt-4", "tokens": 500, "value": 0, "unpricedIds": ["gpt-4"] },
+          { "family": "llama-70b", "tokens": 200, "value": 0, "unpricedIds": ["llama-70b"] }
+        ]
+      },
+      "want": [
+        { "family": "Fable", "tokens": 2000, "value": 0.06, "unpricedIds": [] },
+        { "family": "Other", "tokens": 700, "value": 0, "unpricedIds": ["gpt-4", "llama-70b"] }
+      ]
+    },
+    {
+      "name": "buildSegments: an all-zero-tokens unknown fold is dropped entirely, no empty Other segment",
+      "fn": "buildSegments",
+      "input": {
+        "groups": [
+          { "family": "Sonnet", "tokens": 1000, "value": 0.009, "unpricedIds": [] },
+          { "family": "gpt-4", "tokens": 0, "value": 0, "unpricedIds": [] }
+        ]
+      },
+      "want": [{ "family": "Sonnet", "tokens": 1000, "value": 0.009, "unpricedIds": [] }]
+    },
+    {
+      "name": "buildSegments: no groups at all",
+      "fn": "buildSegments",
+      "input": { "groups": [] },
+      "want": []
+    },
+    {
+      "name": "topProjects: six projects keeps the top 5, folds the 6th into other",
+      "fn": "topProjects",
+      "input": {
+        "cells": [
+          { "account_id": "a", "project": "proj1", "model": "claude-sonnet-5", "day": "d", "messages": 1, "tokens": { "input": 100000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "proj2", "model": "claude-sonnet-5", "day": "d", "messages": 1, "tokens": { "input": 200000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "proj3", "model": "claude-sonnet-5", "day": "d", "messages": 1, "tokens": { "input": 300000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "proj4", "model": "claude-sonnet-5", "day": "d", "messages": 1, "tokens": { "input": 400000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "proj5", "model": "claude-sonnet-5", "day": "d", "messages": 1, "tokens": { "input": 500000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "proj6", "model": "claude-sonnet-5", "day": "d", "messages": 1, "tokens": { "input": 600000, "output": 0, "cache_creation": 0, "cache_read": 0 } }
+        ]
+      },
+      "want": {
+        "rows": [
+          { "project": "proj6", "tokens": 600000, "value": 1.7999999999999998 },
+          { "project": "proj5", "tokens": 500000, "value": 1.5 },
+          { "project": "proj4", "tokens": 400000, "value": 1.2000000000000002 },
+          { "project": "proj3", "tokens": 300000, "value": 0.8999999999999999 },
+          { "project": "proj2", "tokens": 200000, "value": 0.6000000000000001 }
+        ],
+        "otherCount": 1,
+        "otherTokens": 100000
+      }
+    },
+    {
+      "name": "topProjects: exactly five projects has no other row at all",
+      "fn": "topProjects",
+      "input": {
+        "cells": [
+          { "account_id": "a", "project": "proj1", "model": "claude-sonnet-5", "day": "d", "messages": 1, "tokens": { "input": 100000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "proj2", "model": "claude-sonnet-5", "day": "d", "messages": 1, "tokens": { "input": 200000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "proj3", "model": "claude-sonnet-5", "day": "d", "messages": 1, "tokens": { "input": 300000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "proj4", "model": "claude-sonnet-5", "day": "d", "messages": 1, "tokens": { "input": 400000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "proj5", "model": "claude-sonnet-5", "day": "d", "messages": 1, "tokens": { "input": 500000, "output": 0, "cache_creation": 0, "cache_read": 0 } }
+        ]
+      },
+      "want": {
+        "rows": [
+          { "project": "proj5", "tokens": 500000, "value": 1.5 },
+          { "project": "proj4", "tokens": 400000, "value": 1.2000000000000002 },
+          { "project": "proj3", "tokens": 300000, "value": 0.8999999999999999 },
+          { "project": "proj2", "tokens": 200000, "value": 0.6000000000000001 },
+          { "project": "proj1", "tokens": 100000, "value": 0.30000000000000004 }
+        ],
+        "otherCount": 0,
+        "otherTokens": 0
+      }
+    },
+    {
+      "name": "topProjects: no cells at all",
+      "fn": "topProjects",
+      "input": { "cells": [] },
+      "want": { "rows": [], "otherCount": 0, "otherTokens": 0 }
+    },
+    {
+      "name": "projectWallMs: a single sample cannot fit a line",
+      "fn": "projectWallMs",
+      "input": { "samples": [{ "at": "2026-07-10T10:00:00Z", "percent": 20 }] },
+      "want": null
+    },
+    {
+      "name": "projectWallMs: two climbing points project forward",
+      "fn": "projectWallMs",
+      "input": {
+        "samples": [
+          { "at": "2026-07-10T10:00:00Z", "percent": 20 },
+          { "at": "2026-07-10T10:10:00Z", "percent": 30 }
+        ]
+      },
+      "want": 1783682400000
+    },
+    {
+      "name": "projectWallMs: a flat trend (slope==0) has no wall",
+      "fn": "projectWallMs",
+      "input": {
+        "samples": [
+          { "at": "2026-07-10T10:00:00Z", "percent": 50 },
+          { "at": "2026-07-10T10:10:00Z", "percent": 50 },
+          { "at": "2026-07-10T10:20:00Z", "percent": 50 }
+        ]
+      },
+      "want": null
+    },
+    {
+      "name": "projectWallMs: a decreasing trend has no wall",
+      "fn": "projectWallMs",
+      "input": {
+        "samples": [
+          { "at": "2026-07-10T10:00:00Z", "percent": 80 },
+          { "at": "2026-07-10T10:10:00Z", "percent": 70 },
+          { "at": "2026-07-10T10:20:00Z", "percent": 60 }
+        ]
+      },
+      "want": null
+    },
+    {
+      "name": "projectWallMs: the last-30-minute window overrides older erratic samples that would otherwise make the fit non-monotonic",
+      "fn": "projectWallMs",
+      "input": {
+        "samples": [
+          { "at": "2026-07-10T09:00:00Z", "percent": 90 },
+          { "at": "2026-07-10T09:30:00Z", "percent": 10 },
+          { "at": "2026-07-10T10:05:00Z", "percent": 20 },
+          { "at": "2026-07-10T10:15:00Z", "percent": 30 },
+          { "at": "2026-07-10T10:20:00Z", "percent": 35 }
+        ]
+      },
+      "want": 1783682700000
+    },
+    {
+      "name": "projectWallMs: samples over 30 minutes apart fall back to the last two overall",
+      "fn": "projectWallMs",
+      "input": {
+        "samples": [
+          { "at": "2026-07-10T09:00:00Z", "percent": 10 },
+          { "at": "2026-07-10T09:40:00Z", "percent": 20 },
+          { "at": "2026-07-10T10:20:00Z", "percent": 30 }
+        ]
+      },
+      "want": 1783695600000
+    },
+    { "name": "hobbitFactorString: zero tokens has no footer at all", "fn": "hobbitFactorString", "input": { "totalTokens": 0 }, "want": null },
+    { "name": "hobbitFactorString: below 100, one decimal place", "fn": "hobbitFactorString", "input": { "totalTokens": 62500 }, "want": "0.5" },
+    { "name": "hobbitFactorString: exactly 100, rounded integer with no decimal", "fn": "hobbitFactorString", "input": { "totalTokens": 12500000 }, "want": "100" },
+    { "name": "hobbitFactorString: well above 100, en-US thousands separators would apply above 1000", "fn": "hobbitFactorString", "input": { "totalTokens": 29325000 }, "want": "235" },
+    { "name": "hobbitFactorString: just under 100 stays in the one-decimal branch", "fn": "hobbitFactorString", "input": { "totalTokens": 12487500 }, "want": "99.9" }
+  ]
+}

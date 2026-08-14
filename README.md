@@ -22,8 +22,8 @@ brew install --cask alicicek/tap/llmpilot # the menu bar app
 
 One daemon watches every account's real usage, switches to the account with
 headroom before you hit a wall, and starts your 5-hour windows on schedule.
-Five thin surfaces over one brain: a native menu bar app, a local cockpit, a
-statusline, a CLI, and the autopilot itself.
+Five thin surfaces over one brain: a native menu bar app, a native cockpit
+window, a statusline, a CLI, and the autopilot itself.
 
 Built for people who run more than one Claude Max plan and are tired of the
 `/login` dance, guessing which account has room left, and waking up to windows
@@ -60,8 +60,10 @@ a one-time £9.99 / $12.99, not a subscription.
 - **Keep a CI token.** `llmpilot token add/list/copy/remove` stores long-lived
   headless tokens (the `claude setup-token` kind) in your Keychain. The only
   way a token leaves it is an explicit `token copy` to the clipboard.
-- **Read it anywhere.** The same live state renders in the menu bar, a local
-  cockpit window, a Claude Code statusline, and `llmpilot status`.
+- **Read it anywhere.** The same live state renders in the menu bar, the
+  native cockpit window, a Claude Code statusline, and `llmpilot status`. On a
+  CLI-only install with no app, `llmpilot open` puts the same cockpit in your
+  browser instead.
 
 ![drag a reset time — llmpilot computes the start and refuses times that physically can't happen](docs/media/scheduler.gif)
 

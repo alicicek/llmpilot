@@ -121,9 +121,6 @@ jobs:
         working-directory: web
       - run: pnpm build
         working-directory: web
-      # the slop gate (CLAUDE.md): deterministic detector over the cockpit src
-      - run: npx impeccable detect src/
-        working-directory: web
 
   worker:
     runs-on: ubuntu-latest

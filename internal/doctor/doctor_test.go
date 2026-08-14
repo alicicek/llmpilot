@@ -896,3 +896,53 @@ func TestDoctorSetupTokens(t *testing.T) {
 		}
 	})
 }
+
+// TestDoctorNoAccountsRemedyMatchesWhatTheMacActuallyHas pins the empty-fleet
+// remedy's two labels (audit 2026-08-11): "Register the sign-ins on this Mac"
+// promises existing sign-ins, so it only renders when the foreign-folder scan
+// actually finds some; a Mac with none is asked to add an account instead.
+// Doubt (no reader, a read error) keeps the register label — doubt must never
+// hide the cheaper remedy for sign-ins that do exist.
+func TestDoctorNoAccountsRemedyMatchesWhatTheMacActuallyHas(t *testing.T) {
+	base := func() doctor.Inputs {
+		in := cleanInputs(t)
+		in.Accounts = func() ([]store.Account, error) { return nil, nil } // empty fleet
+		return in
+	}
+	remedyFor := func(in doctor.Inputs) doctor.Remedy {
+		rep := doctor.Run(context.Background(), in)
+		for _, fd := range rep.Findings {
+			if fd.ID == "no_accounts" {
+				return fd.Remedy
+			}
+		}
+		t.Fatalf("no_accounts finding missing: %+v", rep.Findings)
+		return doctor.Remedy{}
+	}
+
+	none := base()
+	none.Foreign = func(context.Context) ([]switcher.ForeignSignIn, error) { return nil, nil }
+	if got := remedyFor(none); got.Label != "Add a Claude account" || got.Command != "llmpilot account add" {
+		t.Errorf("zero sign-ins on the Mac must ask to ADD, got %+v", got)
+	}
+
+	some := base()
+	some.Foreign = func(context.Context) ([]switcher.ForeignSignIn, error) {
+		return []switcher.ForeignSignIn{{Dir: "/Users/x/.claude", Email: "a@example.dev"}}, nil
+	}
+	if got := remedyFor(some); got.Label != "Register the sign-ins on this Mac" || got.Command != "llmpilot init" {
+		t.Errorf("existing sign-ins must keep the register remedy, got %+v", got)
+	}
+
+	// The guard's FAIL cases: a reader that errors, and no reader at all.
+	broken := base()
+	broken.Foreign = func(context.Context) ([]switcher.ForeignSignIn, error) { return nil, errors.New("boom") }
+	if got := remedyFor(broken); got.Label != "Register the sign-ins on this Mac" {
+		t.Errorf("a failed scan must not hide the register remedy, got %+v", got)
+	}
+	absent := base()
+	absent.Foreign = nil
+	if got := remedyFor(absent); got.Label != "Register the sign-ins on this Mac" {
+		t.Errorf("no reader at all must keep the register remedy, got %+v", got)
+	}
+}

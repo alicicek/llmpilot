@@ -186,18 +186,4 @@ final class LoginFlowModelTests: XCTestCase {
         XCTAssertEqual(finished, 1)
         XCTAssertEqual(api.completedLogins.count, 1)
     }
-
-    func testAddAccountBridgeOpensLoginWindow() {
-        let cockpit = CockpitWindowController()
-        var opened = 0
-        cockpit.openLogin = { opened += 1 }
-        cockpit.handleScriptMessage(name: "startLogin", body: nil)
-        XCTAssertEqual(opened, 1)
-
-        // The trial-marker leg of the shared handler still works.
-        let marker = StubTrialMarker()
-        cockpit.trialMarker = marker
-        cockpit.handleScriptMessage(name: "trialMarker", body: "nocard")
-        XCTAssertTrue(marker.marked)
-    }
 }

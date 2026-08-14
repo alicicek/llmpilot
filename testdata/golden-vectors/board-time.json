@@ -1,0 +1,35 @@
+{
+  "module": "board-time",
+  "source": {
+    "web": "web/src/board/severity.ts bucketLabel/fmtDurationLeft/isSameDay/findingSeverity/staleStamp",
+    "swift": "macos/Sources/Support/BoardTime.swift"
+  },
+  "note": "Each case carries a 'fn' selector alongside input/want. This file covers ONLY the timezone-INDEPENDENT parts of severity.ts — bucketLabel, fmtDurationLeft, isSameDay, findingSeverity, and staleStamp's pure formatting half (given an already-computed minutesAgo, as 'staleStampFromMinutes' — the Swift twin is BoardTime.staleStampText(minutesAgo:)). minutesOfDay/minutesAgo/minutesUntil/isStale/fmtHMFromIso/fmtDowFromIso read a wall-clock hour/minute off the DEVICE'S OWN timezone (JS `new Date(iso).getHours()`) and are deliberately NOT vector-tested here, since the 'want' would depend on the machine running the test. isSameDay pins that it is a LITERAL date-prefix string compare, not a real cross-timezone same-day check: two ISO instants with the same YYYY-MM-DD prefix but wildly different UTC offsets still compare equal.",
+  "cases": [
+    { "name": "bucketLabel: session", "fn": "bucketLabel", "input": { "kind": "session" }, "want": "5h" },
+    { "name": "bucketLabel: weekly_all", "fn": "bucketLabel", "input": { "kind": "weekly_all" }, "want": "wk" },
+    { "name": "bucketLabel: weekly_scoped uses the uppercased first character of scope, not the whole word", "fn": "bucketLabel", "input": { "kind": "weekly_scoped", "scope": "team-eng" }, "want": "T" },
+    { "name": "bucketLabel: weekly_scoped with a missing scope falls back to ?", "fn": "bucketLabel", "input": { "kind": "weekly_scoped", "scope": null }, "want": "?" },
+    { "name": "bucketLabel: weekly_scoped with an empty-string scope falls back to ?", "fn": "bucketLabel", "input": { "kind": "weekly_scoped", "scope": "" }, "want": "?" },
+    { "name": "bucketLabel: an unrecognized kind passes through verbatim (bucket-agnostic)", "fn": "bucketLabel", "input": { "kind": "custom_kind" }, "want": "custom_kind" },
+    { "name": "fmtDurationLeft: zero minutes", "fn": "fmtDurationLeft", "input": { "minutes": 0 }, "want": "0:00 left" },
+    { "name": "fmtDurationLeft: under an hour still shows the leading 0", "fn": "fmtDurationLeft", "input": { "minutes": 59 }, "want": "0:59 left" },
+    { "name": "fmtDurationLeft: exactly one hour", "fn": "fmtDurationLeft", "input": { "minutes": 60 }, "want": "1:00 left" },
+    { "name": "fmtDurationLeft: hours and minutes both nonzero", "fn": "fmtDurationLeft", "input": { "minutes": 125 }, "want": "2:05 left" },
+    { "name": "fmtDurationLeft: one minute short of a full day", "fn": "fmtDurationLeft", "input": { "minutes": 1439 }, "want": "23:59 left" },
+    { "name": "isSameDay: identical ISO strings", "fn": "isSameDay", "input": { "iso": "2026-07-10T08:00:00Z", "refIso": "2026-07-10T08:00:00Z" }, "want": true },
+    { "name": "isSameDay: same date prefix, wildly different offsets, still compares equal (literal prefix compare, not a real cross-timezone check)", "fn": "isSameDay", "input": { "iso": "2026-07-10T23:50:00-08:00", "refIso": "2026-07-10T01:00:00+05:00" }, "want": true },
+    { "name": "isSameDay: different date prefixes", "fn": "isSameDay", "input": { "iso": "2026-07-10T00:00:00Z", "refIso": "2026-07-11T00:00:00Z" }, "want": false },
+    { "name": "findingSeverity: critical maps to crit", "fn": "findingSeverity", "input": { "s": "critical" }, "want": "crit" },
+    { "name": "findingSeverity: warning maps to warn", "fn": "findingSeverity", "input": { "s": "warning" }, "want": "warn" },
+    { "name": "findingSeverity: info maps to calm (a watched lane is a feature, not a fault)", "fn": "findingSeverity", "input": { "s": "info" }, "want": "calm" },
+    { "name": "findingSeverity: any other value falls through to calm", "fn": "findingSeverity", "input": { "s": "unknown" }, "want": "calm" },
+    { "name": "staleStampFromMinutes: zero minutes ago", "fn": "staleStampFromMinutes", "input": { "minutesAgo": 0 }, "want": "as of 0m ago" },
+    { "name": "staleStampFromMinutes: one minute ago", "fn": "staleStampFromMinutes", "input": { "minutesAgo": 1 }, "want": "as of 1m ago" },
+    { "name": "staleStampFromMinutes: just under the hour boundary stays in minutes", "fn": "staleStampFromMinutes", "input": { "minutesAgo": 59 }, "want": "as of 59m ago" },
+    { "name": "staleStampFromMinutes: exactly at the hour boundary switches to hours", "fn": "staleStampFromMinutes", "input": { "minutesAgo": 60 }, "want": "as of 1h ago" },
+    { "name": "staleStampFromMinutes: rounds up at the half-hour mark", "fn": "staleStampFromMinutes", "input": { "minutesAgo": 90 }, "want": "as of 2h ago" },
+    { "name": "staleStampFromMinutes: rounds to the nearest hour, not truncated", "fn": "staleStampFromMinutes", "input": { "minutesAgo": 119 }, "want": "as of 2h ago" },
+    { "name": "staleStampFromMinutes: well past two hours still rounds to 2h", "fn": "staleStampFromMinutes", "input": { "minutesAgo": 125 }, "want": "as of 2h ago" }
+  ]
+}

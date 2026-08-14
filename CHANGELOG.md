@@ -4,6 +4,58 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-08-14
+
+### Added
+
+- **The autopilot now rides each account to its own edge.** Instead of
+  switching at a fixed 90%, it watches how fast each account is actually
+  burning and switches when the wall is about 8 minutes away — up to 97%
+  on a Max 20× plan when the pace says that's safe, and earlier when a
+  hot session genuinely needs it. With no burn data yet (right after a
+  restart, or an account that just went quiet) it falls back to the old
+  90% rule rather than guess. Setting `threshold_percent` in config.json
+  still pins the old fixed behaviour exactly.
+- **Watch-only accounts tell you when they could help.** If the autopilot
+  wants to switch and the only headroom left sits on an account you added
+  as watch-only, you get one notification naming it — moving it into the
+  fleet stays a two-click choice that is always yours.
+- **Account rows show the plan.** Detected sign-ins carry their
+  subscription tier (Pro, Max 5×, Max 20×) in the first-run inventory.
+- **Turning Pro on lists your watch-only accounts** with a Make
+  switchable button right on the confirmation screen, so paying never
+  leaves the autopilot with nothing it is allowed to switch to.
+
+### Changed
+
+- **The cockpit is fully native now.** The window looks the same but is
+  built from real macOS controls instead of an embedded web page — faster
+  to open, resizable, and readable with VoiceOver. Real macOS notification
+  banners replace the old script-based ones, and a guided tour introduces
+  the board the first time you open it. Nothing about your accounts,
+  schedules, or settings changes or needs migrating.
+- The browser cockpit (`llmpilot open`) is still there for a CLI-only
+  install with no app.
+- **First run answers the questions it used to skip.** The add-account
+  screen explains what pressing the button does, shows an example of an
+  added account, and states where your sign-in lives: in your Mac's
+  Keychain, only ever seen by Anthropic, with no telemetry. The switch
+  demo now climbs to 97% and switches one tick under the wall — the same
+  behaviour the autopilot ships with.
+- Every cockpit sheet uses one even margin all the way around, with the
+  close button where macOS dialogs put it.
+
+### Fixed
+
+- **Only usable sign-ins are listed and added on first run.** A folder
+  whose sign-in has lapsed is no longer counted, listed, or auto-added
+  into a failure it cannot survive; it gets a sign-in-again button
+  instead, and an add that fails says so on the screen that promised it.
+- The multi-account inventory screen now actually appears for fresh
+  multi-account Macs instead of being skipped by a race with detection.
+- The scheduler's axis no longer overlaps its own caption, and the demo
+  screens disclose their example numbers everywhere real accounts appear.
+
 ## [1.2.7] - 2026-08-06
 
 ### Changed

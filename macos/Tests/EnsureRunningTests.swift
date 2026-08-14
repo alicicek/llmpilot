@@ -20,12 +20,17 @@ final class EnsureRunningTests: XCTestCase {
     private func makeModel(
         _ api: StubAPI,
         items: FakeLoginItems = FakeLoginItems(),
-        legacy: Bool = false
+        legacy: Bool = false,
+        installed: Bool = true
     ) -> (FleetViewModel, FakeLoginItems) {
         let model = FleetViewModel(api: api, autostart: false)
         model.loginItems = items
         model.legacyPlistPresent = { legacy }
         model.bundleLocationBlocked = { false }
+        // The test runner's own bundle is never in /Applications; the
+        // stale-enrollment repair is gated on an installed copy, so state
+        // it explicitly per test rather than inheriting the runner's path.
+        model.bundleIsInstalled = { installed }
         model.launch = { "unexpected legacy launch" }
         model.defaults = defaults
         model.openWindow = { [weak self] url in self?.opened.append(url) }
@@ -68,6 +73,60 @@ final class EnsureRunningTests: XCTestCase {
         XCTAssertEqual(model.status, .live)
         XCTAssertEqual(items.registerCalls, 1)
         XCTAssertNil(model.lastError)
+    }
+
+    /// Hit live 2026-08-08: launchd held "spawn scheduled" forever against a
+    /// rebuilt (DerivedData) bundle — the agent reports .enabled, register()
+    /// is a no-op, and the socket never comes up. The repair is a one-shot
+    /// unregister + register from THIS bundle, and only then giving up.
+    func testStaleEnabledEnrollmentIsReenrolledOnce() async {
+        let api = StubAPI()
+        api.stateResult = .failure(DaemonError.down)
+        let items = FakeLoginItems()
+        items.agentStatusValue = .enabled // enrolled, but nothing spawns
+        items.registerShouldThrow = true // register() over a live enrollment refuses
+        items.onUnregister = {
+            // Re-enrollment is what brings the daemon up: allow the register
+            // that FOLLOWS the unregister to land and flip the API live.
+            items.registerShouldThrow = false
+            items.onRegister = { api.stateResult = .success(Fixtures.twoAccounts()) }
+        }
+        let (model, _) = makeModel(api, items: items)
+        await model.ensureRunning()
+        XCTAssertEqual(model.status, .live)
+        XCTAssertEqual(items.unregisterCalls, 1)
+        XCTAssertNil(model.lastError)
+    }
+
+    func testStaleEnrollmentRepairFailingStillEndsDownWithTheDetail() async {
+        let api = StubAPI()
+        api.stateResult = .failure(DaemonError.down) // never comes up
+        let items = FakeLoginItems()
+        items.agentStatusValue = .enabled
+        items.registerShouldThrow = true
+        let (model, _) = makeModel(api, items: items)
+        await model.ensureRunning()
+        XCTAssertEqual(model.status, .down)
+        XCTAssertEqual(items.unregisterCalls, 1, "the repair is one-shot — no unregister loop")
+        XCTAssertEqual(model.lastError, FleetViewModel.daemonUnreachableError)
+    }
+
+    /// The guard's fail case: re-enrolling rewrites the user's LaunchAgent to
+    /// THIS bundle's path, so an un-installed copy (a DerivedData build,
+    /// which launchd refuses to spawn at all) must fail loudly rather than
+    /// take a working /Applications enrollment down with it.
+    func testStaleEnrollmentIsNotRepairedFromAnUninstalledBundle() async {
+        let api = StubAPI()
+        api.stateResult = .failure(DaemonError.down)
+        let items = FakeLoginItems()
+        items.agentStatusValue = .enabled
+        let (model, _) = makeModel(api, items: items, installed: false)
+        await model.ensureRunning()
+        XCTAssertEqual(model.status, .down)
+        XCTAssertEqual(
+            items.unregisterCalls, 0,
+            "an un-installed bundle must never rewrite the real agent's enrollment")
+        XCTAssertEqual(model.lastError, FleetViewModel.daemonUnreachableError)
     }
 
     func testRequiresApprovalGetsGateAndNoRegisterLoop() async {
@@ -138,7 +197,7 @@ final class EnsureRunningTests: XCTestCase {
         XCTAssertEqual(model.status, .starting, "probe failures must ride under .starting, not flash down")
         await run.value
         XCTAssertEqual(model.status, .down)
-        XCTAssertTrue((model.lastError ?? "").contains("never became reachable"), model.lastError ?? "")
+        XCTAssertEqual(model.lastError, FleetViewModel.daemonUnreachableError)
     }
 
     // MARK: - First-launch auto-open

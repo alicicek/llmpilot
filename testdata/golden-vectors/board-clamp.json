@@ -1,0 +1,19 @@
+{
+  "module": "board-clamp",
+  "source": {
+    "web": "web/src/board/clamp.ts",
+    "swift": "macos/Sources/Support/BoardClamp.swift"
+  },
+  "note": "clampMove finds the single moved index (first `next[k] !== prev[k]`) and clamps circularly across the midnight seam when there are >= 2 thumbs. hitWall is true ONLY when the raw proposed value strictly differs from the clamped result — a proposal that already lands exactly on the boundary (e.g. exactly MIN_GAP_MIN away) is a silent clamp, hitWall=false. Contrast the below-floor/above-ceiling/wrap-seam cases (hitWall true) against the exact-315 case (hitWall false).",
+  "cases": [
+    { "name": "clampMove: no thumb moved -> null (no-op)", "fn": "clampMove", "input": { "prev": [100, 500], "next": [100, 500], "floor": 0 }, "want": null },
+    { "name": "clampMove: below floor clamps up, hitWall true", "fn": "clampMove", "input": { "prev": [300, 700], "next": [50, 700], "floor": 300 }, "want": { "values": [300, 700], "index": 0, "hitWall": true, "flashZone": [0, 300] } },
+    { "name": "clampMove: above ceiling (single thumb) clamps to DAY_MIN-SNAP_MIN, hitWall true", "fn": "clampMove", "input": { "prev": [1000], "next": [1430], "floor": 0 }, "want": { "values": [1425], "index": 0, "hitWall": true, "flashZone": [1425, 1440] } },
+    { "name": "clampMove: wrap seam at i=0 clamps against the last thumb across midnight, hitWall true", "fn": "clampMove", "input": { "prev": [100, 1200], "next": [50, 1200], "floor": 0 }, "want": { "values": [75, 1200], "index": 0, "hitWall": true, "flashZone": [0, 75] } },
+    { "name": "clampMove: wrap seam at i=n-1 clamps against the first thumb across midnight, hitWall true", "fn": "clampMove", "input": { "prev": [100, 1200], "next": [100, 1300], "floor": 0 }, "want": { "values": [100, 1225], "index": 1, "hitWall": true, "flashZone": [1225, 1440] } },
+    { "name": "clampMove: exact MIN_GAP_MIN (315) away from neighbor is legal — silent clamp, hitWall false", "fn": "clampMove", "input": { "prev": [100, 600], "next": [100, 415], "floor": 0 }, "want": { "values": [100, 415], "index": 1, "hitWall": false, "flashZone": null } },
+    { "name": "canBookAt: t below floor -> forbidden zone [0, floor]", "fn": "canBookAt", "input": { "t": 100, "existing": [600], "floor": 300 }, "want": [0, 300] },
+    { "name": "canBookAt: exact 315-minute gap from an existing reset is legal -> null", "fn": "canBookAt", "input": { "t": 615, "existing": [300], "floor": 0 }, "want": null },
+    { "name": "canBookAt: inside an existing reset's gap -> forbidden zone around it", "fn": "canBookAt", "input": { "t": 500, "existing": [600], "floor": 0 }, "want": [285, 915] }
+  ]
+}

@@ -600,11 +600,24 @@ func (s *sweep) checkFleet(accounts []store.Account) {
 	if len(accounts) > 0 {
 		return
 	}
+	// "Register the sign-ins on this Mac" promises existing sign-ins — on a
+	// Mac that has none, that label is a remedy for a state the machine
+	// isn't in (audit 2026-08-11). Peek at the foreign folders the
+	// other-sign-ins check reads anyway (a cheap .claude.json scan, no
+	// Keychain); any doubt (no reader, a read error) keeps the register
+	// label — doubt must never hide the cheaper remedy for sign-ins that do
+	// exist.
+	remedy := Remedy{Verb: VerbRegisterAccount, Label: "Register the sign-ins on this Mac", Command: "llmpilot init"}
+	if s.in.Foreign != nil {
+		if foreign, err := s.in.Foreign(s.ctx); err == nil && len(foreign) == 0 {
+			remedy = Remedy{Verb: VerbRegisterAccount, Label: "Add a Claude account", Command: "llmpilot account add"}
+		}
+	}
 	s.add(Finding{
 		ID: "no_accounts", Check: CheckFleet, Severity: Info,
 		Title:  "No accounts are registered yet",
 		Detail: "llmpilot has nothing to watch or switch between until at least one Claude sign-in is registered.",
-		Remedy: Remedy{Verb: VerbRegisterAccount, Label: "Register the sign-ins on this Mac", Command: "llmpilot init"},
+		Remedy: remedy,
 	})
 }
 

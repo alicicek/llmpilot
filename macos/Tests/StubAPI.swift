@@ -63,7 +63,12 @@ final class FakeLoginItems: LoginItems, @unchecked Sendable {
     var onRegister: (@Sendable () -> Void)?
     var mainStatus: LoginItemStatus = .notRegistered
     var setMainShouldThrow = false
+    /// Runs on unregister — e.g. flip the stub API to reachable so a test
+    /// can prove the stale-enrollment repair (unregister → register →
+    /// probe) is what fixed the connection.
+    var onUnregister: (@Sendable () -> Void)?
     private(set) var registerCalls = 0
+    private(set) var unregisterCalls = 0
     private(set) var mainSets: [Bool] = []
     private(set) var openedSettings = 0
 
@@ -73,6 +78,11 @@ final class FakeLoginItems: LoginItems, @unchecked Sendable {
         registerCalls += 1
         if registerShouldThrow { throw Refused() }
         onRegister?()
+    }
+
+    func unregisterAgent() throws {
+        unregisterCalls += 1
+        onUnregister?()
     }
 
     func mainAppStatus() -> LoginItemStatus { mainStatus }

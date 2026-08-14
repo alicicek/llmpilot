@@ -88,6 +88,17 @@ final class LoginWindowController: NSWindowController, NSWindowDelegate, WKNavig
 
     func windowWillClose(_ notification: Notification) {
         webView?.stopLoading()
+        // Reciprocal half of the cockpit's own close guard (delta re-review
+        // 2026-08-08 Phase 6 P1): the cockpit declines to demote while THIS
+        // window is up, so if the cockpit closed first, this close is the
+        // app's last chance to drop back to accessory — without it a
+        // menu-bar-only app keeps a permanent Dock icon. Hosted tests never
+        // flip the policy (same guard as the cockpit's).
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        let cockpit = NativeCockpitWindowController.shared.window
+        if !(cockpit?.isVisible == true || cockpit?.isMiniaturized == true) {
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 }
 

@@ -1,0 +1,96 @@
+{
+  "module": "history-aggregate",
+  "source": {
+    "web": "web/src/history/aggregate.ts totalTokens/ioTokens/valueSummary/groupByFamily/groupByProject",
+    "swift": "macos/Sources/Support/HistoryMath.swift HistoryAggregate"
+  },
+  "note": "Each case carries a 'fn' selector alongside input/want. Cases 5 and 6 feed the SAME cells into groupByFamily and groupByProject to pin the asymmetric-by-design sum: groupByFamily.tokens is ioTokens (input+output only), groupByProject.tokens is totalTokens (all four fields) — 150 vs 3150 on identical input. groupByFamily's want objects carry unpricedIds (sorted array, Set order is not meaningful); groupByProject's ProjectGroup has NO unpricedIds field at all — that is not an omission, the web interface simply lacks the field.",
+  "cases": [
+    {
+      "name": "totalTokens sums all four fields",
+      "fn": "totalTokens",
+      "input": { "tokens": { "input": 100, "output": 50, "cache_creation": 1000, "cache_read": 2000 } },
+      "want": 3150
+    },
+    {
+      "name": "ioTokens sums input+output only, ignoring nonzero cache fields",
+      "fn": "ioTokens",
+      "input": { "tokens": { "input": 100, "output": 50, "cache_creation": 1000, "cache_read": 2000 } },
+      "want": 150
+    },
+    {
+      "name": "valueSummary of an empty cell list",
+      "fn": "valueSummary",
+      "input": { "cells": [] },
+      "want": { "total": 0, "unpricedIds": [] }
+    },
+    {
+      "name": "valueSummary excludes an unpriced cell from total but names it",
+      "fn": "valueSummary",
+      "input": {
+        "cells": [
+          { "account_id": "a", "project": "p1", "model": "claude-sonnet-5", "day": "2026-07-10", "messages": 1, "tokens": { "input": 1000000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "p1", "model": "gpt-4", "day": "2026-07-10", "messages": 1, "tokens": { "input": 500, "output": 500, "cache_creation": 0, "cache_read": 0 } }
+        ]
+      },
+      "want": { "total": 3, "unpricedIds": ["gpt-4"] }
+    },
+    {
+      "name": "groupByFamily of an empty cell list",
+      "fn": "groupByFamily",
+      "input": { "cells": [] },
+      "want": []
+    },
+    {
+      "name": "groupByProject of an empty cell list",
+      "fn": "groupByProject",
+      "input": { "cells": [] },
+      "want": []
+    },
+    {
+      "name": "groupByFamily on a cell with nonzero cache fields uses ioTokens (asymmetry pair, see groupByProject same-cells case)",
+      "fn": "groupByFamily",
+      "input": {
+        "cells": [
+          { "account_id": "a", "project": "llmpilot", "model": "claude-sonnet-5", "day": "2026-07-10", "messages": 1, "tokens": { "input": 100, "output": 50, "cache_creation": 1000, "cache_read": 2000 } }
+        ]
+      },
+      "want": [{ "family": "Sonnet", "tokens": 150, "value": 0.0054, "unpricedIds": [] }]
+    },
+    {
+      "name": "groupByProject on the SAME cell uses totalTokens (asymmetry pair, see groupByFamily same-cells case)",
+      "fn": "groupByProject",
+      "input": {
+        "cells": [
+          { "account_id": "a", "project": "llmpilot", "model": "claude-sonnet-5", "day": "2026-07-10", "messages": 1, "tokens": { "input": 100, "output": 50, "cache_creation": 1000, "cache_read": 2000 } }
+        ]
+      },
+      "want": [{ "project": "llmpilot", "tokens": 3150, "value": 0.0054 }]
+    },
+    {
+      "name": "groupByFamily folds an unpriced unknown model into its own verbatim-id family",
+      "fn": "groupByFamily",
+      "input": {
+        "cells": [
+          { "account_id": "a", "project": "p1", "model": "claude-sonnet-5", "day": "2026-07-10", "messages": 1, "tokens": { "input": 1000000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "p1", "model": "gpt-4", "day": "2026-07-10", "messages": 1, "tokens": { "input": 500, "output": 500, "cache_creation": 0, "cache_read": 0 } }
+        ]
+      },
+      "want": [
+        { "family": "Sonnet", "tokens": 1000000, "value": 3, "unpricedIds": [] },
+        { "family": "gpt-4", "tokens": 1000, "value": 0, "unpricedIds": ["gpt-4"] }
+      ]
+    },
+    {
+      "name": "groupByProject on the SAME two cells has no unpricedIds field and still counts the unpriced cell's tokens",
+      "fn": "groupByProject",
+      "input": {
+        "cells": [
+          { "account_id": "a", "project": "p1", "model": "claude-sonnet-5", "day": "2026-07-10", "messages": 1, "tokens": { "input": 1000000, "output": 0, "cache_creation": 0, "cache_read": 0 } },
+          { "account_id": "a", "project": "p1", "model": "gpt-4", "day": "2026-07-10", "messages": 1, "tokens": { "input": 500, "output": 500, "cache_creation": 0, "cache_read": 0 } }
+        ]
+      },
+      "want": [{ "project": "p1", "tokens": 1001000, "value": 3 }]
+    }
+  ]
+}

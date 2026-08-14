@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -377,6 +378,22 @@ func newDaemon(st *store.Store) *daemon.Daemon {
 	// The health sweep's local readers — the same gatherer `llmpilot doctor`
 	// uses when no daemon answers, so both surfaces report one truth.
 	d.DoctorReaders = doctorReaders(st, sw)
+	// The adaptive ceiling's tier input (owner 2026-08-13): read from the
+	// config dir the account actually signs in from — its own dir when
+	// pinned, the global slot otherwise. The daemon only asks about the
+	// ACTIVE account, so the global slot's identity is the right one; an
+	// email mismatch means it is not, and unknown is the honest answer.
+	d.TierMultiplier = func(_ context.Context, a store.Account) int {
+		path := a.ConfigDir
+		if path == "" {
+			path = globalDirPath()
+		}
+		acct, err := claudecfg.DirAt(path).OAuthAccount()
+		if err != nil || acct == nil || !strings.EqualFold(acct.EmailAddress, a.Email) {
+			return 0
+		}
+		return acct.TierMultiplier()
+	}
 	// Autopilot rotation: ON by default, tuned by config.json. A corrupt
 	// config is surfaced loudly and falls back to defaults — the brain never
 	// dies over a settings file. The engine itself is build-selected: source
@@ -409,7 +426,13 @@ func newDaemon(st *store.Store) *daemon.Daemon {
 		d.Pilot = prov.NewPolicy(pilotapi.ParamsFrom(cfg.Autopilot))
 	}
 	if os.Getenv("LLMPILOT_TEST") == "" {
-		d.NotifyUser = macNotify
+		// Every NotifyUser call now goes through the fan-out dispatcher: a
+		// connected native app gets the notice live over SSE (GET
+		// /v1/notices, internal/daemon/notices.go); osascript only fires when
+		// nobody is subscribed at dispatch time. A headless install (no app
+		// ever connects) therefore behaves byte-identically to the pre-5B
+		// direct macNotify wiring — every notice takes the fallback path.
+		d.NotifyUser = d.NoticeDispatcher(macNotify)
 		if prov.Available {
 			armer := prov.NewArmer(pilotapi.ArmerConfig{Store: st, Log: slog.Default()})
 			d.WakeSync = armer.Sync
@@ -444,9 +467,13 @@ func newDaemon(st *store.Store) *daemon.Daemon {
 			}
 		}
 	} else {
-		d.NotifyUser = func(_ context.Context, title, body string) {
+		// Tests get the SAME dispatcher/fan-out, with the sandbox stub as its
+		// fallback instead of macNotify — a test with an /v1/notices
+		// subscriber proves the fan-out, and one with none proves the stub
+		// still fires, all without ever risking a real banner.
+		d.NotifyUser = d.NoticeDispatcher(func(_ context.Context, title, body string) {
 			slog.Info("notification (sandbox, not shown)", "title", title, "body", body)
-		}
+		})
 	}
 	return d
 }
@@ -653,16 +680,92 @@ func keepWarmOpts(ver string) switcher.KeepWarmOpts {
 	}
 }
 
+// demoStoreHome decides where the demo daemon's throwaway store lives. Under
+// a test harness (LLMPILOT_TEST=1) with LLMPILOT_HOME set, it hands back that
+// fixed, discoverable directory so daemon.port lands where a sandboxed client
+// (e.g. the menu bar app) is told to look for it, and marks it "sandboxed" so
+// the caller knows not to remove a directory it doesn't own. Outside that
+// exact gate, LLMPILOT_HOME is ignored here — demo data must never be able to
+// land in a real store by accident.
+//
+// The refusal mirrors internal/switcher's assertSandboxDir discipline:
+// SeedDemo atomically OVERWRITES accounts.json, so a target that is (or sits
+// under) the process home would destroy that home's fleet registry. Refuse
+// loudly — never fall back to mktemp silently, which would hide the
+// misconfiguration. (Like the switcher guards, "home" is os.UserHomeDir(),
+// i.e. $HOME-derived — a harness that redirects HOME is judged against its
+// redirected home; the harness's own layout keeps the two trees disjoint.)
+func demoStoreHome(testMode bool, llmpilotHome, userHome string) (dir string, sandboxed bool, err error) {
+	if !testMode || llmpilotHome == "" {
+		return "", false, nil
+	}
+	resolved := llmpilotHome
+	if r, rerr := filepath.EvalSymlinks(llmpilotHome); rerr == nil {
+		resolved = r
+	}
+	abs, aerr := filepath.Abs(resolved)
+	if aerr != nil {
+		return "", false, fmt.Errorf("demo store interlock: cannot resolve LLMPILOT_HOME: %w", aerr)
+	}
+	if userHome != "" && pathIsOrUnder(abs, userHome) {
+		return "", false, fmt.Errorf(
+			"LLMPILOT_TEST is set: refusing to seed demo data into %s — it is the real home (%s) or under it, and SeedDemo overwrites accounts.json; point LLMPILOT_HOME at a temp-dir sandbox",
+			abs, userHome)
+	}
+	return abs, true, nil
+}
+
+// pathIsOrUnder reports whether path IS root or sits under it. Inode
+// identity first (os.SameFile up the parent chain — catches APFS firmlinks
+// like /System/Volumes/Data/Users/x, case variants, and symlinked parents
+// of a not-yet-created leaf; the same property internal/switcher's
+// samePath/isUnder guard), then a case-folded string-prefix fallback for
+// when nothing on either side exists (the default APFS volume is
+// case-insensitive).
+func pathIsOrUnder(path, root string) bool {
+	if ri, err := os.Stat(root); err == nil {
+		for p := path; ; {
+			if pi, perr := os.Stat(p); perr == nil && os.SameFile(pi, ri) {
+				return true
+			}
+			parent := filepath.Dir(p)
+			if parent == p {
+				break
+			}
+			p = parent
+		}
+	}
+	sep := string(os.PathSeparator)
+	return strings.HasPrefix(strings.ToLower(path)+sep, strings.ToLower(root)+sep)
+}
+
 // newDemoDaemon serves the masked demo fleet (LLMPILOT_DEMO=1) from a throwaway
 // store: no Keychain, no network, no launchd. Onboarding shows the product
 // working before any account is registered, and launch media render from the
 // same source. Fetch/Switch/Wake stay nil so nothing polls or mutates.
 func newDemoDaemon() (*daemon.Daemon, func(), error) {
-	dir, err := os.MkdirTemp("", "llmpilot-demo-")
+	var dir string
+	var cleanup func()
+	userHome, _ := os.UserHomeDir()
+	home, sandboxed, err := demoStoreHome(
+		os.Getenv("LLMPILOT_TEST") == "1", os.Getenv("LLMPILOT_HOME"), userHome)
 	if err != nil {
 		return nil, nil, err
 	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
+	if sandboxed {
+		if err := os.MkdirAll(home, 0o700); err != nil {
+			return nil, nil, err
+		}
+		dir = home
+		cleanup = func() {} // the caller's sandbox owns this dir
+	} else {
+		d, err := os.MkdirTemp("", "llmpilot-demo-")
+		if err != nil {
+			return nil, nil, err
+		}
+		dir = d
+		cleanup = func() { _ = os.RemoveAll(dir) }
+	}
 	st := store.At(dir)
 	active, err := daemon.SeedDemo(st, time.Now())
 	if err != nil {

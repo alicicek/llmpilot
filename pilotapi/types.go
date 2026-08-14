@@ -153,8 +153,11 @@ func ValidateID(id string) error {
 
 // AutopilotConfig tunes threshold rotation. Auto-switch is ON by default
 // (ledger 2026-07-08): absence of the file or the section means enabled.
+// ThresholdPercent set (>0) = FIXED mode, honored verbatim; absent =
+// adaptive time-to-wall (owner 2026-08-13).
 type AutopilotConfig struct {
 	Disabled         bool    `json:"disabled,omitempty"`
-	ThresholdPercent float64 `json:"threshold_percent,omitempty"` // default 90
+	ThresholdPercent float64 `json:"threshold_percent,omitempty"` // >0 = fixed mode at this percent
 	CooldownMinutes  int     `json:"cooldown_minutes,omitempty"`  // default 15
+	RunwayMinutes    int     `json:"runway_minutes,omitempty"`    // adaptive floor, default 8
 }
