@@ -61,7 +61,7 @@ const loginAttemptCap = 16
 
 type loginAttempt struct {
 	verifier    string
-	redirectURI string             // "" = hosted callback; else the loopback URI
+	redirectURI string // "" = hosted callback; else the loopback URI
 	started     time.Time
 	cancel      context.CancelFunc // browser flow: stops the listener on eviction/expiry; nil otherwise
 }
@@ -73,20 +73,41 @@ type loginAttempt struct {
 type loginResult struct {
 	status    string // "pending" | "done" | "failed"
 	errText   string // sanitized human copy on failed, "" otherwise
+	code      string // machine-readable failure class ("rate_limited" or ""); clients match THIS, never the prose
 	accountID string // set on done
 	at        time.Time
+}
+
+// LoginCodeRateLimited is the stable failure code for a rate-limited code
+// exchange (ErrSignInRateLimited). The status endpoint serves it so the
+// sign-in sheet can key its explicit Try-again state off a constant instead
+// of the human sentence (copy changes must not silently break clients).
+const LoginCodeRateLimited = "rate_limited"
+
+// loginFailureCode classifies a terminal login failure for the wire.
+func loginFailureCode(err error) string {
+	if errors.Is(err, ErrSignInRateLimited) {
+		return LoginCodeRateLimited
+	}
+	return ""
 }
 
 // setLoginResult records an attempt's outcome. A terminal outcome (done or
 // failed) never regresses to pending or gets overwritten by a later failure —
 // the TTL cleanup races the success path and must not repaint it.
 func (d *Daemon) setLoginResult(id, status, errText, accountID string) {
+	d.setLoginResultCoded(id, status, errText, "", accountID)
+}
+
+// setLoginResultCoded is setLoginResult with a machine-readable failure
+// class (loginFailureCode) riding along for the status endpoint.
+func (d *Daemon) setLoginResultCoded(id, status, errText, code, accountID string) {
 	d.loginMu.Lock()
 	defer d.loginMu.Unlock()
 	if cur, ok := d.loginResults[id]; ok && cur.status != "pending" {
 		return
 	}
-	d.loginResults[id] = loginResult{status: status, errText: errText, accountID: accountID, at: d.now()}
+	d.loginResults[id] = loginResult{status: status, errText: errText, code: code, accountID: accountID, at: d.now()}
 }
 
 // pruneLoginResultsLocked drops results older than the attempt TTL (a client
@@ -294,7 +315,7 @@ func (d *Daemon) handleLoginBrowserStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"status": res.status, "error": res.errText, "account_id": res.accountID,
+		"status": res.status, "error": res.errText, "code": res.code, "account_id": res.accountID,
 	})
 }
 
@@ -340,12 +361,19 @@ func (d *Daemon) serveLoginCallback(ctx context.Context, cancel context.CancelFu
 			// status only), so surface the reason — a 429 is a transient rate
 			// limit worth retrying, not a broken flow.
 			d.Log.Warn("browser login: exchange/install failed", "err", err)
-			d.setLoginResult(state, "failed", err.Error(), "")
-			loginCallbackPage(w, false, "Sign-in couldn't be completed: "+err.Error()+". Return to llmpilot and try again.")
+			d.setLoginResultCoded(state, "failed", err.Error(), loginFailureCode(err), "")
+			// The tab is a dead end after this — say what happened, what to
+			// do next in ONE place (the app), and that the tab can go
+			// (fresh-user audit 2026-08-16, F8).
+			if errors.Is(err, ErrSignInRateLimited) {
+				loginCallbackPage(w, false, "The sign-in server is rate-limited right now. Wait a minute, then press Try again in llmpilot. You can close this tab.")
+			} else {
+				loginCallbackPage(w, false, "Sign-in couldn't be completed: "+err.Error()+". Try again from llmpilot. You can close this tab.")
+			}
 			return
 		}
 		d.setLoginResult(state, "done", "", acct.ID)
-		loginCallbackPage(w, true, "You're signed in. Return to llmpilot — your account is joining the fleet.")
+		loginCallbackPage(w, true, "You're signed in. You can close this tab — llmpilot is adding your account.")
 		d.notify(context.Background())
 	})
 
@@ -367,6 +395,13 @@ func (d *Daemon) serveLoginCallback(ctx context.Context, cancel context.CancelFu
 	defer shutCancel()
 	_ = srv.Shutdown(shutCtx)
 }
+
+// ErrSignInRateLimited is the token endpoint rate-limiting the code
+// exchange (HTTP 429): transient, not a bad code. The daemon's login
+// wiring returns it so the browser page and the login result can say
+// "wait a minute, then try again" instead of a raw status. The text is what
+// the sign-in sheet shows verbatim — keep it a plain sentence.
+var ErrSignInRateLimited = errors.New("the sign-in server is rate-limited right now — wait a minute and try again")
 
 // loginCallbackPage renders the minimal page the browser lands on after the
 // redirect. It carries no code or token — only a human status line.

@@ -39,6 +39,13 @@ enum AddAccountCopy {
     // MARK: errors (AddAccountDialog.tsx:284, 295)
     static let signInFailedFallback = "Sign-in failed — try again."
     static let pollTimeout = "Didn't detect a completed sign-in — finish it in your browser, or try again."
+    // F8 (2026-08-16 fresh-user audit): the token-endpoint 429 on sign-in
+    // start read as an unrecoverable dead end — same primary button, no
+    // stated wait. States what happened and how long to wait.
+    static let rateLimitedSignIn = "The sign-in server is rate-limited — wait a minute, then try again."
+    // VOICE.md: verb+object — replaces the default browser-button label
+    // while a rate-limited error is showing, so the retry path is explicit.
+    static let tryAgain = "Try again"
 
     // (The "Prefer the terminal?" fallback block was removed 2026-08-12 —
     // owner: users should never be pointed at the CLI, and its disclosure
@@ -111,6 +118,10 @@ final class AddAccountModel: ObservableObject {
 
     @Published private(set) var phase: AddAccountPhase = .idle
     @Published var error: String?
+    /// F8: set alongside `error` when the current `error` is specifically
+    /// the sign-in server's 429 — drives `browserButtonTitle`'s retry copy
+    /// while (and only while) that error is showing.
+    @Published private(set) var signInRateLimited = false
     @Published private(set) var detected: [DetectedDir] = []
     @Published private(set) var rowBusy: RowBusy?
     @Published var rowError: String?
@@ -196,6 +207,16 @@ final class AddAccountModel: ObservableObject {
         phase = .idle
         authorizeURL = nil
         error = nil
+        signInRateLimited = false
+    }
+
+    /// F8: the primary browser sign-in button's title — a pure function of
+    /// phase plus whether the error currently showing is a rate-limited
+    /// sign-in, mirroring `PriceBottomControl.resolve`'s style (pulled out
+    /// so it's testable without rendering).
+    var browserButtonTitle: String {
+        if phase == .starting { return AddAccountCopy.browserButtonStarting }
+        return signInRateLimited ? AddAccountCopy.tryAgain : AddAccountCopy.browserButton
     }
 
     private func clearDetectedRowState() {
@@ -331,6 +352,7 @@ final class AddAccountModel: ObservableObject {
         guard !Task.isCancelled else { return }
         clearDetectedRowState()
         error = nil
+        signInRateLimited = false
         phase = .starting
         do {
             let s = try await api.startBrowserLogin()
@@ -348,8 +370,18 @@ final class AddAccountModel: ObservableObject {
         } catch {
             if Task.isCancelled { return }
             self.error = message(for: error)
+            self.signInRateLimited = Self.isRateLimited(error)
             phase = .idle
         }
+    }
+
+    /// F8: true for the daemon's 429 on the sign-in start call itself; the
+    /// poll's "failed" status carries its own `code == "rate_limited"` for
+    /// the exchange 429 (the audit's actual case). A poll timeout or any
+    /// other failure resets the flag.
+    private static func isRateLimited(_ error: Error) -> Bool {
+        if let e = error as? DaemonError, case .http(429, _) = e { return true }
+        return false
     }
 
     /// Mirrors AddAccountDialog.tsx:268-304's polling effect: an initial
@@ -372,6 +404,13 @@ final class AddAccountModel: ObservableObject {
                 if s.status == "failed" {
                     let msg = s.error
                     error = (msg?.isEmpty == false) ? msg! : AddAccountCopy.signInFailedFallback
+                    // The REAL exchange 429 arrives here, not on the start
+                    // call: /v1/login/browser succeeds, the code exchange
+                    // fails later, and the status poll carries the outcome
+                    // with a stable failure code (found in review —
+                    // this branch used to clear the flag unconditionally,
+                    // so Try again never showed for an actual 429).
+                    signInRateLimited = s.code == "rate_limited"
                     phase = .idle
                     return
                 }
@@ -381,6 +420,7 @@ final class AddAccountModel: ObservableObject {
             if Task.isCancelled { return }
             if now().timeIntervalSince(startedAt) >= pollTimeout {
                 error = AddAccountCopy.pollTimeout
+                signInRateLimited = false
                 phase = .idle
                 return
             }
@@ -412,8 +452,15 @@ final class AddAccountModel: ObservableObject {
     }
 
     private func message(for error: Error) -> String {
-        if let e = error as? DaemonError, case .down = e {
-            return "The llmpilot daemon isn't reachable — open the menu bar app, then try again."
+        if let e = error as? DaemonError {
+            if case .down = e {
+                return "The llmpilot daemon isn't reachable — open the menu bar app, then try again."
+            }
+            // F8: states what happened and the wait, instead of whatever
+            // raw text rode the 429 up from the token endpoint.
+            if case .http(429, _) = e {
+                return AddAccountCopy.rateLimitedSignIn
+            }
         }
         return error.localizedDescription
     }
@@ -478,7 +525,7 @@ struct AddAccountSheet: View {
                     .foregroundColor(CockpitTheme.sec)
                 VStack(alignment: .leading, spacing: 8) {
                     Button(action: { model.browserSignIn() }) {
-                        Text(model.phase == .starting ? AddAccountCopy.browserButtonStarting : AddAccountCopy.browserButton)
+                        Text(model.browserButtonTitle)
                             .font(.system(size: 11.5, weight: .semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 12)
@@ -495,7 +542,7 @@ struct AddAccountSheet: View {
                     .opacity(model.phase == .starting ? 0.5 : 1)
                     .disabled(model.phase == .starting)
                     .accessibilityIdentifier("add-account-browser-signin")
-                    .accessibilityLabel(model.phase == .starting ? AddAccountCopy.browserButtonStarting : AddAccountCopy.browserButton)
+                    .accessibilityLabel(model.browserButtonTitle)
 
                     Button(action: { model.windowSignIn() }) {
                         Text(AddAccountCopy.windowButton)

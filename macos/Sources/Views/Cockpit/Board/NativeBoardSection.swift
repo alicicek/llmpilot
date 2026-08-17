@@ -38,11 +38,16 @@ struct NativeBoardSection: View {
                 FlashBanner(message: flash, onDismiss: { actions.dismissFlash() })
             }
             ZStack(alignment: .trailing) {
-                // The board row is headerPx+trackPx = 1400pt — wider than
-                // the default 1180pt window. The web cockpit's viewport
-                // scrolls it; natively the window is resizable AND this
-                // scrolls, so nothing is ever clipped into unreachability.
-                ScrollView(.horizontal, showsIndicators: true) {
+                // F16 (fresh-user audit 2026-08-16): the board row used to
+                // be a FIXED headerPx+trackPx (1400pt) wider than the
+                // default 1180pt window, scrolled horizontally so nothing
+                // was unreachable — but macOS hides scroll indicators until
+                // a trackpad scroll, so at any width under 1400pt the day
+                // clipped with no visible hint. BoardView now derives its
+                // track width from this section's own live width (see its
+                // GeometryReader), so it always fills — and never
+                // overflows — the space given to it; no horizontal
+                // ScrollView is needed as a result.
                 BoardView(
                     state: state,
                     schedules: state.schedules,
@@ -61,7 +66,6 @@ struct NativeBoardSection: View {
                     },
                     onFullyBooked: { actions.flashLocal($0) },
                     selectedID: $selectedID)
-                }
 
                 if let sel = selectedInspector {
                     BoardInspector(

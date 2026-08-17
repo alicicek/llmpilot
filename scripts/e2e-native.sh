@@ -316,13 +316,14 @@ OSA
     *) echo "E2E NATIVE: FAIL — tour-card never auto-opened over the board (last read: '$COUNTER')"; exit 1 ;;
   esac
   # This demo fleet has 4 accounts (asserted above) with one active, so every
-  # step's target is on screen — no renumbering, want the full 4.
-  case "$COUNTER" in "STEP 1 OF 4") : ;; *)
-    echo "E2E NATIVE: FAIL — want 'STEP 1 OF 4' on the demo fleet, got '$COUNTER'"; exit 1 ;;
+  # step's target is on screen — no renumbering, want the full 3 (the tour
+  # lost its daemon-pill step with the pill itself; audit F15).
+  case "$COUNTER" in "STEP 1 OF 3") : ;; *)
+    echo "E2E NATIVE: FAIL — want 'STEP 1 OF 3' on the demo fleet, got '$COUNTER'"; exit 1 ;;
   esac
 
   # ---- press tour-next through every step, asserting the counter changes ----
-  for WANT in "STEP 2 OF 4" "STEP 3 OF 4" "STEP 4 OF 4"; do
+  for WANT in "STEP 2 OF 3" "STEP 3 OF 3"; do
     RESULT=$(tour_osa "tour-next" press)
     case "$RESULT" in *PRESSED*) : ;; *)
       echo "E2E NATIVE: FAIL — tour-next AXPress failed (result: $RESULT)"; exit 1 ;;

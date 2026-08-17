@@ -627,10 +627,20 @@ struct BrowserLoginStart: Decodable, Equatable {
 struct BrowserLoginStatus: Decodable, Equatable {
     var status: String // pending | done | failed
     var error: String?
+    /// Machine-readable failure class ("rate_limited" or "") — the sheet
+    /// keys its Try-again state off this, never off the prose in `error`.
+    var code: String?
     var accountID: String?
 
+    init(status: String, error: String? = nil, code: String? = nil, accountID: String? = nil) {
+        self.status = status
+        self.error = error
+        self.code = code
+        self.accountID = accountID
+    }
+
     enum CodingKeys: String, CodingKey {
-        case status, error
+        case status, error, code
         case accountID = "account_id"
     }
 }

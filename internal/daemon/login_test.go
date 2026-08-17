@@ -252,7 +252,7 @@ func TestLoginBrowserLoopbackCompletes(t *testing.T) {
 // a terminal "failed" status with the sanitized reason — the dialog stops
 // polling and shows it instead of timing out blind.
 func TestLoginBrowserStatusFailedOnExchangeError(t *testing.T) {
-	stub := &loginStub{failWith: errors.New("the sign-in server is rate-limited right now — wait a minute and try again")}
+	stub := &loginStub{failWith: ErrSignInRateLimited}
 	now := time.Now()
 	d := loginDaemon(t, stub, &now)
 	srv := httptest.NewServer(d.Handler())
@@ -277,9 +277,63 @@ func TestLoginBrowserStatusFailedOnExchangeError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pageBytes, _ := io.ReadAll(cbResp.Body)
 	_ = cbResp.Body.Close()
-	if resp, sb := doAuthed(t, http.MethodGet, srv.URL+"/v1/login/browser/status?attempt="+br["attempt_id"], "", d.authToken); resp.StatusCode != http.StatusOK || !strings.Contains(sb, `"failed"`) || !strings.Contains(sb, "rate-limited") {
-		t.Fatalf("failed-exchange status = %d (%s), want 200 failed + reason", resp.StatusCode, sb)
+	// F8 (fresh-user audit 2026-08-16): the tab is a dead end after a 429 —
+	// it must say what happened, name the retry in the app, and release the
+	// tab; the doubled "try again … and try again" copy is gone.
+	page := string(pageBytes)
+	for _, want := range []string{"rate-limited", "Try again in llmpilot", "You can close this tab"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("429 callback page lacks %q:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, "Return to llmpilot and try again") {
+		t.Errorf("429 callback page still carries the doubled retry copy:\n%s", page)
+	}
+	if resp, sb := doAuthed(t, http.MethodGet, srv.URL+"/v1/login/browser/status?attempt="+br["attempt_id"], "", d.authToken); resp.StatusCode != http.StatusOK || !strings.Contains(sb, `"failed"`) || !strings.Contains(sb, "rate-limited") || !strings.Contains(sb, `"code":"rate_limited"`) {
+		t.Fatalf("failed-exchange status = %d (%s), want 200 failed + reason + code rate_limited", resp.StatusCode, sb)
+	}
+}
+
+// TestLoginBrowserCallbackPageOtherErrorReleasesTab: a non-429 exchange
+// failure keeps its own reason and still tells the user the tab can go.
+func TestLoginBrowserCallbackPageOtherErrorReleasesTab(t *testing.T) {
+	stub := &loginStub{failWith: errors.New("the sign-in came back with a code the server rejected")}
+	now := time.Now()
+	d := loginDaemon(t, stub, &now)
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+	resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/browser", `{}`, d.authToken)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("browser start = %d (%s)", resp.StatusCode, body)
+	}
+	stub.mu.Lock()
+	redirect := stub.lastURLReq
+	stub.mu.Unlock()
+	u, err := url.Parse(redirect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cbResp, err := http.Get("http://127.0.0.1:" + u.Port() + "/callback?code=the-code&state=st-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageBytes, _ := io.ReadAll(cbResp.Body)
+	_ = cbResp.Body.Close()
+	page := string(pageBytes)
+	if !strings.Contains(page, "code the server rejected") || !strings.Contains(page, "You can close this tab") || strings.Contains(page, "Try again in llmpilot") {
+		t.Errorf("non-429 callback page wrong:\n%s", page)
+	}
+	// FAIL CASE for the wire code: this non-429 failure carries an EMPTY
+	// code on the status endpoint — the sheet must not offer the
+	// rate-limited Try-again state for it.
+	var br map[string]string
+	if err := json.Unmarshal([]byte(body), &br); err != nil {
+		t.Fatal(err)
+	}
+	if resp, sb := doAuthed(t, http.MethodGet, srv.URL+"/v1/login/browser/status?attempt="+br["attempt_id"], "", d.authToken); resp.StatusCode != http.StatusOK || !strings.Contains(sb, `"status":"failed"`) || !strings.Contains(sb, `"code":""`) {
+		t.Errorf("non-429 failure must be failed with an empty code: %d (%s)", resp.StatusCode, sb)
 	}
 }
 

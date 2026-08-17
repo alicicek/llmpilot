@@ -157,9 +157,17 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
     var licenseQuoteResult: Result<LicenseQuote, Error> = .failure(DaemonError.down)
 
     private(set) var licenseRevealRequests: [Bool] = []
+    /// PostCheckoutReload re-reads the license across the
+    /// activation-poll window — a queued sequence lets a test flip the
+    /// answer mid-window (each read shifts one entry; empty falls back to
+    /// `licenseResult`).
+    var licenseResultQueue: [Result<LicenseInfo, Error>] = []
 
     func license(reveal: Bool) async throws -> LicenseInfo {
         licenseRevealRequests.append(reveal)
+        if !licenseResultQueue.isEmpty {
+            return try licenseResultQueue.removeFirst().get()
+        }
         return try licenseResult.get()
     }
 
@@ -253,4 +261,19 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
         browserLoginStatusRequests.append(attempt)
         return try browserLoginStatusResult.get()
     }
+}
+
+// MARK: - win-back ladder test support
+
+/// A fresh, INTACT `WinbackModel` over one fixed throwaway suite. The
+/// domain is wiped before every construction, so no armed/spent state ever
+/// crosses tests — and at most one stale plist ever exists on the host,
+/// overwritten on the next run. Tests that pin PERSISTENCE (a fresh model
+/// over the SAME defaults) construct their `WinbackModel`s directly instead.
+@MainActor
+func freshWinback() -> WinbackModel {
+    let suite = "llmpilot.tests.winback"
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    return WinbackModel(defaults: defaults)
 }

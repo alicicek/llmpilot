@@ -56,9 +56,13 @@ final class PaywallViewsTests: XCTestCase {
             PriceBottomControl.resolve(remindDays: nil, remindOffsets: [2, 1]), .chooseReminder)
     }
 
-    func testPriceBottomControlChangeReminderWhenAnswered() {
+    // F11 (2026-08-16 audit, owner decision: no reminder-day control on the
+    // price screen): once
+    // the reminder is answered, the price screen's footer settles to
+    // nothing here — "Restore a purchase" is the only control left.
+    func testPriceBottomControlNoneWhenAlreadyAnswered() {
         XCTAssertEqual(
-            PriceBottomControl.resolve(remindDays: 1, remindOffsets: [2, 1]), .changeReminder)
+            PriceBottomControl.resolve(remindDays: 1, remindOffsets: [2, 1]), .none)
     }
 
     func testPriceBottomControlNoneWithNoOffsets() {
@@ -146,14 +150,14 @@ final class PaywallViewsTests: XCTestCase {
     func testMountsReceiptScreenWithoutCrashing() {
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         mountAndTeardown(ask, dots: PaywallDots(base: 0, total: 9))
     }
 
     func testMountsRemindScreenWithoutCrashing() {
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         ask.askReminder()
         mountAndTeardown(ask, dots: PaywallDots(base: 0, total: 9))
     }
@@ -161,7 +165,7 @@ final class PaywallViewsTests: XCTestCase {
     func testMountsPriceScreenWithoutCrashing() {
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         ask.askReminder()
         ask.remindDays = 1
         ask.remindContinue()
@@ -172,25 +176,25 @@ final class PaywallViewsTests: XCTestCase {
     func testMountsPausedScreenWithoutCrashingIncludingNoOfferState() {
         let ask = AskMachine(
             license: license(status: "lapsed"), quote: nil, guided: false, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         mountAndTeardown(ask)
         let askWithQuote = AskMachine(
             license: license(status: "lapsed"), quote: fourDayQuote, guided: false, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         mountAndTeardown(askWithQuote)
     }
 
     func testMountsNoTermsScreenWithoutCrashing() {
         let ask = AskMachine(
             license: license(status: "none"), quote: nil, guided: true, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         mountAndTeardown(ask, dots: PaywallDots(base: 0, total: 9))
     }
 
     func testMountsActiveScreenWithoutCrashing() {
         let ask = AskMachine(
             license: license(status: "trialing", active: true), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         ask.accountsWatched = 2
         mountAndTeardown(ask, dots: PaywallDots(base: 0, total: 9))
     }
@@ -201,7 +205,7 @@ final class PaywallViewsTests: XCTestCase {
         // state included (the warning row changes the layout).
         let ask = AskMachine(
             license: license(status: "trialing", active: true), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         ask.accountsWatched = 2
         let move = ActivationMoveModel(api: StubCockpitAPI())
         move.requestMove("/u/.claude-work") // armed → warning visible

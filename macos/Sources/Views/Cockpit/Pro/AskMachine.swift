@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 // Native port of web/src/pro/Paywall.tsx's state machine PLUS the checkout
@@ -94,21 +95,31 @@ final class AskMachine: ObservableObject {
     /// pattern).
     var now: () -> Date = Date.init
 
+    /// The win-back ladder — REQUIRED, not optional, for the same
+    /// reason `onDismiss` is: the money surface must not be constructible
+    /// with the rung silently unwired (the review-2026-08-08 P1-4 class:
+    /// plain seams nothing assigned). Shared by every ask over one install —
+    /// the composition root passes its single persisted instance.
+    let winback: WinbackModel
+
     private let api: CockpitDaemonAPI & DaemonAPI
     private var seenQuote: LadderQuote?
     private var checkoutInFlight = false
+    private var winbackObservation: AnyCancellable?
 
     init(
         license: LicenseInfo,
         quote: LadderQuote?,
         guided: Bool,
         locale: String,
+        winback: WinbackModel,
         api: CockpitDaemonAPI & DaemonAPI,
         onDismiss: @escaping () -> Void
     ) {
         self.license = license
         self.guided = guided
         self.locale = locale
+        self.winback = winback
         self.api = api
         self.onDismiss = onDismiss
         // Mirrors `useRef<Quote | null>(quote)`'s initial value — set
@@ -116,6 +127,13 @@ final class AskMachine: ObservableObject {
         // quote never fires the terms-changed bounce.
         self.quote = quote
         self.seenQuote = quote
+        // `offerCopy`/`screen` are computed off `winback.state`, but views
+        // observe THIS machine — republish, or an abandoned-checkout arm
+        // (which touches no @Published here) leaves the open price screen
+        // quoting full.
+        winbackObservation = winback.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     var paused: Bool { license.status == "lapsed" || license.status == "revoked" }
@@ -127,14 +145,23 @@ final class AskMachine: ObservableObject {
         return [2, 1].filter { $0 < quote.trialDays }
     }
 
+    /// Which rung this ask quotes (reinstating the win-back rung the
+    /// owner removed 2026-08-11 — audit F13, owner ask 2026-08-16). Armed
+    /// renders the REAL `discount_trial` terms from the live quote — never
+    /// a locally computed price — and only while the offer is genuinely
+    /// lower and this license is being asked for the first time (a lapsed
+    /// license never sees the ladder; the paused screen quotes full).
+    var offerRung: Rung {
+        guard winback.state == .armed, !paused, let quote,
+            LadderLogic.hasLowerOffer(quote: quote, locale: locale)
+        else { return .full }
+        return .discountTrial
+    }
+
     /// The one rung being purchased. Public: the screens chunk renders this
     /// directly (OfferCard's `copy` prop).
     var offerCopy: RungCopy? {
-        // One price, always (owner 2026-08-11). The corridor used to be able
-        // to swap in a cheaper `.discountTrial` rung once the buyer
-        // "declined"; that ladder is gone, so the price a buyer is shown
-        // first is the price they are shown.
-        quote.flatMap { LadderLogic.rungCopy(.full, quote: $0, locale: locale) }
+        quote.flatMap { LadderLogic.rungCopy(offerRung, quote: $0, locale: locale) }
     }
 
     /// Paywall.tsx's full branch order (Paywall.tsx:198-493).
@@ -172,14 +199,59 @@ final class AskMachine: ObservableObject {
         }
     }
 
-    /// A close control CLOSES — always, from any screen (owner 2026-08-09).
-    /// This used to run a decline ladder: the first ✕ silently swapped in a
-    /// lower offer and only the second one closed, which is a dark pattern —
-    /// the way out of a paywall must not be a sales step. The ladder was
-    /// then made an explicit "See a lower price" button, and removed
-    /// outright on 2026-08-11: the corridor quotes ONE price.
+    /// The ✕, and the win-back rung's first trigger (the owner's
+    /// 2026-08-16 ask reverses their own 2026-08-11 ladder removal). While
+    /// the ladder is INTACT and this ask could honestly render the lower
+    /// offer right now — first-time ask (not paused, not active) with a
+    /// quote whose discount is genuinely lower — the first ✕ arms the
+    /// once-per-install rung and the paywall's next render quotes the real
+    /// `discount_trial` terms instead of closing. Every other ✕ closes for
+    /// real: the second press while armed, any press once spent, the paused
+    /// screen (never asked twice), and a paywall with nothing lower to show
+    /// (arming there would eat the buyer's exit for no offer).
     func close() {
+        if winback.state == .intact, !paused, !license.active, let quote,
+            LadderLogic.hasLowerOffer(quote: quote, locale: locale)
+        {
+            winback.arm()
+            // Land on ⑧ so the NEXT render IS the discounted terms — the
+            // wave's own line. NOT the web ladder's ask-first order, which
+            // parked a ⑥/⑦ decline on the amount-less reminder question so
+            // the buyer could ✕ out without ever seeing the offer
+            // (adversarial review F3). An unanswered reminder stays honest
+            // on ⑧: its footer offers "Choose the reminder day" and
+            // `pressCheckout` still redirects to the question rather than
+            // posting an assumed value.
+            //
+            // A trial too short for a reminder question (remindOffsets
+            // empty) is pre-answered here the same unilateral way
+            // askReminder() answers it — otherwise the CTA's redirect
+            // would re-run askReminder into this SAME screen and the
+            // first press of the money button would visibly do nothing
+            // (review delta P2: the dead press on a 1-day trial).
+            if remindOffsets.isEmpty, remindDays == nil { remindDays = 1 }
+            stage = .price
+            return
+        }
         onDismiss()
+    }
+
+    /// The win-back rung's second trigger: the checkout sheet was
+    /// dismissed and the post-close license reload (PostCheckoutReload —
+    /// the decider, re-read across the daemon's activation-poll window)
+    /// ended still inactive. Same guards as the first ✕ (adversarial
+    /// review F2): paused never arms (a lapsed license abandoning a
+    /// trial-restart checkout is not being asked for the first time), and
+    /// without a quote whose discount is genuinely lower there is no offer
+    /// to arm — arming invisibly would burn the once-per-install rung with
+    /// nothing shown, then surface "the last offer" on a later first
+    /// render nobody declined. By decision time the post-close quote
+    /// refetch has landed back in `quote`, so this reads current terms.
+    func checkoutAbandoned() {
+        guard !paused, !license.active, let quote,
+            LadderLogic.hasLowerOffer(quote: quote, locale: locale)
+        else { return }
+        winback.arm()
     }
 
     /// Paywall.tsx:288-291 `onContinue` on the Remind screen.
@@ -217,6 +289,11 @@ final class AskMachine: ObservableObject {
     func applyReloadedLicense(_ newLicense: LicenseInfo) {
         guard newLicense.active else { return }
         license = newLicense
+        // activation on ANY rung ends the win-back ladder
+        // permanently. (Activations no ask ever sees — a claim from
+        // Settings with no paywall open — are spent by the composition
+        // root's own license observer.)
+        winback.noteActivated()
     }
 
     /// Called by the composition root the moment the checkout SHEET closes.
@@ -258,6 +335,22 @@ final class AskMachine: ObservableObject {
         checkoutInFlight = true
         busy = true
         checkoutError = nil
+        // Pre-flight license re-read (found in review): the daemon keeps
+        // an activation poll alive for up to 10 minutes (license.go
+        // pollFor), far past PostCheckoutReload's decision window, and a
+        // second checkout would BOTH bill again AND cancel the poll that
+        // was about to activate the first purchase (startActivationPoll's
+        // pollCancel). By press time a slow activation has had seconds
+        // more to land — if it has, route to "Pro is on" instead of
+        // selling twice. A failed read proves nothing and must not block
+        // a legitimate purchase (the worker re-validates everything
+        // anyway), so only a POSITIVE active read diverts.
+        if let fresh = try? await api.license(reveal: false), fresh.active {
+            applyReloadedLicense(fresh)
+            checkoutInFlight = false
+            busy = false
+            return
+        }
         do {
             let result = try await api.licenseCheckout(
                 rung: copy.rung.rawValue, echo: copy.echo, remindDaysBefore: remindDays)

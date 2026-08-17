@@ -46,19 +46,37 @@ struct BoardView: View {
                 .padding(32)
         } else {
             let inputs = scheduleInputs
-            ZStack(alignment: .topLeading) {
-                VStack(spacing: 0) {
-                    BoardAxis()
-                    ForEach(state.accounts) { account in
-                        laneRow(account: account, inputs: inputs)
-                        if account.id != state.accounts.last?.id {
-                            Divider().overlay(CockpitTheme.hairSoft)
+            // F16 (fresh-user audit 2026-08-16): the row used to be a FIXED
+            // headerPx+trackPx (1400pt) laid out inside a horizontal
+            // ScrollView — at any cockpit width narrower than that the day
+            // clipped at the right edge with no visible scroll hint. A
+            // GeometryReader here measures the board's own available width
+            // every render and derives a fluid track width from it
+            // (BoardGeometry.trackWidth(forAvailable:)); every descendant
+            // (BoardAxis, BoardNowLine, each lane's BoardTrackView and its
+            // pieces) reads that live width back out through the
+            // `boardTrackPx` environment value instead of the old fixed
+            // `BoardGeometry.trackPx` constant, so the whole row always
+            // fills — and never overflows — its container. See
+            // NativeBoardSection.swift for the ScrollView this replaced.
+            GeometryReader { proxy in
+                let trackPx = BoardGeometry.trackWidth(forAvailable: proxy.size.width)
+                ZStack(alignment: .topLeading) {
+                    VStack(spacing: 0) {
+                        BoardAxis()
+                        ForEach(state.accounts) { account in
+                            laneRow(account: account, inputs: inputs)
+                            if account.id != state.accounts.last?.id {
+                                Divider().overlay(CockpitTheme.hairSoft)
+                            }
                         }
                     }
+                    BoardNowLine(nowMinutes: nowMinutes, totalHeight: totalHeight)
                 }
-                BoardNowLine(nowMinutes: nowMinutes, totalHeight: totalHeight)
+                .frame(width: BoardGeometry.headerPx + trackPx, height: totalHeight, alignment: .topLeading)
+                .environment(\.boardTrackPx, trackPx)
             }
-            .frame(width: BoardGeometry.headerPx + BoardGeometry.trackPx, alignment: .topLeading)
+            .frame(height: totalHeight)
             .background(CockpitTheme.win)
             .clipped()
         }

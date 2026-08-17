@@ -153,6 +153,27 @@ final class ProLadderLogicTests: XCTestCase {
         XCTAssertNil(LadderLogic.rungCopy(.nocardTrial, quote: quote, locale: "en-GB"))
     }
 
+    func testHasLowerOfferRequiresAGenuinelyLowerSameCurrencyPrice() {
+        // the win-back rung only exists while the discount is
+        // genuinely lower in the buyer's OWN resolved currency.
+        XCTAssertTrue(LadderLogic.hasLowerOffer(quote: quote, locale: "en-GB"))
+        XCTAssertTrue(LadderLogic.hasLowerOffer(quote: quote, locale: "en-US"))
+
+        // Fail case: an active launch window sells full AT the discount —
+        // an equal price is no offer.
+        let launch = LadderQuote(
+            trialDays: 4, chargeDate: quote.chargeDate,
+            pricesFull: ["gbp": 599], pricesDiscount: ["gbp": 599])
+        XCTAssertFalse(LadderLogic.hasLowerOffer(quote: launch, locale: "en-GB"))
+
+        // Fail case: rungs resolving to DIFFERENT currencies for one locale
+        // cannot honestly compare minor units — no offer, never a guess.
+        let mismatched = LadderQuote(
+            trialDays: 4, chargeDate: quote.chargeDate,
+            pricesFull: ["usd": 1299], pricesDiscount: ["gbp": 599])
+        XCTAssertFalse(LadderLogic.hasLowerOffer(quote: mismatched, locale: "en-US"))
+    }
+
     func testTermsSigIsStableUnderEqualContentAndChangesOnDrift() {
         let same = LadderQuote(
             trialDays: quote.trialDays, chargeDate: Date(), // charge_date is NOT part of the signature

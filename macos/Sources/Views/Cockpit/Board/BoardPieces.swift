@@ -95,8 +95,12 @@ struct BoardChargeBlock: View {
     var hovered = false
     var ghost = false
 
-    private var left: Double { BoardGeometry.toPx(Double(trigger)) }
-    private var width: Double { max(0, BoardGeometry.toPx(Double(reset)) - BoardGeometry.toPx(Double(trigger))) }
+    /// F16: the board's live track width — see BoardGeometry.swift's
+    /// `boardTrackPx` environment key.
+    @Environment(\.boardTrackPx) private var trackPx
+
+    private var left: Double { BoardGeometry.toPx(Double(trigger), trackPx: trackPx) }
+    private var width: Double { max(0, BoardGeometry.toPx(Double(reset), trackPx: trackPx) - BoardGeometry.toPx(Double(trigger), trackPx: trackPx)) }
 
     var body: some View {
         Group {
@@ -226,8 +230,12 @@ struct BoardNowLine: View {
     /// vertical extent.
     let totalHeight: Double
 
-    private var left: Double { BoardGeometry.headerPx + BoardGeometry.toPx(Double(nowMinutes)) }
-    private var washWidth: Double { max(0, BoardGeometry.toPx(Double(nowMinutes))) }
+    /// F16: the board's live track width — see BoardGeometry.swift's
+    /// `boardTrackPx` environment key.
+    @Environment(\.boardTrackPx) private var trackPx
+
+    private var left: Double { BoardGeometry.headerPx + BoardGeometry.toPx(Double(nowMinutes), trackPx: trackPx) }
+    private var washWidth: Double { max(0, BoardGeometry.toPx(Double(nowMinutes), trackPx: trackPx)) }
     private var lineHeight: Double { max(0, totalHeight - 14) }
     private var washHeight: Double { max(0, totalHeight - 30) }
 
@@ -252,17 +260,26 @@ struct BoardNowLine: View {
                 .fixedSize()
                 .position(x: left, y: 8)
         }
-        .frame(width: BoardGeometry.headerPx + BoardGeometry.trackPx, height: totalHeight, alignment: .topLeading)
+        .frame(width: BoardGeometry.headerPx + trackPx, height: totalHeight, alignment: .topLeading)
         .allowsHitTesting(false)
     }
 }
 
 // MARK: - Axis
 
-/// web/src/board/Axis.tsx — shared 24h axis: hour ticks, labels every 2h,
-/// right cap "24h · local". 0..22 only — the right cap IS the 24h marker.
+/// web/src/board/Axis.tsx — shared 24h axis: hour ticks, labels every 2h
+/// (F16: every 4h once the live track drops under ~900pt, so the labels
+/// never crowd together at the cockpit's minimum width), right cap
+/// "24h · local". 0..22 only — the right cap IS the 24h marker.
 struct BoardAxis: View {
-    private var totalWidth: Double { BoardGeometry.headerPx + BoardGeometry.trackPx }
+    /// F16: the board's live track width — see BoardGeometry.swift's
+    /// `boardTrackPx` environment key.
+    @Environment(\.boardTrackPx) private var trackPx
+
+    private var totalWidth: Double { BoardGeometry.headerPx + trackPx }
+    /// F16: hour-label stride — thins from every 2h to every 4h once the
+    /// TRACK itself (not header+track) is narrower than ~900pt.
+    private var labelStrideHours: Int { trackPx < 900 ? 4 : 2 }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -275,13 +292,13 @@ struct BoardAxis: View {
                 Rectangle()
                     .fill(CockpitTheme.hair)
                     .frame(width: 1, height: 5)
-                    .position(x: BoardGeometry.headerPx + BoardGeometry.toPx(Double(h * 60)), y: 27.5)
+                    .position(x: BoardGeometry.headerPx + BoardGeometry.toPx(Double(h * 60), trackPx: trackPx), y: 27.5)
             }
-            ForEach(Array(stride(from: 0, through: 22, by: 2)), id: \.self) { h in
+            ForEach(Array(stride(from: 0, to: 24, by: labelStrideHours)), id: \.self) { h in
                 Text(String(format: "%02d", h))
                     .font(.system(size: 9.5))
                     .foregroundColor(CockpitTheme.ter)
-                    .position(x: BoardGeometry.headerPx + BoardGeometry.toPx(Double(h * 60)), y: 14)
+                    .position(x: BoardGeometry.headerPx + BoardGeometry.toPx(Double(h * 60), trackPx: trackPx), y: 14)
             }
             Text("24h · local")
                 .font(.system(size: 9.5))
@@ -306,7 +323,11 @@ struct BoardHud: View {
     /// a parameter (not hardcoded) since it is one in Hud.tsx's own props.
     let warn: String?
 
-    private var left: Double { BoardGeometry.toPx(Double(reset)) }
+    /// F16: the board's live track width — see BoardGeometry.swift's
+    /// `boardTrackPx` environment key.
+    @Environment(\.boardTrackPx) private var trackPx
+
+    private var left: Double { BoardGeometry.toPx(Double(reset), trackPx: trackPx) }
 
     var body: some View {
         ZStack(alignment: .topLeading) {

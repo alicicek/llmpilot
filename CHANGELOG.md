@@ -4,6 +4,73 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-08-17
+
+The build the launch posts point at: a fresh-user walk of 1.3.0 on a
+reset Mac (real download, real Gatekeeper) found one dead end and a dozen
+first-ten-minutes defects. All of them are fixed here; nothing about
+accounts, schedules, or settings changes.
+
+### Added
+
+- **The price screen makes one lower offer before it closes.** Press ✕ and
+  the first time it re-draws with the lower price instead of closing —
+  £5.99 / $7.99, the same free trial, quoted live from the payment server,
+  the previous price struck through, no deadline attached. Press ✕ again
+  and it closes. Backing out of checkout without paying arms the same
+  single offer for the next time the screen opens. It happens once per
+  install, and buying at any price — or restoring a purchase — ends it
+  permanently.
+
+### Fixed
+
+- **The cockpit no longer goes click-dead after the first board tap.** On
+  macOS 26.5 the first tick sound of a session could throw inside the
+  click that played it, after which every button in the window ignored
+  the mouse while hover, menus and the window frame still worked — it read
+  as frozen and a relaunch did not clear it. The sound engine is now built
+  before it starts and never runs inside a click; a new end-to-end gate
+  posts real mouse clicks (not accessibility presses) to prove the window
+  stays alive.
+- **A rate-limited sign-in reads as one.** A first sign-in that met a 429
+  used to pause every account's token refresh for 24 hours and the doctor
+  called it "a token refresh". A sign-in 429 now pauses refreshes for one
+  hour, the doctor says a sign-in was rate-limited and that signing in
+  still works, and the browser tab says "you can close this tab" once
+  instead of "try again" twice.
+- **No "unregistered" nudge on first launch.** The daemon posted an event
+  and a notification naming the very account first run was about to add.
+  The nudge now waits until a fleet exists — it is for a new sign-in
+  appearing later.
+- **The cockpit comes to the front when it should.** Opening the sign-in
+  window from the menu bar and closing it could leave the cockpit opening
+  behind the previous app with that app's menu bar.
+- **First run's account inventory shows what you own.** Each detected
+  account now carries the same live lane the menu bar shows (5-hour,
+  weekly, and per-model bars with percent and reset time), a folder whose
+  sign-in is gone is listed as signed out with a Sign in again button
+  instead of vanishing, Add account is a real button, and the copy agrees
+  in number with the count.
+- **The switch demo tells its whole story.** The first account's percent
+  is visible as it climbs and reads 97 at the switch; the second account
+  starts moving after the handoff so you can see work continue. Demo
+  identities read as real addresses.
+- **The price screen breathes.** More room in the price card, and its
+  footer holds Restore a purchase only — the reminder day is chosen on its
+  own screen.
+- **The board fits the window — any window.** The 24-hour axis derives
+  from the live width instead of a fixed 1400pt row inside a hidden
+  scroller (the day used to clip at about 18:00 at the size the window
+  opens with), and the lane column shows Fable, not F, with the full reset
+  time.
+- **A calmer cockpit header.** The permanently green Daemon active pill is
+  gone (the slot shows only Connecting or Not running), the ? and settings
+  controls sit left of Add account and Fresh window, and the guided tour
+  has three steps. The first-run window is fixed at its designed size; the
+  cockpit stays resizable.
+- **A rate-limited sign-in offers an explicit retry.** The sheet says to
+  wait a minute and its primary action reads Try again.
+
 ## [1.3.0] - 2026-08-14
 
 ### Added

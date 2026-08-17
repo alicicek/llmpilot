@@ -130,9 +130,15 @@ private struct SwitchDemoBody: View {
                     Capsule()
                         .fill(laneColor(percent))
                         .frame(width: geo.size.width * CGFloat(min(100, max(0, percent))) / 100)
-                        // A single animation for the 71→97 climb (climbMs)
-                        // — never a stepped tick.
-                        .animation(.easeInOut(duration: Double(SwitchDemoModel.climbMs) / 1000), value: percent)
+                        // F9 (2026-08-16 audit): the model now advances
+                        // `percent` in small ticks (climbTickMs for A's
+                        // 71→97 climb, creepTickMs for B's post-handoff
+                        // creep) rather than one instant jump, so the
+                        // number and the bar climb together. Easing each
+                        // tick over the TICK interval (not the old fixed
+                        // climbMs) keeps the fill smooth at both cadences
+                        // instead of chasing an ever-moving target.
+                        .animation(.easeInOut(duration: Double(SwitchDemoModel.climbTickMs) / 1000), value: percent)
                 }
             }
             .frame(height: 6)
@@ -154,6 +160,14 @@ private struct SwitchDemoBody: View {
     /// its trailing "N%" (plus a sentence-case "Active" chip when it's the
     /// active one); a rested lane trades its percent for a "Resting until
     /// HH:MM" caption instead — never both.
+    ///
+    /// HARD swap between the two, never a crossfade: the row animates
+    /// `isResting` for its chrome, and SwiftUI's default opacity transition
+    /// drew "Resting until 17:19" on top of "97% Active" for the swap's
+    /// duration — the one number the demo exists to show was never cleanly
+    /// legible and two lanes read Active at once (critic pass 2026-08-17).
+    /// `.transition(.identity)` keeps the last climbing frame — 97% — as
+    /// the last thing seen before the caption replaces it outright.
     @ViewBuilder
     private func trailing(isActive: Bool, isResting: Bool, percent: Int, lane: EduLane) -> some View {
         if isResting {
@@ -162,6 +176,7 @@ private struct SwitchDemoBody: View {
                 .foregroundColor(CockpitTheme.ter)
                 .lineLimit(1)
                 .frame(minWidth: 92, alignment: .trailing)
+                .transition(.identity)
         } else {
             HStack(spacing: 6) {
                 Text("\(percent)%")
@@ -178,6 +193,7 @@ private struct SwitchDemoBody: View {
                     .foregroundColor(CockpitTheme.okTx)
                     .opacity(isActive ? 1 : 0)
             }
+            .transition(.identity)
         }
     }
 

@@ -47,6 +47,7 @@
 		4520C8CFEA4477F650DBD06E /* OnboardingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CBA71E5453077CA24E5152C /* OnboardingModel.swift */; };
 		4B50BF9E04BEE069C9E6146F /* LoginFlowModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1C0822722B47B44C3B1D97E /* LoginFlowModel.swift */; };
 		4D88776A9B845029071DFAB2 /* FreshWindowMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = B138765F7CF90E93C81FCDDB /* FreshWindowMenu.swift */; };
+		5287671BF9D0488DA83E215E /* BoardAudioTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08F7CD4A9AA3330E2C77E974 /* BoardAudioTests.swift */; };
 		5491A718B01CD0E3A00A8C96 /* DaemonLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91EBE1758BF5088559041005 /* DaemonLauncher.swift */; };
 		54C54D4D60E7FE61A3EC63B4 /* dev.llmpilot.daemon.plist in CopyFiles */ = {isa = PBXBuildFile; fileRef = 9E409B850E1909A108F0BE86 /* dev.llmpilot.daemon.plist */; };
 		54F5753508409E62061D62F1 /* SwitchDemoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C730677D08928884DF92187 /* SwitchDemoView.swift */; };
@@ -99,6 +100,7 @@
 		B65EF40EFE076CBB7C532612 /* HistoryDerivationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FC0983B969C421DC9EAA1B2 /* HistoryDerivationTests.swift */; };
 		BCB6F559CB90BB19BEAB2D37 /* TourModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30E8B23AF387346C89AC0939 /* TourModel.swift */; };
 		BD3FF2A95D95D71DB6E1A8F2 /* ScheduleActionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7909A947954C010DA65F7699 /* ScheduleActionsTests.swift */; };
+		BDC593C537AD4C7B856F4940 /* OnboardingSecondaryButtonStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A659592EBB95E55ED0EBF31 /* OnboardingSecondaryButtonStyle.swift */; };
 		C3F57708204CFD7AD8795C61 /* ProOnboardingModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39CB6C47FB5E6DBF26FA50AB /* ProOnboardingModelTests.swift */; };
 		C55F368A490AD606DC7702F0 /* CockpitDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0698356440AF4E9B99421E48 /* CockpitDecodingTests.swift */; };
 		C5759CB532E6E1FFDEA962B3 /* OnboardingFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71DE83494C533364C78AC294 /* OnboardingFlowView.swift */; };
@@ -171,12 +173,14 @@
 		064B214DFA2F3CF859D25132 /* CheckoutSheetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckoutSheetTests.swift; sourceTree = "<group>"; };
 		0698356440AF4E9B99421E48 /* CockpitDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CockpitDecodingTests.swift; sourceTree = "<group>"; };
 		08837C38A931F867D09A8BA7 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
+		08F7CD4A9AA3330E2C77E974 /* BoardAudioTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardAudioTests.swift; sourceTree = "<group>"; };
 		09483B64E0DA178D5E14B627 /* AXTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXTestSupport.swift; sourceTree = "<group>"; };
 		0B070A1CBD84AD69CFB17F2C /* llmpilot.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = llmpilot.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0BFE4E7464924221863F60BC /* TrackDragModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackDragModelTests.swift; sourceTree = "<group>"; };
 		0F453E040D72E724CB01C13C /* HistoryCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryCards.swift; sourceTree = "<group>"; };
 		109CE6394902AF4D2464EBB8 /* Format.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Format.swift; sourceTree = "<group>"; };
 		16E6F15C68FC1D775F5A984A /* FreshWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreshWindowTests.swift; sourceTree = "<group>"; };
+		1A659592EBB95E55ED0EBF31 /* OnboardingSecondaryButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingSecondaryButtonStyle.swift; sourceTree = "<group>"; };
 		1C730677D08928884DF92187 /* SwitchDemoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitchDemoView.swift; sourceTree = "<group>"; };
 		1C7876EA16A1BC16C09C3E96 /* llmpilotTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = llmpilotTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1CB20D706D159D55B0AD18E3 /* NoticeNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoticeNotifier.swift; sourceTree = "<group>"; };
@@ -466,6 +470,7 @@
 				A810711A076E28D1A4679B07 /* AddAccountModelTests.swift */,
 				26CEE21F87AE723D873D3986 /* AnsiVectorTests.swift */,
 				09483B64E0DA178D5E14B627 /* AXTestSupport.swift */,
+				08F7CD4A9AA3330E2C77E974 /* BoardAudioTests.swift */,
 				FAEBAD1312F887601B0CE322 /* BoardPiecesTests.swift */,
 				5325CCCBEF1FB57BD9736A69 /* BoardVectorTests.swift */,
 				064B214DFA2F3CF859D25132 /* CheckoutSheetTests.swift */,
@@ -530,6 +535,7 @@
 				D614ED27D39ED126ED2A33B0 /* HistoryMath.swift */,
 				1CB20D706D159D55B0AD18E3 /* NoticeNotifier.swift */,
 				E5EA6968A6194D6AEC8FBDF2 /* NoticeStream.swift */,
+				1A659592EBB95E55ED0EBF31 /* OnboardingSecondaryButtonStyle.swift */,
 				540EA8D2C6CF625B97EE521B /* Theme.swift */,
 			);
 			path = Support;
@@ -708,6 +714,7 @@
 				C5759CB532E6E1FFDEA962B3 /* OnboardingFlowView.swift in Sources */,
 				4520C8CFEA4477F650DBD06E /* OnboardingModel.swift in Sources */,
 				FDACAC6D894EDA5FD69AF014 /* OnboardingPreviews.swift in Sources */,
+				BDC593C537AD4C7B856F4940 /* OnboardingSecondaryButtonStyle.swift in Sources */,
 				12755174C635E47A95F874A5 /* PaywallViews.swift in Sources */,
 				7648F4C5CF4F82381F04702A /* ProFlowCoordinator.swift in Sources */,
 				737518F783B3AC6FD0401562 /* ProOfferCard.swift in Sources */,
@@ -743,6 +750,7 @@
 				2DF93BE50F1AC7FBDE9A77CE /* AXTestSupport.swift in Sources */,
 				02784BC2467503525DA197F4 /* AddAccountModelTests.swift in Sources */,
 				903B04E0BEEF2DA51492707F /* AnsiVectorTests.swift in Sources */,
+				5287671BF9D0488DA83E215E /* BoardAudioTests.swift in Sources */,
 				FCB29657245F65D0A4CABF7A /* BoardPiecesTests.swift in Sources */,
 				77641BA27D51919E6734303F /* BoardVectorTests.swift in Sources */,
 				AAD7FBE61234C0AF84A5A8C0 /* CheckoutSheetTests.swift in Sources */,

@@ -76,8 +76,12 @@ enum OnboardingAccountsCopy {
         }
         // Detected accounts are adopted automatically (owner 2026-08-11),
         // so the copy states that rather than asking for an action the
-        // screen no longer requires.
-        return "Signed in on this Mac — llmpilot is adding them and will watch their limits live."
+        // screen no longer requires. Number agreement (audit 2026-08-16
+        // F6): the headline above already says "1 account" vs "N
+        // accounts" — this line used to say "adding them" regardless.
+        return groupCount == 1
+            ? "Signed in on this Mac — llmpilot is adding it and will watch its limits live."
+            : "Signed in on this Mac — llmpilot is adding them and will watch their limits live."
     }
 
     /// The corridor's view of /v1/detect — dirs whose sign-in is actually
@@ -94,6 +98,22 @@ enum OnboardingAccountsCopy {
     /// their remedy in the Add-account sheet, same as the web.
     static func corridorCandidates(_ detected: [DetectedDir]?) -> [DetectedDir]? {
         detected.map { dirs in dirs.filter { $0.signedIn != false } }
+    }
+
+    /// F1 (audit 2026-08-16): `corridorCandidates` above hides a phantom
+    /// folder ON PURPOSE — never adopted, never counted in "We found N
+    /// account(s)." — but hiding it entirely left a stranger asking why
+    /// a second account they knew they owned did not show (audit
+    /// 2026-08-16, F1) — an account
+    /// they knew they owned. This is the complement: the CONFIRMED-signed-
+    /// out set (`signedIn == false`, never `nil` — doubt about a live
+    /// credential must still hide nothing, same rule `corridorCandidates`
+    /// follows), acknowledged on screen as a separate, dimmed, non-counted
+    /// row with its own "Sign in again" remedy. `nil` (still detecting)
+    /// answers empty, matching `corridorCandidates`' own "nothing to say
+    /// yet" reading for that state.
+    static func signedOutCandidates(_ detected: [DetectedDir]?) -> [DetectedDir] {
+        (detected ?? []).filter { $0.signedIn == false }
     }
 
     /// Which detected config dirs still need registering. Pure, so the
@@ -333,6 +353,14 @@ struct OnboardingAccountsStepView: View {
     let continueLabel: String
     var onAddAccount: () -> Void = {}
     var onContinue: () -> Void = {}
+    /// F1: the acknowledged signed-out row's remedy — the SAME path
+    /// AddAccountSheet's own "Sign in again" row uses
+    /// (AddAccountSheet.swift's `openLoginWindow`, wired by the integrator
+    /// to `LoginWindowController.shared.open()`), not the add-account sheet
+    /// itself: a stranger who already knows which account is dead should
+    /// land straight on the sign-in window, not a second screen naming it
+    /// again.
+    var onSignInAgain: () -> Void = { LoginWindowController.shared.open() }
     /// Adopt every DETECTED-but-unregistered config dir (owner 2026-08-11:
     /// "can't we make this an automatic detection thing"). Detection was
     /// already automatic — this screen has always LISTED what it found —
@@ -360,6 +388,22 @@ struct OnboardingAccountsStepView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var groups: [EmailGroup] { LadderLogic.groupByEmail(candidates ?? []) }
+
+    /// F1: confirmed signed-out folders, grouped the same way the live list
+    /// is (so a same-person-different-case pair reads consistently on both
+    /// lists) — acknowledged, never counted, never adopted.
+    private var signedOutGroups: [EmailGroup] {
+        LadderLogic.groupByEmail(OnboardingAccountsCopy.signedOutCandidates(detected))
+    }
+
+    /// The fleet account backing a group, if any — the same match
+    /// `LadderLogic.sessionPercent` makes (primary config dir first, email
+    /// fallback), pulled out locally since this view now needs the
+    /// account's full bucket list, not just its rounded session percent.
+    private func matchedAccount(_ g: EmailGroup) -> AccountState? {
+        accounts.first { $0.configDir == g.primary.configDir }
+            ?? accounts.first { $0.email == g.email }
+    }
 
     private func adoptDetectedOnce() {
         guard !adoptRequested, !OnboardingAccountsCopy.dirsToAdopt(detected).isEmpty else { return }
@@ -463,6 +507,7 @@ struct OnboardingAccountsStepView: View {
             // the no-CLI rule and fills the slot with the mechanism, an
             // example outcome, and the trust fact.
             OnboardingEmptyAccountsView()
+            signedOutSection.padding(.top, FlowLayout.visualToDisclosure)
         } else {
             VStack(spacing: 0) {
                 ForEach(Array(groups.enumerated()), id: \.element.email) { i, g in
@@ -475,6 +520,7 @@ struct OnboardingAccountsStepView: View {
                     }
                 }
             }
+            .frame(maxWidth: FlowLayout.copyColumnMaxWidth, alignment: .leading)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("onboarding-accounts-list")
 
@@ -496,23 +542,89 @@ struct OnboardingAccountsStepView: View {
                     .accessibilityIdentifier("onboarding-adopt-failed")
             }
 
-            // Ghost/secondary here — the footer's Continue is the one
+            signedOutSection.padding(.top, FlowLayout.visualToDisclosure)
+
+            // Secondary here — the footer's Continue is the one
             // primary action once accounts are already on screen (design
             // critique 2026-08-09: never two primary-styled buttons at once).
-            Button("Add account", action: onAddAccount)
-                .pwGhost()
-                .accessibilityIdentifier("onboarding-add-account")
+            // F4 (audit 2026-08-16): was bare 12pt grey text with no icon
+            // and no border (PWGhostButtonStyle) while the menu bar renders
+            // the same verb with an icon — one grammar now, everywhere.
+            Button(action: onAddAccount) {
+                Label("Add account", systemImage: "person.badge.plus")
+            }
+            .onboardingSecondary()
+            .padding(.top, FlowLayout.visualToDisclosure)
+            .accessibilityIdentifier("onboarding-add-account")
         }
     }
 
+    /// F1: the acknowledged signed-out section — rendered only when there
+    /// is something to acknowledge, so a Mac with no phantom folders shows
+    /// nothing extra here.
+    @ViewBuilder
+    private var signedOutSection: some View {
+        if !signedOutGroups.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                // A caption so the headline's count ("We found 1 account.")
+                // and this list never contradict each other: these folders
+                // are found but not counted, and the caption says why
+                // (critic pass 2026-08-17).
+                Text("Also on this Mac, signed out — not counted above.")
+                    .font(CockpitTheme.Onboarding.annotation)
+                    .foregroundColor(CockpitTheme.ter)
+                    .padding(.bottom, 6)
+                    .accessibilityIdentifier("onboarding-accounts-signedout-caption")
+                ForEach(Array(signedOutGroups.enumerated()), id: \.element.email) { i, g in
+                    signedOutRow(for: g)
+                    if i < signedOutGroups.count - 1 {
+                        Divider().overlay(CockpitTheme.hairSoft)
+                    }
+                }
+            }
+            .frame(maxWidth: FlowLayout.copyColumnMaxWidth, alignment: .leading)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("onboarding-accounts-signedout")
+        }
+    }
+
+    private func signedOutRow(for g: EmailGroup) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Circle()
+                .fill(CockpitTheme.hairSoft)
+                .frame(width: 26, height: 26)
+                .overlay(
+                    Text(String((g.email.first.map(String.init) ?? "?")).uppercased())
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(CockpitTheme.ter)
+                )
+            Text("\(g.email) — signed out")
+                .font(CockpitTheme.Onboarding.controlLabel)
+                .foregroundColor(CockpitTheme.ter)
+                .lineLimit(1)
+            Spacer()
+            Button(AddAccountCopy.signInAgain, action: onSignInAgain)
+                .onboardingSecondary()
+                .accessibilityIdentifier("onboarding-signin-again-\(g.email)")
+        }
+        .padding(.vertical, 8)
+        .opacity(0.7)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("onboarding-signedout-row-\(g.email)")
+    }
+
     private func row(for g: EmailGroup) -> some View {
-        // A non-nil percent means the identity is IN the fleet — for this
-        // screen that IS the "it was added" signal (audit 2026-08-11: a bare
-        // trailing "0%" was the only confirmation automatic adoption ever
-        // gave, and it read as noise, not an outcome). Green is meaning
-        // here — guaranteed/registered — not decoration.
-        let pct = LadderLogic.sessionPercent(accounts: accounts, group: g)
-        return HStack(alignment: .center, spacing: 10) {
+        // A matched fleet account means the identity is IN the fleet — for
+        // this screen that IS the "it was added" signal (audit 2026-08-11).
+        // F2 (audit 2026-08-16): the row used to end at a bare "Added ·
+        // N%" with ~80% of its width empty. It now carries the SAME live
+        // lane the menu bar shows per account — label · bar · ring · % ·
+        // resets, one line per bucket (`RunwayBar`, Views/RunwayBar.swift —
+        // reused verbatim rather than a second bar/ring grammar for the
+        // same numbers).
+        let acct = matchedAccount(g)
+        let buckets = acct?.snapshot?.buckets ?? []
+        return HStack(alignment: .top, spacing: 10) {
             // Same avatar disc as the blind-spot inventory's lanes
             // (EduDemoLane) — adjacent screens shouldn't speak two identity
             // grammars for the same accounts.
@@ -524,19 +636,37 @@ struct OnboardingAccountsStepView: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(.white)
                 )
-            VStack(alignment: .leading, spacing: 2) {
-                Text(g.email).font(CockpitTheme.Onboarding.controlLabel)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(g.email).font(CockpitTheme.Onboarding.controlLabel)
+                    Spacer()
+                    if acct != nil {
+                        Text("Added")
+                            .font(CockpitTheme.numeric(11, weight: .semibold))
+                            .foregroundColor(CockpitTheme.okTx)
+                    }
+                }
                 if isAmbiguous(g) {
                     Text(g.dirs.map(\.configDir).joined(separator: " · "))
                         .font(CockpitTheme.Onboarding.annotation)
                         .foregroundColor(CockpitTheme.ter)
                 }
-            }
-            Spacer()
-            if let pct {
-                Text(pct > 0 ? "Added · \(pct)%" : "Added")
-                    .font(CockpitTheme.numeric(11, weight: .semibold))
-                    .foregroundColor(CockpitTheme.okTx)
+                if !buckets.isEmpty {
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(Array(buckets.enumerated()), id: \.offset) { _, bucket in
+                            RunwayBar(bucket: bucket, now: Date())
+                        }
+                    }
+                    .padding(.top, 2)
+                } else {
+                    // Being added but no snapshot has landed yet, or still
+                    // mid-adopt — a quiet placeholder, never a blank row
+                    // under the email (audit 2026-08-16 F2).
+                    Text("Adding…")
+                        .font(CockpitTheme.Onboarding.annotation)
+                        .foregroundColor(CockpitTheme.ter)
+                        .padding(.top, 2)
+                }
             }
         }
         .padding(.vertical, 8)

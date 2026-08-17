@@ -11,6 +11,14 @@ import Foundation
 // screen and what it means for them — a step whose target is absent (no
 // second account to switch to) is dropped, and the remaining steps
 // renumber (Tour.tsx:58's `live` filter, exactly mirrored below).
+//
+// DEVIATION from Tour.tsx per audit F15 (2026-08-16, owner decision: the
+// tour loses its daemon step): the web's fourth step
+// (target "daemon", spotlighting the always-on "Daemon active" pill) is
+// dropped along with that pill (ConnectivityViews.swift/NativeToolbar.swift)
+// — three steps now, not four. Its one useful sentence ("a menu bar manager
+// like Ice or Bartender may hide the icon") survives, folded into the new
+// last step's body below rather than lost outright.
 
 /// Tour.tsx's `TourStep` interface — `target` is the anchor id a
 /// `.tourAnchor(_:)`-tagged view carries (TourOverlayView.swift).
@@ -21,8 +29,13 @@ struct TourStep: Equatable, Identifiable {
     let body: String
 }
 
-/// App.tsx:92-113 `TOUR_STEPS` — verbatim copy, same order, same four
-/// targets (runway/switch/fresh-window/daemon).
+/// App.tsx:92-113 `TOUR_STEPS`, minus the dropped "daemon" step (F15) —
+/// three targets now (runway/switch/fresh-window), same order and copy for
+/// the two it keeps unchanged. The fresh-window step's body picks up the
+/// one sentence worth saving from the dropped step (see the DEVIATION note
+/// above): this is now the tour's own last step, and the least intrusive
+/// existing surface to keep that sentence reachable without adding a new
+/// screen.
 enum TourStepCatalog {
     static let all: [TourStep] = [
         TourStep(
@@ -36,11 +49,7 @@ enum TourStepCatalog {
         TourStep(
             target: "fresh-window",
             title: "Open a window on your own clock",
-            body: "Book a fresh 5-hour window ahead of time and it opens unattended, so your limits reset when you actually work."),
-        TourStep(
-            target: "daemon",
-            title: "It keeps running without this window",
-            body: "Watching continues in the background. The icon lives at the top right of your screen — a menu bar manager like Ice or Bartender may hide it."),
+            body: "Book a fresh 5-hour window ahead of time and it opens unattended, so your limits reset when you actually work. llmpilot keeps watching from the menu bar even when this window is closed — a menu bar manager like Ice or Bartender may hide the icon."),
     ]
 }
 

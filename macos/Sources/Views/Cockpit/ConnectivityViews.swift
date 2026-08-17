@@ -22,23 +22,36 @@ func ageLabel(from date: Date, now: Date) -> String {
 // round-tripping decimal, the same rule JS uses, so one helper serves both
 // the runway percent readout and ageLabel's tenths.
 
-/// web/src/shell/Toolbar.tsx `pillLabel` (Toolbar.tsx:19-26). `FleetViewModel
-/// .Status` has a fourth case, `.starting` (ensure-running in flight), that
-/// the web's 3-value `Connection` type has no equivalent for — DEVIATION:
-/// treated as `.connecting` here (both are transient, pre-live, ageless
-/// states; neither is an error).
+/// web/src/shell/Toolbar.tsx `pillLabel` (Toolbar.tsx:19-26), DEVIATION per
+/// audit F15 (2026-08-16, owner decision: no pill while healthy): the web
+/// always renders a pill, including the permanently
+/// green "Daemon active" — this native port drops that healthy case
+/// entirely (ConnectivityPill's caller shows nothing when `.live`; see
+/// NativeToolbarRow) and no longer needs a label for it. The two remaining,
+/// genuinely informative states keep their labels; the down state now
+/// quotes VOICE.md:27 ("Daemon not running — nothing here is live")
+/// instead of the web's "Daemon down", and still appends the "as of …" age
+/// suffix when one is known. `FleetViewModel.Status` has a fourth case,
+/// `.starting` (ensure-running in flight), that the web's 3-value
+/// `Connection` type has no equivalent for — DEVIATION: treated as
+/// `.connecting` here (both are transient, pre-live, ageless states;
+/// neither is an error).
 func connectivityPillLabel(status: FleetViewModel.Status, asOfAge: String?) -> String {
     switch status {
     case .live: return "Daemon active"
     case .connecting, .starting: return "Connecting"
-    case .down: return asOfAge.map { "Daemon down — as of \($0)" } ?? "Daemon not running"
+    case .down:
+        let base = "Daemon not running"
+        return asOfAge.map { "\(base) — as of \($0)" } ?? "\(base) — nothing here is live"
     }
 }
 
 /// The toolbar's daemon pill: dot + label, mirroring Toolbar.tsx's
-/// `<i className={... bg-ok shadow ... : bg-graydot}>` (live glows green,
-/// everything else is a flat gray dot — down is not red here, matching the
-/// web exactly).
+/// `<i className={... bg-ok shadow ... : bg-graydot}>` — DEVIATION per audit
+/// F15: the caller (NativeToolbarRow) only mounts this view for the
+/// `.connecting`/`.starting`/`.down` states, so the live/green branch below
+/// is dead code kept only for the previews and for callers that still pass
+/// `.live` directly (down is not red here, matching the web exactly).
 struct ConnectivityPill: View {
     let status: FleetViewModel.Status
     let asOfAge: String?
@@ -56,9 +69,6 @@ struct ConnectivityPill: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .overlay(Capsule().stroke(CockpitTheme.hair, lineWidth: 1))
-        // Toolbar.tsx:33 `data-tour="daemon"` — the tour's "it keeps running
-        // without this window" step spotlights this pill.
-        .tourAnchor("daemon")
         // The status dot has no text of its own — without combining, VO
         // would read it as an unlabeled image ahead of the label. One
         // element, one announcement, matching the visible pill.

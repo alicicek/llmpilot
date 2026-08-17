@@ -598,6 +598,22 @@ final class HistoryVectorTests: XCTestCase {
         }
     }
 
+    /// F17 (fresh-user audit 2026-08-16): the lane column shows the whole
+    /// model name, not the web's one-letter abbreviation — "F" read as a
+    /// truncated word to a stranger. Non-scoped buckets keep their labels;
+    /// the fail case is a scoped bucket with no scope, which must not
+    /// crash and falls back to bucketLabel's "?".
+    func testLaneLabelCarriesTheWholeModelName() {
+        XCTAssertEqual(BoardTime.laneLabel(kind: "weekly_scoped", scope: "Fable"), "Fable")
+        XCTAssertEqual(BoardTime.laneLabel(kind: "weekly_scoped", scope: "opus"), "Opus")
+        XCTAssertEqual(BoardTime.laneLabel(kind: "session", scope: nil), "5h")
+        XCTAssertEqual(BoardTime.laneLabel(kind: "weekly_all", scope: nil), "wk")
+        XCTAssertEqual(BoardTime.laneLabel(kind: "weekly_scoped", scope: nil), "?")
+        XCTAssertEqual(BoardTime.laneLabel(kind: "weekly_scoped", scope: ""), "?")
+        // bucketLabel (AX + web parity) is unchanged.
+        XCTAssertEqual(BoardTime.bucketLabel(kind: "weekly_scoped", scope: "Fable"), "F")
+    }
+
     func testBoardTimeMatchesGoldenVectors() throws {
         let vectors = try loadFile("board-time.json", as: BoardTimeVectorFile.self)
         XCTAssertEqual(vectors.module, "board-time")

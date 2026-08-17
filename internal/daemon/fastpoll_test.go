@@ -114,4 +114,23 @@ func TestCheckUnregisteredSurfacesOncePerEmail(t *testing.T) {
 	if evs, _ = st.Events(0); len(evs) != 2 {
 		t.Fatalf("empty email fired an event: %+v", evs)
 	}
+
+	// F14 (fresh-user audit 2026-08-16): an EMPTY fleet is first-run — the
+	// corridor is about to adopt this very account, so no event and no
+	// notification. The fail case is the same email against a non-empty
+	// fleet, which fires (proven above).
+	email = "brand-new@example.dev"
+	before := len(notes)
+	d.checkUnregistered(ctx, nil)
+	if evs, _ = st.Events(0); len(evs) != 2 {
+		t.Fatalf("empty fleet must not record an unregistered event: %+v", evs)
+	}
+	if len(notes) != before {
+		t.Fatalf("empty fleet must not notify: %v", notes)
+	}
+	// ...and once a fleet exists, that same email is a real stray sign-in.
+	d.checkUnregistered(ctx, accs)
+	if evs, _ = st.Events(0); len(evs) != 3 {
+		t.Fatalf("non-empty fleet must fire for the new email: %+v", evs)
+	}
 }

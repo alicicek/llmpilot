@@ -979,12 +979,14 @@ func wireLogin(d *daemon.Daemon, st *store.Store, sw *switcher.Switcher, ver str
 			// raw "HTTP 429" so the UI can say "wait a moment and retry".
 			var ee *anthropic.ExchangeError
 			if errors.As(err, &ee) && ee.StatusCode == 429 {
-				// Feed the refresh breaker: an exchange 429 is a
-				// token-endpoint 429 observation (scope unverified, so
-				// freshens pause globally). Read-only — the login flow's
-				// own behavior is unchanged.
-				sw.NoteTokenEndpoint429(ctx)
-				return store.Account{}, errors.New("the sign-in server is rate-limited right now — wait a minute and try again")
+				// Feed the refresh breaker AS A SIGN-IN observation: same
+				// token endpoint (so refreshes pause), but the short
+				// sign-in cooldown and a doctor line that says a sign-in
+				// was rate-limited — one first-day sign-in 429 must not
+				// read as "a token refresh" nor cost 24h (audit F7).
+				// The login flow's own behavior is unchanged.
+				sw.NoteSignIn429(ctx)
+				return store.Account{}, daemon.ErrSignInRateLimited
 			}
 			return store.Account{}, err
 		}

@@ -41,7 +41,18 @@ struct BoardTrackView: View {
     @State private var flashKey: Int = -1
     @State private var hudOpacity: Double = 0
 
+    /// F16: the board's LIVE track width, set by BoardView's GeometryReader
+    /// (BoardGeometry.swift's `boardTrackPx` environment key) — replaces the
+    /// old fixed `BoardGeometry.trackPx` constant for every pixel↔minute
+    /// conversion in this file.
+    @Environment(\.boardTrackPx) private var trackPx
+
     private var floor: Int { mid.map { $0.end + BoardSchedule.windowHours * 60 } ?? 0 }
+
+    /// Local shorthand for `BoardGeometry.toPx(_:trackPx:)` against the
+    /// live width — every position/offset call below reads through this
+    /// instead of repeating `trackPx:` at each call site.
+    private func px(_ minutes: Double) -> Double { BoardGeometry.toPx(minutes, trackPx: trackPx) }
 
     var body: some View {
         // Ref-refresh pattern (see TrackDragModel's header comment): these
@@ -68,7 +79,7 @@ struct BoardTrackView: View {
             chips
             hudOverlay
         }
-        .frame(width: BoardGeometry.trackPx, height: BoardGeometry.rowPx)
+        .frame(width: trackPx, height: BoardGeometry.rowPx)
         .contentShape(Rectangle())
         .coordinateSpace(name: "track")
         .onDisappear {
@@ -84,7 +95,7 @@ struct BoardTrackView: View {
             if let location {
                 // Snap BEFORE the preview/legality check (Track.tsx:176) — the
                 // badge must promise exactly the minute a click would book.
-                model.updateHoverPreview(TrackDragModel.snappedMinutes(fromTrackX: location.x))
+                model.updateHoverPreview(TrackDragModel.snappedMinutes(fromTrackX: location.x, trackWidth: trackPx))
             } else {
                 model.updateHoverPreview(nil)
             }
@@ -122,7 +133,7 @@ struct BoardTrackView: View {
         if model.laneSchedules.isEmpty {
             Path { p in
                 p.move(to: CGPoint(x: 0, y: 0))
-                p.addLine(to: CGPoint(x: BoardGeometry.trackPx, y: 0))
+                p.addLine(to: CGPoint(x: trackPx, y: 0))
             }
             .stroke(CockpitTheme.rail, style: StrokeStyle(lineWidth: 2, dash: [4, 3]))
             .frame(height: 2)
@@ -131,7 +142,7 @@ struct BoardTrackView: View {
         } else {
             Rectangle()
                 .fill(CockpitTheme.rail)
-                .frame(width: BoardGeometry.trackPx, height: 2)
+                .frame(width: trackPx, height: 2)
                 .offset(y: 48)
                 .allowsHitTesting(false)
         }
@@ -147,16 +158,16 @@ struct BoardTrackView: View {
             .font(.system(size: 11))
             .foregroundColor(CockpitTheme.ter)
             .multilineTextAlignment(.center)
-            .frame(width: BoardGeometry.trackPx)
-            .position(x: BoardGeometry.trackPx / 2, y: 42 + 7)
+            .frame(width: trackPx)
+            .position(x: trackPx / 2, y: 42 + 7)
             .allowsHitTesting(false)
         }
     }
 
     @ViewBuilder private var midWindowBadge: some View {
         if let mid {
-            let x0 = BoardGeometry.toPx(Double(mid.start))
-            let x1 = BoardGeometry.toPx(Double(mid.end))
+            let x0 = px(Double(mid.start))
+            let x1 = px(Double(mid.end))
             let w = max(0, x1 - x0)
             ZStack {
                 BoardDiagonalHatch(stripeColor: CockpitTheme.hatch, backgroundColor: CockpitTheme.hatchBg, stripeWidth: 3, period: 7.5)
@@ -204,8 +215,8 @@ struct BoardTrackView: View {
     private enum ZoneKind { case red, amber }
 
     private func zoneView(from: Int, to: Int, kind: ZoneKind) -> some View {
-        let x0 = BoardGeometry.toPx(Double(from))
-        let x1 = BoardGeometry.toPx(Double(to))
+        let x0 = px(Double(from))
+        let x1 = px(Double(to))
         let w = max(0, x1 - x0)
         return Group {
             switch kind {
@@ -224,7 +235,7 @@ struct BoardTrackView: View {
         Rectangle()
             .fill(CockpitTheme.crit)
             .frame(width: 2, height: 45)
-            .position(x: BoardGeometry.toPx(Double(m)), y: 27 + 22.5)
+            .position(x: px(Double(m)), y: 27 + 22.5)
             .allowsHitTesting(false)
     }
 
@@ -234,7 +245,7 @@ struct BoardTrackView: View {
             .frame(width: 8, height: 8)
             .rotationEffect(.degrees(45))
             .shadow(color: CockpitTheme.ok.opacity(0.6), radius: 3)
-            .position(x: BoardGeometry.toPx(Double(m)), y: 45 + 4)
+            .position(x: px(Double(m)), y: 45 + 4)
             .allowsHitTesting(false)
     }
 
@@ -242,8 +253,8 @@ struct BoardTrackView: View {
 
     @ViewBuilder private var flashOverlay: some View {
         if let flash = model.flash {
-            let x0 = BoardGeometry.toPx(Double(flash.from))
-            let x1 = BoardGeometry.toPx(Double(flash.to))
+            let x0 = px(Double(flash.from))
+            let x1 = px(Double(flash.to))
             let w = max(0, x1 - x0)
             RoundedRectangle(cornerRadius: 3)
                 .fill(CockpitTheme.warnRaw)
@@ -285,7 +296,7 @@ struct BoardTrackView: View {
                 .padding(.vertical, 2)
                 .background(Capsule().fill(CockpitTheme.ok.opacity(0.35)))
                 .fixedSize()
-                .position(x: BoardGeometry.toPx(Double(preview)), y: 40 + 6)
+                .position(x: px(Double(preview)), y: 40 + 6)
                 .allowsHitTesting(false)
         }
     }
@@ -309,7 +320,7 @@ struct BoardTrackView: View {
         SpatialTapGesture(count: 1, coordinateSpace: .named("track"))
             .onEnded { value in
                 onSelect(nil)
-                let minutes = TrackDragModel.snappedMinutes(fromTrackX: value.location.x)
+                let minutes = TrackDragModel.snappedMinutes(fromTrackX: value.location.x, trackWidth: trackPx)
                 model.createAt(minutes)
             }
     }
@@ -349,7 +360,7 @@ struct BoardTrackView: View {
                 Rectangle()
                     .fill(CockpitTheme.chipBd)
                     .frame(width: 1.5, height: 8)
-                    .position(x: BoardGeometry.toPx(Double(v)), y: 26 + 4)
+                    .position(x: px(Double(v)), y: 26 + 4)
                     .allowsHitTesting(false)
 
                 // A REAL Button, not a tap gesture: AXPress on a genuine
@@ -383,7 +394,7 @@ struct BoardTrackView: View {
                         DragGesture(minimumDistance: 3, coordinateSpace: .named("track"))
                             .onChanged { value in
                                 if model.draggingIndex != i { model.beginDrag(index: i) }
-                                model.moveDrag(to: TrackDragModel.snappedMinutes(fromTrackX: value.location.x))
+                                model.moveDrag(to: TrackDragModel.snappedMinutes(fromTrackX: value.location.x, trackWidth: trackPx))
                                 model.updateRemoval(dy: abs(value.location.y - BoardGeometry.rowPx / 2))
                             }
                             .onEnded { _ in model.endDrag() }
@@ -411,14 +422,14 @@ struct BoardTrackView: View {
                     // report a 1160x116 frame for every chip — VoiceOver's
                     // cursor rect and hit lookup would be wrong on all of
                     // them.
-                    .position(x: BoardGeometry.toPx(Double(v)), y: 6 + 10)
+                    .position(x: px(Double(v)), y: 6 + 10)
 
                 if let suffix = copy.suffix {
                     Text(suffix)
                         .font(.system(size: 10, weight: copy.suffixTone == "amber" ? .semibold : .regular))
                         .foregroundColor(suffixColor(copy.suffixTone))
                         .fixedSize()
-                        .offset(x: BoardGeometry.toPx(Double(v)) + 68, y: 11)
+                        .offset(x: px(Double(v)) + 68, y: 11)
                         .allowsHitTesting(false)
                 }
 
@@ -426,14 +437,14 @@ struct BoardTrackView: View {
                     .font(.system(size: 9.5))
                     .foregroundColor(copy.trigTone == "amber" ? CockpitTheme.warn : CockpitTheme.ter)
                     .fixedSize()
-                    .offset(x: BoardGeometry.toPx(Double(trigger)) - 3, y: 71)
+                    .offset(x: px(Double(trigger)) - 3, y: 71)
                     .allowsHitTesting(false)
 
                 Rectangle()
                     .fill(copy.trigTone == "amber" ? CockpitTheme.warnRaw : CockpitTheme.ter)
                     .opacity(0.8)
                     .frame(width: 1.5, height: 6)
-                    .offset(x: BoardGeometry.toPx(Double(trigger)), y: 64)
+                    .offset(x: px(Double(trigger)), y: 64)
                     .allowsHitTesting(false)
             }
         }
@@ -446,7 +457,7 @@ struct BoardTrackView: View {
             Text("⛓︎").font(.system(size: 9)).foregroundColor(CockpitTheme.sec)
         }
         .frame(width: 16, height: 16)
-        .position(x: BoardGeometry.toPx(Double(m)), y: 41 + 8)
+        .position(x: px(Double(m)), y: 41 + 8)
         .allowsHitTesting(false)
     }
 

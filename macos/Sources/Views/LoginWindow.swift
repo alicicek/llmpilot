@@ -64,6 +64,18 @@ final class LoginWindowController: NSWindowController, NSWindowDelegate, WKNavig
         win.setContentSize(NSSize(width: 500, height: 680))
         window = win
         win.center()
+        // Promote BEFORE activating. Activating while still ACCESSORY (the
+        // menu-bar-only state this window used to open in) leaves AppKit
+        // believing the app is active while the window server never made
+        // it frontmost; the cockpit's later accessory→regular promotion
+        // then finds isActive == YES, its activate no-ops, and the cockpit
+        // comes up behind the previous app with its menu bar (measured
+        // 2026-08-17, F18 diagnosis: popover → Add account → close →
+        // Open cockpit). A regular app during sign-in also gets the Dock
+        // presence the cockpit's own close guard already assumes.
+        if NSApp.activationPolicy() != .regular {
+            NSApp.setActivationPolicy(.regular)
+        }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         Task { @MainActor in await m.start() }

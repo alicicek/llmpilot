@@ -799,6 +799,15 @@ func (d *Daemon) checkUnregistered(ctx context.Context, accs []store.Account) {
 	if d.ActiveEmail == nil {
 		return
 	}
+	// An EMPTY fleet is first-run, not a stray sign-in: the corridor is
+	// about to adopt exactly the account this would name, and a stranger's
+	// first history entry — and first notification — must not tell them to
+	// do what the app then does itself (fresh-user audit 2026-08-16, F14:
+	// the nudge fired at 13:58, the corridor adopted the same account at
+	// 15:05). The nudge is for a NEW sign-in appearing once a fleet exists.
+	if len(accs) == 0 {
+		return
+	}
 	email := d.ActiveEmail(ctx)
 	registered := email == "" // no login at all is not "unregistered"
 	for _, a := range accs {

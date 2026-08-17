@@ -59,9 +59,13 @@ func eduDemoLanes(_ state: DaemonState) -> [EduLane]? {
 /// (98%) and mira (0%, no reset) — sorted ascending by percent, mira wins
 /// the target slot. Hardcoded rather than decoded from a ported fixture
 /// state: only the resulting `Lane` pair is ever observable here.
+///
+/// Demo identities read as real addresses everywhere user-visible — the
+/// fresh-user audit 2026-08-16 (F10) caught this fallback pair still on
+/// the old @example.dev placeholder.
 let eduMaskedLanes: [EduLane] = [
-    EduLane(email: "kai@example.dev", low: 9, resets: "17:19"),
-    EduLane(email: "mira@example.dev", low: 0, resets: nil),
+    EduLane(email: "kai@llmpilot.dev", low: 9, resets: "17:19"),
+    EduLane(email: "mira@llmpilot.dev", low: 0, resets: nil),
 ]
 
 /// The animated beat behind `SwitchDemoView` — design critique 2026-08-09
@@ -79,14 +83,19 @@ let eduMaskedLanes: [EduLane] = [
 /// Timeline (ms from `start()`):
 ///   0      — A active at 71%, B ready at its own low number.
 ///   300    — rest elapses: "Approaching session limit"; A begins its
-///            71→97 fill (the VIEW animates the bar over `climbMs`, a
-///            single animation — see SwitchDemoView.swift), crossing
+///            71→97 climb — `percentA` ticks up every `climbTickMs`
+///            (F9, 2026-08-16 audit: the NUMBER climbs, not just the bar
+///            the view eases under it — see SwitchDemoView.swift), crossing
 ///            amber into red as it climbs.
 ///   1700   — A reaches 97%, one tick under the wall: "Switching to B…".
 ///   1900   — handoff: `active` flips to B, A becomes the resting lane —
 ///            copy and visual state change in the SAME beat, fixing the
 ///            original 1500ms lag between "Switched to…" and the flip.
-///   2200   — settled: the composed summary line, `settled = true`.
+///            B's creep also starts here (F9): `percentB` ticks up a few
+///            points over `creepMs` — "you keep working" on the account
+///            that just took over.
+///   2200   — settled: the composed summary line, `settled = true` (the
+///            creep keeps running in the background past this point).
 ///
 /// Runs once and stops — `start()` is also what a "Replay" control calls
 /// (SwitchDemoView.swift) to run it again on demand.
@@ -114,6 +123,21 @@ final class SwitchDemoModel: ObservableObject {
     /// way the shipped policy actually does at its edge.
     static let startPercent = 71
     static let switchPercent = 97
+    /// Fresh-user audit 2026-08-16 (F9): the old code JUMPED `percentA` to
+    /// 97 the instant the climb began — the bar eased visually over
+    /// `climbMs` but the trailing "N%" text sat static at 97 the whole
+    /// time, so the number never actually looked like it was climbing.
+    /// These ticks make the TEXT climb in lockstep with the bar: 1400ms /
+    /// 50ms = 28 ticks, landing on exactly 97 (71+26) the instant the last
+    /// tick fires — no rounding slop at the boundary.
+    static let climbTickMs = 50
+    /// From the 2026-08-16 ship walk: the second account should visibly
+    /// start climbing too, so a switch reads as work continuing — B's
+    /// post-handoff creep. 4s / 200ms = 20 ticks;
+    /// +8 points sits mid the requested 6–12% band.
+    static let creepMs = 4000
+    static let creepTickMs = 200
+    static let creepAmount = 8
 
     /// Exactly two lanes — `SwitchDemo.tsx`'s original `[Lane, Lane]` tuple
     /// type; enforced at init since Swift arrays carry no fixed-length type.
@@ -121,6 +145,12 @@ final class SwitchDemoModel: ObservableObject {
     private let reducedMotion: Bool
     private let clock: EduClock
     private var tokens: [EduTimerToken] = []
+    private var climbTickToken: EduTimerToken?
+    private var climbTicksElapsed = 0
+    private var creepTickToken: EduTimerToken?
+    private var creepTicksElapsed = 0
+    private var creepStartPercent = 0
+    private var creepTargetPercent = 0
 
     init(lanes: [EduLane], reducedMotion: Bool, clock: EduClock = SystemEduClock()) {
         precondition(lanes.count == 2, "SwitchDemoModel needs exactly two lanes")
@@ -160,26 +190,76 @@ final class SwitchDemoModel: ObservableObject {
     func stop() {
         tokens.forEach { $0.invalidate() }
         tokens.removeAll()
+        climbTickToken = nil
+        creepTickToken = nil
     }
 
+    /// F9: the number now climbs WITH the bar instead of jumping straight
+    /// to 97 — `climbTick()` re-derives `percentA` from elapsed ticks every
+    /// `climbTickMs`, and `hitLimit` (still scheduled off the unchanged
+    /// `climbMs` `after`, so the "Switching to…" beat timing is untouched)
+    /// pins the exact final value.
     private func beginApproach() {
         line = Self.approachingLine
-        percentA = Self.switchPercent // the view animates the fill over climbMs
+        climbTicksElapsed = 0
+        let tick = clock.every(Self.climbTickMs) { [weak self] in self?.climbTick() }
+        climbTickToken = tick
+        tokens.append(tick)
         tokens.append(clock.after(Self.climbMs) { [weak self] in self?.hitLimit() })
     }
 
+    private func climbTick() {
+        climbTicksElapsed += 1
+        let elapsedMs = min(climbTicksElapsed * Self.climbTickMs, Self.climbMs)
+        let progress = Double(elapsedMs) / Double(Self.climbMs)
+        let span = Double(Self.switchPercent - Self.startPercent)
+        percentA = Self.startPercent + Int((progress * span).rounded())
+    }
+
     private func hitLimit() {
+        climbTickToken?.invalidate()
+        climbTickToken = nil
+        percentA = Self.switchPercent // pin the exact bookend regardless of tick rounding
         line = Self.switchingLine(to: lanes[1])
         tokens.append(clock.after(Self.handoffMs) { [weak self] in self?.handoff() })
     }
 
     /// Copy and visual state change TOGETHER here — the fix for the
     /// original bug where `switchLine` said "Switched to…" 1500ms before
-    /// `active` actually moved.
+    /// `active` actually moved. F9: B's creep starts in this SAME beat —
+    /// "you keep working" reads from the moment the handoff lands, not
+    /// after the settled summary shows up.
     private func handoff() {
         active = 1
         restingIndex = 0
+        startCreep()
         tokens.append(clock.after(Self.settleDelayMs) { [weak self] in self?.settle() })
+    }
+
+    /// B's post-handoff creep (F9) — a few points over a few seconds so the
+    /// demo shows work continuing on the account that just took over.
+    /// Independent of `settle()`: the narrative line settles at 2200ms
+    /// while the creep keeps running in the background past it.
+    private func startCreep() {
+        creepTicksElapsed = 0
+        creepStartPercent = percentB
+        creepTargetPercent = min(100, percentB + Self.creepAmount)
+        guard creepTargetPercent > creepStartPercent else { return }
+        let tick = clock.every(Self.creepTickMs) { [weak self] in self?.creepTick() }
+        creepTickToken = tick
+        tokens.append(tick)
+    }
+
+    private func creepTick() {
+        creepTicksElapsed += 1
+        let elapsedMs = min(creepTicksElapsed * Self.creepTickMs, Self.creepMs)
+        let progress = Double(elapsedMs) / Double(Self.creepMs)
+        let span = Double(creepTargetPercent - creepStartPercent)
+        percentB = creepStartPercent + Int((progress * span).rounded())
+        if elapsedMs >= Self.creepMs {
+            creepTickToken?.invalidate()
+            creepTickToken = nil
+        }
     }
 
     private func settle() {

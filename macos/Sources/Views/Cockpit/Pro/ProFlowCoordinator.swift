@@ -103,6 +103,59 @@ enum ProFlowLogic {
     }
 }
 
+// MARK: - the win-back rung (audit F13, owner 2026-08-16 reverses
+// the 2026-08-11 ladder removal)
+
+/// The ladder's whole lifecycle, one direction only: intact → armed → spent.
+/// `intact` quotes full; a decline trigger (the first ✕ on an askable
+/// paywall, or a checkout abandoned) arms it; `armed` quotes the REAL
+/// `discount_trial` terms from the live quote; any activation spends it
+/// permanently — a later lapse is not being asked for the first time and
+/// never sees the rung again.
+enum WinbackState: String {
+    case intact
+    case armed
+    case spent
+}
+
+/// The persisted once-per-install win-back state. Keyed to the SAME
+/// `fleet.defaults` suite the `proOnboarded`/`proFlowClosed` flags use
+/// (NativeCockpitWindow.swift), so an e2e sandbox run never leaks it into a
+/// developer's real defaults domain — and a relaunch neither re-arms the
+/// offer nor forgets it (the wave's once-per-install line).
+@MainActor
+final class WinbackModel: ObservableObject {
+    static let key = "proWinback"
+
+    @Published private(set) var state: WinbackState
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+        state = defaults.string(forKey: Self.key).flatMap(WinbackState.init) ?? .intact
+    }
+
+    /// A decline trigger fired. Only `intact` arms — `armed` is already the
+    /// last offer (a second trigger has nothing lower to reach), and `spent`
+    /// never resurrects (activation ended the ladder permanently).
+    func arm() {
+        guard state == .intact else { return }
+        persist(.armed)
+    }
+
+    /// A license activated — on any rung, through any door (checkout,
+    /// claim, recovery link, background poll). The ladder is over for good.
+    func noteActivated() {
+        guard state != .spent else { return }
+        persist(.spent)
+    }
+
+    private func persist(_ new: WinbackState) {
+        state = new
+        defaults.set(new.rawValue, forKey: Self.key)
+    }
+}
+
 /// Native port of web/src/pro/useQuote.ts's fetch/validate/retry contract —
 /// the paywall's consent terms, prefetched once the app knows it is
 /// unlicensed. `failed` flips true on EITHER a transport error or a
@@ -262,14 +315,55 @@ final class ActivationMoveModel: ObservableObject {
 /// prop.
 @MainActor
 enum PostCheckoutReload {
+    /// The production abandon-decision window. These constants ARE the F1
+    /// fix — their product must span several ticks of the daemon's 3s
+    /// activation poll (license.go pollEvery), and every behavior test
+    /// passes fast overrides, so a dedicated test pins the product
+    /// (review delta: "the one part of the fix no gate defends").
+    static let defaultRereads = 4
+    static let defaultRereadDelay: TimeInterval = 2.5
+
     static func run(
-        api: CockpitDaemonAPI, fleet: FleetViewModel, quote: ProQuoteModel, ask: AskMachine?
+        api: CockpitDaemonAPI, fleet: FleetViewModel, quote: ProQuoteModel, ask: AskMachine?,
+        rereads: Int = PostCheckoutReload.defaultRereads,
+        rereadDelay: TimeInterval = PostCheckoutReload.defaultRereadDelay
     ) async {
-        let license = try? await api.license(reveal: false)
+        var license = try? await api.license(reveal: false)
         _ = try? await fleet.refresh()
         quote.reload()
+        // this reload is ALSO the abandoned-checkout decider (the
+        // wave's decision line: the post-checkout license reload decides,
+        // not a timer). One instantaneous read is NOT enough evidence
+        // (adversarial review F1, P0): in production checkout the embedded
+        // Stripe page completes IN the sheet (worker checkout.ts:
+        // redirect_on_completion "never" — /pro/activated never navigates),
+        // so a buyer who just PAID leaves via the same Cancel button an
+        // abandoner uses, and GET /v1/license answers from the local store
+        // that only the daemon's ~3s activation poll (license.go pollEvery)
+        // updates. Deciding on the first read would arm the win-back — and
+        // strike a "lower price" over the amount they just paid — for a
+        // paying buyer. So the reload re-reads across several poll ticks
+        // (~10s), exits the moment activation lands, and only a license
+        // that is STILL inactive at the end counts as abandoned. The
+        // license reload remains the sole decider; it is just given long
+        // enough to be right. A reload that never succeeds (nil throughout)
+        // proves neither and triggers nothing.
+        var remaining = rereads
+        while remaining > 0, license?.active != true {
+            remaining -= 1
+            try? await Task.sleep(nanoseconds: UInt64(max(rereadDelay, 0) * 1_000_000_000))
+            // The DECIDING read is the final one: a failed re-read replaces
+            // earlier evidence with nil rather than letting a stale
+            // inactive first read call a still-activating purchase
+            // abandoned (found in review).
+            license = try? await api.license(reveal: false)
+        }
         if let license {
-            ask?.applyReloadedLicense(license)
+            if license.active {
+                ask?.applyReloadedLicense(license)
+            } else {
+                ask?.checkoutAbandoned()
+            }
         }
     }
 }

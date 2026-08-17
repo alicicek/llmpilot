@@ -388,10 +388,15 @@ struct CockpitRunwayBar: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Text(BoardTime.bucketLabel(kind: bucket.kind, scope: bucket.scope))
+            // Full model name and room for "100% · resets Tue 13:00": the
+            // old 18pt/104pt frames truncated "Fable" to "F" and the reset
+            // to "13:…" (fresh-user audit 2026-08-16, F17). The board's
+            // header column (BoardGeometry.headerPx) grew to carry this.
+            Text(BoardTime.laneLabel(kind: bucket.kind, scope: bucket.scope))
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundColor(CockpitTheme.ter)
-                .frame(width: 18, alignment: .leading)
+                .frame(width: 38, alignment: .leading)
+                .lineLimit(1)
 
             GeometryReader { geo in
                 ZStack(alignment: .trailing) {
@@ -415,11 +420,20 @@ struct CockpitRunwayBar: View {
             // RunwayBar.tsx:49 renders the RAW percent — fractional values
             // like 14.25 are real (Bucket.percent's own doc) and the two
             // cockpits must agree on screen while both ship.
-            Text("\(jsNumberString(bucket.percent))%\(resetText.map { " · \($0)" } ?? "")")
-                .font(CockpitTheme.numeric(9.5))
-                .foregroundColor(CockpitTheme.ter)
-                .frame(width: 104, alignment: .trailing)
-                .lineLimit(1)
+            // Two cells, not one right-aligned string: the percent column
+            // stays aligned across rows (tabular numerals only help when the
+            // numbers share an edge) and the reset reads as its own column.
+            HStack(spacing: 4) {
+                Text("\(jsNumberString(bucket.percent))%")
+                    .font(CockpitTheme.numeric(9.5))
+                    .foregroundColor(CockpitTheme.ter)
+                    .frame(width: 34, alignment: .trailing)
+                Text(resetText.map { "· \($0)" } ?? "")
+                    .font(CockpitTheme.numeric(9.5))
+                    .foregroundColor(CockpitTheme.ter)
+                    .frame(width: 90, alignment: .leading)
+                    .lineLimit(1)
+            }
         }
         // Same fix as the popover's RunwayBar: the fill/tick shapes carry
         // no text, so without combining, VO would land on an unlabeled

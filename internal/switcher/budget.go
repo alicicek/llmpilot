@@ -37,11 +37,37 @@ const RefreshBudgetMax = 2
 // RefreshBudgetWindow is the rolling window the cap applies to.
 const RefreshBudgetWindow = 24 * time.Hour
 
-// BreakerCooldown is the hard LOCAL cooldown after any token-endpoint 429.
-// Hours-scale on purpose: observed recovery horizons run hours-to-days and
-// the endpoint's Retry-After (when present at all) understates them — it is
-// never trusted.
+// BreakerCooldown is the hard LOCAL cooldown after a REFRESH 429 from the
+// token endpoint. Hours-scale on purpose: observed recovery horizons run
+// hours-to-days and the endpoint's Retry-After (when present at all)
+// understates them — it is never trusted.
 const BreakerCooldown = 24 * time.Hour
+
+// SignInBreakerCooldown is the cooldown after a SIGN-IN (authorization-code
+// exchange) 429. Same endpoint, so it is still evidence the endpoint is
+// rate-limiting this client right now and refreshes still pause — but one
+// interactive attempt is not the serial keep-warm hammering that earned the
+// 24h horizon, and a fresh install's first sign-in must not lock every
+// refresh out for a day (fresh-user audit 2026-08-16, F7). The sign-in flow
+// itself is never gated by either breaker.
+const SignInBreakerCooldown = time.Hour
+
+// Breaker sources — what tripped it. Persisted with the trip so a daemon
+// restart keeps both the horizon and the explanation.
+const (
+	BreakerSourceRefresh = "refresh"
+	BreakerSourceSignIn  = "sign-in"
+)
+
+// BreakerCooldownFor is the cooldown a trip from `source` imposes. An
+// unknown or empty source (a document written before sources existed) is
+// the conservative refresh horizon.
+func BreakerCooldownFor(source string) time.Duration {
+	if source == BreakerSourceSignIn {
+		return SignInBreakerCooldown
+	}
+	return BreakerCooldown
+}
 
 // budgetFile persists attempts + breaker state in $LLMPILOT_HOME.
 const budgetFile = "refresh-budget.json"
@@ -60,6 +86,9 @@ type budgetDoc struct {
 	Version   int                    `json:"version"`
 	Attempts  map[string][]time.Time `json:"attempts"` // account ID → POST instants
 	TrippedAt *time.Time             `json:"breaker_tripped_at,omitempty"`
+	// TrippedBy is the breaker source (BreakerSourceRefresh / BreakerSourceSignIn);
+	// empty in documents written before 1.3.1 and read as a refresh trip.
+	TrippedBy string `json:"breaker_source,omitempty"`
 }
 
 // ErrRotationNotPersisted marks the worst refresh outcome: the token
@@ -155,9 +184,13 @@ func (s *Switcher) chargeRefreshAttempt(ctx context.Context, accountID string, n
 	if err != nil {
 		return "", false, err
 	}
-	if doc.TrippedAt != nil && now.Sub(*doc.TrippedAt) < BreakerCooldown {
-		return fmt.Sprintf(ReasonRefreshPaused+": the token endpoint rate-limited a refresh at %s — all refreshes wait out a %s local cooldown",
-			doc.TrippedAt.UTC().Format(time.RFC3339), BreakerCooldown), false, nil
+	if doc.TrippedAt != nil && now.Sub(*doc.TrippedAt) < BreakerCooldownFor(doc.TrippedBy) {
+		what := "a refresh"
+		if doc.TrippedBy == BreakerSourceSignIn {
+			what = "a sign-in"
+		}
+		return fmt.Sprintf(ReasonRefreshPaused+": the token endpoint rate-limited %s at %s — all refreshes wait out a %s local cooldown",
+			what, doc.TrippedAt.UTC().Format(time.RFC3339), BreakerCooldownFor(doc.TrippedBy)), false, nil
 	}
 	recent := doc.Attempts[accountID][:0:0]
 	for _, at := range doc.Attempts[accountID] {
@@ -188,6 +221,19 @@ func (s *Switcher) chargeRefreshAttempt(ctx context.Context, accountID string, n
 type BudgetSnapshot struct {
 	Attempts  map[string][]time.Time
 	TrippedAt *time.Time
+	// TrippedBy is the breaker source (BreakerSourceRefresh / BreakerSourceSignIn);
+	// empty for a trip persisted before sources existed (read as refresh).
+	TrippedBy string
+}
+
+// BreakerClears is when the current trip stops withholding refreshes — nil
+// when the breaker is not tripped.
+func (b BudgetSnapshot) BreakerClears() *time.Time {
+	if b.TrippedAt == nil {
+		return nil
+	}
+	t := b.TrippedAt.Add(BreakerCooldownFor(b.TrippedBy))
+	return &t
 }
 
 // BudgetSnapshot reads the budget document without taking the budget lock and
@@ -201,14 +247,26 @@ func (s *Switcher) BudgetSnapshot() (BudgetSnapshot, error) {
 	if err != nil {
 		return BudgetSnapshot{Attempts: map[string][]time.Time{}}, err
 	}
-	return BudgetSnapshot{Attempts: doc.Attempts, TrippedAt: doc.TrippedAt}, nil
+	return BudgetSnapshot{Attempts: doc.Attempts, TrippedAt: doc.TrippedAt, TrippedBy: doc.TrippedBy}, nil
 }
 
-// NoteTokenEndpoint429 trips the global breaker. The keep-warm engine calls
-// it on a refresh 429; the login flow feeds exchange 429s through it as a
-// read-only observation (the login's own behavior never changes). Persisted:
-// a daemon restart must not re-enable probing.
+// NoteTokenEndpoint429 trips the global breaker for a REFRESH 429 (the
+// keep-warm engine's observation): every refresh pauses for BreakerCooldown.
+// Persisted: a daemon restart must not re-enable probing.
 func (s *Switcher) NoteTokenEndpoint429(ctx context.Context) {
+	s.trip(ctx, BreakerSourceRefresh)
+}
+
+// NoteSignIn429 records a SIGN-IN (code exchange) 429: same endpoint, so
+// refreshes still pause, but only for SignInBreakerCooldown, and the trip is
+// tagged so the doctor says a sign-in was rate-limited — not a refresh. The
+// login flow's own behavior never changes. A sign-in trip never SHORTENS a
+// refresh trip that is still open: the longer horizon stands.
+func (s *Switcher) NoteSignIn429(ctx context.Context) {
+	s.trip(ctx, BreakerSourceSignIn)
+}
+
+func (s *Switcher) trip(ctx context.Context, source string) {
 	if _, ok := s.budgetPath(); !ok {
 		return
 	}
@@ -224,10 +282,26 @@ func (s *Switcher) NoteTokenEndpoint429(ctx context.Context) {
 		return
 	}
 	now := time.Now().UTC()
+	if doc.TrippedAt != nil {
+		// Keep whichever horizon ends later — a sign-in trip must not cut a
+		// still-open refresh trip short.
+		if cur := doc.TrippedAt.Add(BreakerCooldownFor(doc.TrippedBy)); cur.After(now.Add(BreakerCooldownFor(source))) {
+			s.logf("breaker: %s 429 observed while a %s trip is open until %s — keeping the longer horizon", source, docSource(doc), cur.UTC().Format(time.RFC3339))
+			return
+		}
+	}
 	doc.TrippedAt = &now
+	doc.TrippedBy = source
 	if err := s.saveBudget(doc); err != nil {
 		s.logf("breaker: could not persist the trip: %v", err)
 		return
 	}
-	s.logf("breaker TRIPPED globally: token-endpoint 429 observed — no refresh for %s", BreakerCooldown)
+	s.logf("breaker TRIPPED globally: token-endpoint 429 observed on %s — no refresh for %s", source, BreakerCooldownFor(source))
+}
+
+func docSource(doc budgetDoc) string {
+	if doc.TrippedBy == "" {
+		return BreakerSourceRefresh
+	}
+	return doc.TrippedBy
 }

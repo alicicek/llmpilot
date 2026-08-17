@@ -9,6 +9,12 @@ import XCTest
 /// no daemon.
 @MainActor
 final class ProFlowCoordinatorTests: XCTestCase {
+    /// A quote whose discount is genuinely lower — the shape the win-back
+    /// rung's arming gate requires.
+    private let winbackableQuote = LadderQuote(
+        trialDays: 4, chargeDate: Date(timeIntervalSince1970: 1_784_707_200),
+        pricesFull: ["gbp": 999], pricesDiscount: ["gbp": 599])
+
     private func license(status: String, active: Bool = false, available: Bool = true) -> LicenseInfo {
         try! DaemonDates.decoder().decode(
             LicenseInfo.self,
@@ -122,6 +128,16 @@ final class ProFlowCoordinatorTests: XCTestCase {
 
     // MARK: - PostCheckoutReload — the native-only post-checkout-sheet reload
 
+    func testPostCheckoutReloadProductionWindowSpansTheActivationPoll() {
+        // The F1 (P0) fix IS these constants: every behavior test passes
+        // fast overrides, so this is the one gate on the production
+        // timing. >= 9s spans three ticks of the daemon's 3s activation
+        // poll (license.go pollEvery) — below that, a buyer who just paid
+        // through the embedded sheet is called an abandoner again.
+        XCTAssertGreaterThanOrEqual(
+            Double(PostCheckoutReload.defaultRereads) * PostCheckoutReload.defaultRereadDelay, 9)
+    }
+
     func testPostCheckoutReloadPullsLicenseStateAndQuoteThenRoutesAnActivatedAsk() async {
         let api = StubCockpitAPI()
         api.licenseResult = .success(license(status: "trialing", active: true))
@@ -133,9 +149,10 @@ final class ProFlowCoordinatorTests: XCTestCase {
                     .utf8)))
         let fleet = FleetViewModel(api: api, autostart: false)
         let quote = ProQuoteModel(api: api)
+        let winback = freshWinback()
         let ask = AskMachine(
             license: license(status: "none"), quote: nil, guided: true, locale: "en-GB",
-            api: api, onDismiss: {})
+            winback: winback, api: api, onDismiss: {})
         XCTAssertNotEqual(ask.screen, .active)
 
         await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: ask)
@@ -146,26 +163,102 @@ final class ProFlowCoordinatorTests: XCTestCase {
         XCTAssertEqual(fleet.state?.accounts.count, 2)
         for _ in 0..<50 where quote.quote == nil { try? await Task.sleep(nanoseconds: 10_000_000) }
         XCTAssertEqual(quote.quote?.trialDays, 4)
-        // The still-open ask machine is routed to "Pro is on".
+        // The still-open ask machine is routed to "Pro is on" — and the
+        // activation ends the win-back ladder permanently.
         XCTAssertEqual(ask.screen, .active)
+        XCTAssertEqual(winback.state, .spent)
     }
 
     func testPostCheckoutReloadLeavesAnUnactivatedAskUnrouted() async {
         // The buyer closed the sheet without completing payment — the
-        // reload must not force the ask onto a screen it never earned.
+        // reload must not force the ask onto a screen it never earned, and
+        // the still-inactive reload IS the abandoned-checkout
+        // trigger: it arms the win-back rung.
         let api = StubCockpitAPI()
         api.licenseResult = .success(license(status: "none", active: false))
         api.stateResult = .success(Fixtures.twoAccounts())
         let fleet = FleetViewModel(api: api, autostart: false)
         let quote = ProQuoteModel(api: api)
+        let winback = freshWinback()
         let ask = AskMachine(
-            license: license(status: "none"), quote: nil, guided: true, locale: "en-GB",
-            api: api, onDismiss: {})
-        XCTAssertEqual(ask.screen, .noTerms) // no quote yet — never an invented price
+            license: license(status: "none"), quote: winbackableQuote, guided: true, locale: "en-GB",
+            winback: winback, api: api, onDismiss: {})
 
-        await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: ask)
+        await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: ask, rereads: 2, rereadDelay: 0)
 
         XCTAssertNotEqual(ask.screen, .active)
+        XCTAssertEqual(winback.state, .armed, "an abandoned checkout is the win-back's second trigger")
+        // The decision waited out the re-read window: 1 initial + 2 re-reads.
+        XCTAssertEqual(api.licenseRevealRequests.count, 3)
+    }
+
+    func testPostCheckoutReloadWaitsOutTheActivationPollBeforeCallingItAbandoned() async {
+        // Adversarial review F1 (P0): production checkout completes INSIDE
+        // the sheet (embedded, no /pro/activated navigation), so a buyer
+        // who just PAID leaves through the same Cancel an abandoner uses —
+        // and GET /v1/license lags behind the daemon's ~3s activation
+        // poll. A first read of "inactive" must NOT arm the win-back; a
+        // re-read that turns active routes to "Pro is on" and spends the
+        // ladder instead.
+        let api = StubCockpitAPI()
+        api.licenseResultQueue = [
+            .success(license(status: "none", active: false)),
+            .success(license(status: "trialing", active: true)),
+        ]
+        api.licenseResult = .success(license(status: "trialing", active: true))
+        api.stateResult = .success(Fixtures.twoAccounts())
+        let fleet = FleetViewModel(api: api, autostart: false)
+        let quote = ProQuoteModel(api: api)
+        let winback = freshWinback()
+        let ask = AskMachine(
+            license: license(status: "none"), quote: winbackableQuote, guided: true, locale: "en-GB",
+            winback: winback, api: api, onDismiss: {})
+
+        await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: ask, rereads: 4, rereadDelay: 0)
+
+        XCTAssertEqual(ask.screen, .active, "activation landing mid-window must route the ask, not arm the rung")
+        XCTAssertEqual(winback.state, .spent)
+        // Exited the window early, on the activating re-read.
+        XCTAssertEqual(api.licenseRevealRequests.count, 2)
+    }
+
+    func testPostCheckoutReloadDiscardsAStaleInactiveReadWhenRereadsFail() async {
+        // Found in review: a successful inactive FIRST read followed
+        // by failing re-reads must not decide "abandoned" — the deciding
+        // read is the final one, and a failed final read proves nothing.
+        let api = StubCockpitAPI()
+        api.licenseResultQueue = [.success(license(status: "none", active: false))]
+        api.licenseResult = .failure(DaemonError.down)
+        api.stateResult = .success(Fixtures.twoAccounts())
+        let fleet = FleetViewModel(api: api, autostart: false)
+        let quote = ProQuoteModel(api: api)
+        let winback = freshWinback()
+        let ask = AskMachine(
+            license: license(status: "none"), quote: winbackableQuote, guided: true, locale: "en-GB",
+            winback: winback, api: api, onDismiss: {})
+
+        await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: ask, rereads: 2, rereadDelay: 0)
+
+        XCTAssertEqual(winback.state, .intact, "stale evidence must not arm the rung")
+    }
+
+    func testPostCheckoutReloadFailedLicenseReadTriggersNothing() async {
+        // Fail case: a reload that cannot READ the license proves
+        // neither activation nor abandonment — the ladder must not arm on
+        // the absence of evidence.
+        let api = StubCockpitAPI()
+        api.licenseResult = .failure(DaemonError.down)
+        api.stateResult = .success(Fixtures.twoAccounts())
+        let fleet = FleetViewModel(api: api, autostart: false)
+        let quote = ProQuoteModel(api: api)
+        let winback = freshWinback()
+        let ask = AskMachine(
+            license: license(status: "none"), quote: nil, guided: true, locale: "en-GB",
+            winback: winback, api: api, onDismiss: {})
+
+        await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: ask, rereads: 2, rereadDelay: 0)
+
+        XCTAssertEqual(winback.state, .intact)
     }
 
     func testPostCheckoutReloadToleratesANilAskMachine() async {
@@ -178,7 +271,7 @@ final class ProFlowCoordinatorTests: XCTestCase {
         let fleet = FleetViewModel(api: api, autostart: false)
         let quote = ProQuoteModel(api: api)
 
-        await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: nil)
+        await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: nil, rereads: 0)
 
         XCTAssertEqual(api.licenseRevealRequests, [false])
         XCTAssertNotNil(fleet.state)

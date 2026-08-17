@@ -115,6 +115,16 @@ private struct PreviewStubAPI: CockpitDaemonAPI {
     func browserLoginStatus(attempt: String) async throws -> BrowserLoginStatus { try await fail() }
 }
 
+/// A throwaway win-back ladder for previews — its own suite, wiped at every
+/// construction, so no preview state ever reaches the real defaults domain.
+@MainActor
+private func previewWinback() -> WinbackModel {
+    let suite = "llmpilot.previews.winback"
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    return WinbackModel(defaults: defaults)
+}
+
 /// An `AskMachine` parked on ⑧ (the price screen) — reached by driving
 /// `stage` through the same public methods the real UI calls
 /// (`askReminder()` then `remindContinue()`), never by reaching into private
@@ -123,7 +133,7 @@ private struct PreviewStubAPI: CockpitDaemonAPI {
 private func previewPriceAsk() -> AskMachine {
     let ask = AskMachine(
         license: previewLicense(status: "none"), quote: previewQuote, guided: true,
-        locale: "en-GB", api: PreviewStubAPI(), onDismiss: {})
+        locale: "en-GB", winback: previewWinback(), api: PreviewStubAPI(), onDismiss: {})
     ask.askReminder()
     ask.remindContinue()
     return ask
@@ -134,7 +144,7 @@ private func previewPriceAsk() -> AskMachine {
 private func previewActiveAsk() -> AskMachine {
     let ask = AskMachine(
         license: previewLicense(status: "trialing", active: true), quote: previewQuote, guided: true,
-        locale: "en-GB", api: PreviewStubAPI(), onDismiss: {})
+        locale: "en-GB", winback: previewWinback(), api: PreviewStubAPI(), onDismiss: {})
     ask.accountsWatched = 3
     ask.accountsSwitchable = 3
     return ask
@@ -145,7 +155,7 @@ private func previewActiveAsk() -> AskMachine {
 private func previewPausedAsk() -> AskMachine {
     let ask = AskMachine(
         license: previewLicense(status: "lapsed"), quote: previewQuote, guided: false,
-        locale: "en-GB", api: PreviewStubAPI(), onDismiss: {})
+        locale: "en-GB", winback: previewWinback(), api: PreviewStubAPI(), onDismiss: {})
     ask.caughtThisWeek = 4
     return ask
 }

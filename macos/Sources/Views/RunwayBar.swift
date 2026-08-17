@@ -19,6 +19,10 @@ struct RunwayBar: View {
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 38, alignment: .leading)
+                // An unknown bucket kind carries its raw name — one line,
+                // truncated, never a three-line wrap in a 38pt column.
+                .lineLimit(1)
+                .truncationMode(.tail)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Theme.rail)

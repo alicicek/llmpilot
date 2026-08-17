@@ -302,3 +302,70 @@ func TestRefreshBudgetRotationNotPersistedAborts(t *testing.T) {
 	}
 	t.Logf("transient failure → plain error, stored credential untouched (switch proceeds un-freshened)")
 }
+
+// TestSignIn429TripsShortBreaker (fresh-user audit 2026-08-16, F7): a code-
+// exchange 429 pauses refreshes — same endpoint — but for the SHORT sign-in
+// cooldown, tagged as a sign-in; a refresh 429 keeps the 24h horizon; and a
+// sign-in trip never shortens a still-open refresh trip.
+func TestSignIn429TripsShortBreaker(t *testing.T) {
+	sw, _, _, opts, b := budgetSandbox(t)
+	ctx := context.Background()
+	opts.RefreshLead = 1000 * time.Hour // always "near expiry": the budget decides
+
+	before := time.Now()
+	sw.NoteSignIn429(ctx)
+
+	// Paused right after the trip, and the reason names a sign-in.
+	opts.Now = func() time.Time { return before.Add(5 * time.Minute) }
+	res, err := sw.KeepWarm(ctx, b, opts)
+	if err != nil || res.Rotated || !strings.Contains(res.Skipped, "refresh paused") || !strings.Contains(res.Skipped, "a sign-in") {
+		t.Fatalf("sign-in trip must pause refreshes and say so: rotated=%v skip=%q err=%v", res.Rotated, res.Skipped, err)
+	}
+	snap, err := sw.BudgetSnapshot()
+	if err != nil || snap.TrippedBy != BreakerSourceSignIn || snap.BreakerClears() == nil {
+		t.Fatalf("snapshot must carry the sign-in source: %+v %v", snap, err)
+	}
+	if got := snap.BreakerClears().Sub(*snap.TrippedAt); got != SignInBreakerCooldown {
+		t.Fatalf("sign-in horizon = %s, want %s", got, SignInBreakerCooldown)
+	}
+
+	// Cleared once the sign-in cooldown has passed (well short of 24h).
+	opts.Now = func() time.Time { return before.Add(SignInBreakerCooldown + 5*time.Minute) }
+	res, err = sw.KeepWarm(ctx, b, opts)
+	if err != nil || !res.Rotated {
+		t.Fatalf("sign-in trip must clear after %s: rotated=%v skip=%q err=%v", SignInBreakerCooldown, res.Rotated, res.Skipped, err)
+	}
+	t.Logf("sign-in 429: paused for %s, then refreshing again", SignInBreakerCooldown)
+
+	// FAIL CASE for the guard: a REFRESH trip keeps the long horizon — the
+	// same +65min instant is still paused — and a later sign-in 429 must
+	// not shorten it.
+	before2 := time.Now()
+	sw.NoteTokenEndpoint429(ctx)
+	sw.NoteSignIn429(ctx)
+	snap, _ = sw.BudgetSnapshot()
+	if snap.TrippedBy != BreakerSourceRefresh {
+		t.Fatalf("a sign-in 429 shortened an open refresh trip: source=%q", snap.TrippedBy)
+	}
+	opts.Now = func() time.Time { return before2.Add(SignInBreakerCooldown + 5*time.Minute) }
+	res, err = sw.KeepWarm(ctx, b, opts)
+	if err != nil || res.Rotated || !strings.Contains(res.Skipped, "a refresh") {
+		t.Fatalf("refresh trip must still pause at +%s: rotated=%v skip=%q err=%v", SignInBreakerCooldown, res.Rotated, res.Skipped, err)
+	}
+	opts.Now = func() time.Time { return before2.Add(BreakerCooldown + 5*time.Minute) }
+	if res, err = sw.KeepWarm(ctx, b, opts); err != nil || !res.Rotated {
+		t.Fatalf("refresh trip must clear after %s: rotated=%v skip=%q err=%v", BreakerCooldown, res.Rotated, res.Skipped, err)
+	}
+	t.Logf("refresh 429: 24h horizon kept even after a later sign-in 429")
+}
+
+// TestBudgetDocWithoutSourceReadsAsRefresh: a document written before
+// breaker sources existed (1.3.0 and earlier) keeps the conservative 24h.
+func TestBudgetDocWithoutSourceReadsAsRefresh(t *testing.T) {
+	if BreakerCooldownFor("") != BreakerCooldown {
+		t.Fatalf("empty source must be the refresh horizon")
+	}
+	if BreakerCooldownFor(BreakerSourceSignIn) != SignInBreakerCooldown {
+		t.Fatalf("sign-in source must be the short horizon")
+	}
+}

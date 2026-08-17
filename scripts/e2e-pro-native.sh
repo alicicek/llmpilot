@@ -211,7 +211,14 @@ DISC_STR=$(awk -v m="$DISC_MINOR" 'BEGIN{printf "%.2f", m/100}')
 echo "  quoted: ${TRIAL_DAYS}-day trial, full=$FULL_STR gbp, discount=$DISC_STR gbp"
 
 echo "== launch the native app (zero accounts, zero detected dirs) =="
-"$APP/Contents/MacOS/llmpilot" >"$ROOT/app.log" 2>&1 &
+# -SUEnableAutomaticChecks NO rides the ARGUMENT defaults domain (highest
+# precedence, nothing persisted): a Release build otherwise fires a live
+# Sparkle appcast check mid-walk and the update dialog sits over the
+# paywall in the LOOK screenshot (caught on the first S6 run). Never write
+# this key into the real dev.llmpilot.menubar domain from a harness — a
+# killed run would leave the developer's real app with update checks off
+# (S6 review F4).
+"$APP/Contents/MacOS/llmpilot" -SUEnableAutomaticChecks NO >"$ROOT/app.log" 2>&1 &
 APP_PID=$!
 disown
 echo "== app launched (pid $APP_PID) — waiting for the native cockpit window =="
@@ -439,26 +446,58 @@ wait_texts_contain "$FULL_STR" 10 \
 echo "  price screen quotes the real worker terms: $FULL_STR found"
 
 # ============================================================
-# [5] no lower-price ladder: the corridor quotes ONE price.
+# [5] the win-back rung (audit F13): BEFORE any trigger the price
+# screen quotes full only; the FIRST ✕ arms the once-per-install rung and
+# the price screen re-renders the REAL discount_trial terms from the live
+# quote — it does not close.
 # ============================================================
-echo "== [5] no lower-price ladder: the corridor quotes ONE price =="
-for GONE_ID in show-lower-offer price-no-thanks; do
-  case "$(osa_locate_id "$GONE_ID")" in
-    *FOUND*) echo "E2E PRO-NATIVE: FAIL — $GONE_ID is on the price screen; the decline ladder was removed"; exit 1 ;;
-    *) echo "  $GONE_ID absent: good" ;;
-  esac
-done
-# Only meaningful when the two rungs quote DIFFERENT amounts: under an
-# active launch window both rungs carry the same price, and the full amount
-# — already asserted PRESENT above — would trip this check with a wrong
-# diagnosis (review 2026-08-11 P2-7).
-if [ "$DISC_MINOR" != "$FULL_MINOR" ]; then
-  if wait_texts_contain "$DISC_STR" 3 2>/dev/null; then
-    echo "E2E PRO-NATIVE: FAIL — the discounted amount $DISC_STR is on screen; only the full price may be quoted"; exit 1
+echo "== [5] the win-back rung: full first, then the first ✕ swaps in the real discounted terms =="
+# The walk below IS the wave's proof — terms that cannot distinguish the
+# rungs (launch window: discount == full) cannot exercise it, so that is a
+# harness-terms failure, not a skip.
+[ "$DISC_MINOR" != "$FULL_MINOR" ] || {
+  echo "E2E PRO-NATIVE: FAIL — the local catalog quotes discount == full ($FULL_STR); the win-back walk needs distinguishable rungs"; exit 1; }
+if wait_texts_contain "$DISC_STR" 3 2>/dev/null; then
+  echo "E2E PRO-NATIVE: FAIL — the discounted amount $DISC_STR is on screen BEFORE any decline trigger"; exit 1
+fi
+echo "  no discount before any trigger: $DISC_STR absent, full $FULL_STR quoted"
+
+wait_press_id "paywall-close" 15 >/dev/null \
+  || { echo "E2E PRO-NATIVE: FAIL — paywall-close (the ✕) not pressed on the price screen"; exit 1; }
+echo "  first ✕ pressed"
+wait_locate_id "price-screen" 15 >/dev/null \
+  || { echo "E2E PRO-NATIVE: FAIL — the price screen closed on the FIRST ✕; it must re-render the discounted terms instead"; exit 1; }
+wait_texts_contain "$DISC_STR" 10 \
+  || { echo "E2E PRO-NATIVE: FAIL — discounted amount $DISC_STR not on the price screen after the first ✕"; exit 1; }
+wait_texts_contain "Same trial, lower price" 5 \
+  || { echo "E2E PRO-NATIVE: FAIL — the win-back headline is missing from the discounted render"; exit 1; }
+wait_texts_contain "$FULL_STR" 5 \
+  || { echo "E2E PRO-NATIVE: FAIL — the struck full price $FULL_STR is missing beside the discounted amount"; exit 1; }
+echo "  discounted render confirmed: $DISC_STR quoted, full $FULL_STR struck through, win-back headline present"
+
+WINBACK_STATE=$(HOME="$REAL_HOME" defaults read "$LLMPILOT_DEFAULTS_SUITE" proWinback 2>/dev/null || echo "ABSENT")
+[ "$WINBACK_STATE" = "armed" ] \
+  || { echo "E2E PRO-NATIVE: FAIL — proWinback should persist as 'armed' after the first ✕ (got: $WINBACK_STATE)"; exit 1; }
+echo "  proWinback persisted as armed (once per install — a relaunch neither re-arms nor forgets it)"
+
+# The wave's LOOK artifact: the discounted paywall, captured from the
+# sandbox window. Region capture off the window's AX frame; requires the
+# invoking terminal's Screen Recording permission — a wallpaper-only image
+# fails the human LOOK, not this script.
+SHOT="$ROOT/discounted-paywall.png"
+WIN_FRAME=$(osascript -e "tell application \"System Events\" to tell (first process whose unix id is $APP_PID) to get {position, size} of window \"$WIN_TITLE\"" 2>/dev/null || true)
+if [ -n "$WIN_FRAME" ]; then
+  R=$(echo "$WIN_FRAME" | awk -F', ' '{printf "%s,%s,%s,%s", $1, $2, $3, $4}')
+  screencapture -x -R "$R" "$SHOT" 2>/dev/null || true
+fi
+if [ -s "$SHOT" ]; then
+  if [ -n "${E2E_PRO_SHOT_OUT:-}" ]; then
+    cp "$SHOT" "$E2E_PRO_SHOT_OUT" && echo "  discounted-paywall screenshot -> $E2E_PRO_SHOT_OUT"
+  else
+    echo "  discounted-paywall screenshot captured (set E2E_PRO_SHOT_OUT to keep it)"
   fi
-  echo "  discounted amount $DISC_STR never shown — full price only"
 else
-  echo "  discount equals full ($FULL_STR) under the current terms — absence check skipped (nothing to distinguish)"
+  echo "  NOTE: screenshot not captured (no Screen Recording permission?) — the LOOK needs another capture"
 fi
 
 # ============================================================
@@ -478,6 +517,29 @@ case "$CHECKOUT_WIN" in
   *Checkout*) echo "E2E PRO-NATIVE: FAIL — a Checkout sheet window is open though checkout-start was never pressed"; exit 1 ;;
   *) echo "  no Checkout sheet window open — CheckoutSheet.present was never invoked, the system browser was never opened" ;;
 esac
+
+# ============================================================
+# [7] the second ✕ closes for real — the corridor ends, the board mounts,
+# and the persisted rung stays armed (the standing lower price is not
+# burned by leaving).
+# ============================================================
+echo "== [7] second ✕ closes for real =="
+wait_press_id "paywall-close" 15 >/dev/null \
+  || { echo "E2E PRO-NATIVE: FAIL — paywall-close (the second ✕) not pressed"; exit 1; }
+BOARD_UP=""
+for _ in $(seq 1 15); do
+  case "$(osa_locate_id "fresh-window-menu")" in *FOUND*) BOARD_UP=1; break ;; esac
+  sleep 1
+done
+[ -n "$BOARD_UP" ] || { echo "E2E PRO-NATIVE: FAIL — the board did not mount after the second ✕"; exit 1; }
+case "$(osa_locate_id "price-screen")" in
+  *FOUND*) echo "E2E PRO-NATIVE: FAIL — price-screen still mounted after the second ✕"; exit 1 ;;
+  *) echo "  second ✕ closed the paywall for real — board mounted, price screen gone" ;;
+esac
+WINBACK_STATE=$(HOME="$REAL_HOME" defaults read "$LLMPILOT_DEFAULTS_SUITE" proWinback 2>/dev/null || echo "ABSENT")
+[ "$WINBACK_STATE" = "armed" ] \
+  || { echo "E2E PRO-NATIVE: FAIL — proWinback should still read 'armed' after the second ✕ (got: $WINBACK_STATE)"; exit 1; }
+echo "  proWinback still armed — the standing lower offer survives the close"
 
 if grep -r "sandbox-token\|refreshToken" "$LLMPILOT_HOME" 2>/dev/null; then
   echo "E2E PRO-NATIVE: FAIL — token material found in LLMPILOT_HOME"; exit 1
@@ -502,4 +564,4 @@ if [ -f "$HOME/Library/LaunchAgents/dev.llmpilot.daemon.plist" ]; then
 fi
 echo "  no LaunchAgent plist written: clean"
 
-echo "E2E PRO-NATIVE: PASS — zero-account onboarding takeover, education ladder (wall/accounts-skip/switch/windows, blind-spot correctly skipped on <2 identities), the ask (receipt/remind/price quoting \$$FULL_STR, one price, no ladder) — checkout never pressed, system browser never opened"
+echo "E2E PRO-NATIVE: PASS — zero-account onboarding takeover, education ladder (wall/accounts-skip/switch/windows, blind-spot correctly skipped on <2 identities), the ask (receipt/remind/price quoting \$$FULL_STR), the win-back rung (first ✕ -> real $DISC_STR discount_trial terms, armed persisted, second ✕ closed for real) — checkout never pressed, system browser never opened"

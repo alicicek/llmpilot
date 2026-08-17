@@ -64,4 +64,48 @@ final class MainMenuTests: XCTestCase {
         XCTAssertEqual(controller.window?.title, "llmpilot")
         XCTAssertEqual(controller.window?.frameAutosaveName, "llmpilot-cockpit")
     }
+
+    // MARK: - F16: corridor fixed-size, cockpit stays resizable
+    // Decided in the 2026-08-16 audit: the cockpit stays resizable
+    // (min 1000×700, default 1180×820), the corridor is locked.
+
+    func testWindowModePureSizesMatchTheF16Decision() {
+        XCTAssertEqual(WindowMode.cockpit.minSize, NSSize(width: 1000, height: 700))
+        XCTAssertEqual(WindowMode.corridor.minSize, NSSize(width: 740, height: 520))
+
+        let bigVisible = NSRect(x: 0, y: 0, width: 4000, height: 3000)
+        XCTAssertEqual(WindowMode.cockpit.targetContentSize(in: bigVisible), NSSize(width: 1180, height: 820))
+        XCTAssertEqual(WindowMode.corridor.targetContentSize(in: bigVisible), NSSize(width: 860, height: 560))
+
+        // Corridor's target never grows with the screen — the whole point
+        // of a fixed size — where the cockpit's does (0.9× visible, clamped).
+        let smallVisible = NSRect(x: 0, y: 0, width: 1000, height: 800)
+        XCTAssertEqual(WindowMode.corridor.targetContentSize(in: smallVisible), NSSize(width: 860, height: 560))
+        XCTAssertEqual(WindowMode.cockpit.targetContentSize(in: smallVisible), NSSize(width: 900, height: 720))
+    }
+
+    func testFlowModeTogglesResizabilityAndPinsTheCorridorToItsFixedSize() {
+        let controller = openLocalController()
+        defer { controller.window?.orderOut(nil) }
+        let win = try! XCTUnwrap(controller.window)
+
+        XCTAssertTrue(win.styleMask.contains(.resizable), "cockpit must open resizable")
+        XCTAssertEqual(win.minSize, NSSize(width: 1000, height: 700))
+
+        controller.setFlowMode(true) // -> corridor
+        XCTAssertFalse(win.styleMask.contains(.resizable), "corridor must not be user-resizable")
+        // Corridor's target ignores the visible frame entirely — always the
+        // fixed 860×560 (WindowMode.targetContentSize's `.corridor` case).
+        let corridorTarget = NSSize(width: 860, height: 560)
+        XCTAssertEqual(win.minSize, corridorTarget, "min pinned to the fixed target so AppKit cannot shrink it")
+        XCTAssertEqual(win.maxSize, corridorTarget, "max pinned to the fixed target so AppKit cannot grow it")
+        // `win.frame` is the whole window including the title bar — compare
+        // the CONTENT size, which is what `setContentSize` actually set.
+        XCTAssertEqual(win.contentRect(forFrameRect: win.frame).size, corridorTarget)
+
+        controller.setFlowMode(false) // back -> cockpit
+        XCTAssertTrue(win.styleMask.contains(.resizable), "swapping back to the cockpit must restore resizing")
+        XCTAssertEqual(win.minSize, NSSize(width: 1000, height: 700))
+        XCTAssertGreaterThan(win.maxSize.width, 100_000, "cockpit's ceiling must be restored to unbounded")
+    }
 }

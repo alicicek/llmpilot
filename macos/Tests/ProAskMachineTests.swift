@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import llmpilot
 
@@ -36,7 +37,7 @@ final class ProAskMachineTests: XCTestCase {
         api.licenseCheckoutResult = .success(checkoutHandoff(url: "https://checkout.stripe.com/c/pay/full?remind=2"))
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: api, onDismiss: {})
+            winback: freshWinback(), api: api, onDismiss: {})
 
         // ⑥ receipt first — no price stated yet.
         XCTAssertEqual(ask.screen, .receipt)
@@ -82,13 +83,16 @@ final class ProAskMachineTests: XCTestCase {
         api.licenseCheckoutResult = .success(checkoutHandoff(url: "https://pay/full?remind=2"))
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: api, onDismiss: {})
+            winback: freshWinback(), api: api, onDismiss: {})
         ask.askReminder()
         ask.remindDays = 1
         ask.remindContinue()
         XCTAssertEqual(ask.screen, .price)
 
-        // "Change the reminder day" routes back to ⑦ without leaving the flow.
+        // `askReminder()` still routes back to ⑦ without leaving the flow —
+        // the price screen's own "Change the reminder day" footer button
+        // was removed (F11, 2026-08-16 audit), but the underlying model
+        // method this test exercises is unchanged.
         ask.askReminder()
         XCTAssertEqual(ask.screen, .remind)
         ask.remindDays = 2
@@ -107,7 +111,7 @@ final class ProAskMachineTests: XCTestCase {
         var dismissed = 0
         let ask = AskMachine(
             license: license(status: "lapsed"), quote: fourDayQuote, guided: false, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: { dismissed += 1 })
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: { dismissed += 1 })
         XCTAssertEqual(ask.screen, .paused)
         // Restarting a card-upfront trial owes the SAME dates/amount as the
         // first ask — the full rung, which is now the ONLY rung the app can
@@ -248,7 +252,7 @@ final class ProAskMachineTests: XCTestCase {
         api.licenseCheckoutResult = .failure(ApiError(status: 409, code: "quote_stale", message: "terms drifted"))
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: api, onDismiss: {})
+            winback: freshWinback(), api: api, onDismiss: {})
         var reloadCalls = 0
         ask.reloadQuote = { reloadCalls += 1 }
         ask.askReminder()
@@ -284,7 +288,7 @@ final class ProAskMachineTests: XCTestCase {
         api.licenseCheckoutResult = .success(checkoutHandoff(url: "https://pay/full"))
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: api, onDismiss: {})
+            winback: freshWinback(), api: api, onDismiss: {})
         ask.askReminder()
         ask.remindDays = 1
         ask.remindContinue()
@@ -305,7 +309,7 @@ final class ProAskMachineTests: XCTestCase {
     func testRoutineRequoteWithUnchangedTermsDoesNotBounce() {
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         ask.askReminder()
         ask.remindDays = 1
         ask.remindContinue()
@@ -330,7 +334,7 @@ final class ProAskMachineTests: XCTestCase {
             pricesFull: fourDayQuote.pricesFull, pricesDiscount: fourDayQuote.pricesDiscount)
         let ask = AskMachine(
             license: license(status: "none"), quote: oneDayQuote, guided: true, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         // [2,1].filter(< 1) is EMPTY — no chips, so no question.
         XCTAssertEqual(ask.remindOffsets, [])
         ask.askReminder()
@@ -349,7 +353,7 @@ final class ProAskMachineTests: XCTestCase {
     func testGuidedFlowHidesCloseUntilThePriceScreen() {
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         XCTAssertEqual(ask.screen, .receipt)
         XCTAssertFalse(ask.closeButtonVisible)
         ask.askReminder()
@@ -367,7 +371,7 @@ final class ProAskMachineTests: XCTestCase {
         // onboarding, not of the paywall itself.
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: false, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         XCTAssertEqual(ask.screen, .receipt)
         XCTAssertTrue(ask.closeButtonVisible)
     }
@@ -382,7 +386,7 @@ final class ProAskMachineTests: XCTestCase {
         api.licenseCheckoutResult = .success(checkoutHandoff(url: "https://checkout.stripe.com/c/pay/full"))
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: api, onDismiss: {})
+            winback: freshWinback(), api: api, onDismiss: {})
         ask.askReminder()
         ask.remindDays = 1
         ask.remindContinue()
@@ -400,7 +404,7 @@ final class ProAskMachineTests: XCTestCase {
     func testApplyReloadedLicenseIgnoresAStillInactiveReload() {
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: {})
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         XCTAssertEqual(ask.screen, .receipt)
 
         // The buyer closed the checkout sheet without completing payment —
@@ -421,7 +425,7 @@ final class ProAskMachineTests: XCTestCase {
         api.licenseCheckoutResult = .success(checkoutHandoff(url: "https://checkout.stripe.com/c/pay/full"))
         let ask = AskMachine(
             license: license(status: "none"), quote: fourDayQuote, guided: true, locale: "en-GB",
-            api: api, onDismiss: {})
+            winback: freshWinback(), api: api, onDismiss: {})
         ask.askReminder()
         ask.remindDays = 1
         ask.remindContinue()
@@ -446,5 +450,281 @@ final class ProAskMachineTests: XCTestCase {
             pricesFull: fourDayQuote.pricesFull, pricesDiscount: fourDayQuote.pricesDiscount)
         ask.setQuote(driftedAgain)
         XCTAssertEqual(ask.screen, .receipt)
+    }
+
+    // MARK: - the win-back rung (audit F13, owner 2026-08-16
+    // reverses the 2026-08-11 ladder removal). First ✕ or an abandoned
+    // checkout arms the once-per-install rung; the next render quotes the
+    // REAL discount_trial terms; a second ✕ closes for real; activation
+    // ends the ladder permanently.
+
+    private func priceScreenAsk(
+        winback: WinbackModel, api: StubCockpitAPI = StubCockpitAPI(), guided: Bool = true,
+        quote: LadderQuote? = nil, status: String = "none", active: Bool = false,
+        onDismiss: @escaping () -> Void = {}
+    ) -> AskMachine {
+        let ask = AskMachine(
+            license: license(status: status, active: active), quote: quote ?? fourDayQuote,
+            guided: guided, locale: "en-GB", winback: winback, api: api, onDismiss: onDismiss)
+        ask.askReminder()
+        ask.remindDays = 2
+        ask.remindContinue()
+        return ask
+    }
+
+    func testPressCheckoutDivertsWhenAFreshReadShowsTheLicenseActive() async {
+        // Found in review: the daemon's activation poll outlives
+        // PostCheckoutReload's decision window (license.go pollFor = 10
+        // min), so an armed screen can be stale by press time — and a
+        // second checkout both bills again and CANCELS the poll about to
+        // activate the first purchase. A positive active pre-flight read
+        // must divert to "Pro is on" with zero wire checkout calls.
+        let api = StubCockpitAPI()
+        api.licenseResult = .success(license(status: "trialing", active: true))
+        api.licenseCheckoutResult = .success(checkoutHandoff(url: "https://checkout.stripe.com/c/pay/x"))
+        let winback = freshWinback()
+        winback.arm()
+        let ask = priceScreenAsk(winback: winback, api: api)
+        await ask.pressCheckout()
+        XCTAssertTrue(api.licenseCheckoutRequests.isEmpty, "an active license must never be sold a second session")
+        XCTAssertEqual(ask.screen, .active)
+        XCTAssertEqual(winback.state, .spent)
+        // Fail case: a FAILED pre-flight read proves nothing and must not
+        // block a legitimate purchase.
+        let api2 = StubCockpitAPI() // licenseResult defaults to .failure
+        api2.licenseCheckoutResult = .success(checkoutHandoff(url: "https://checkout.stripe.com/c/pay/y"))
+        let ask2 = priceScreenAsk(winback: freshWinback(), api: api2)
+        await ask2.pressCheckout()
+        XCTAssertEqual(api2.licenseCheckoutRequests.count, 1)
+    }
+
+    func testNoDiscountBeforeAnyTrigger() {
+        let ask = priceScreenAsk(winback: freshWinback())
+        XCTAssertEqual(ask.offerRung, .full)
+        XCTAssertEqual(ask.offerCopy?.amount, "£9.99")
+        XCTAssertNil(ask.offerCopy?.strikeAmount)
+    }
+
+    func testFirstCloseArmsTheWinbackAndQuotesTheRealDiscountTerms() async {
+        let api = StubCockpitAPI()
+        api.licenseCheckoutResult = .success(checkoutHandoff(url: "https://checkout.stripe.com/c/pay/disc"))
+        let winback = freshWinback()
+        var dismissed = 0
+        let ask = priceScreenAsk(winback: winback, api: api, onDismiss: { dismissed += 1 })
+
+        // First ✕: arms, does NOT close — the price screen re-renders the
+        // discount rung's real quoted terms, full struck through beside it.
+        ask.close()
+        XCTAssertEqual(dismissed, 0)
+        XCTAssertEqual(winback.state, .armed)
+        XCTAssertEqual(ask.screen, .price)
+        XCTAssertEqual(ask.offerRung, .discountTrial)
+        XCTAssertEqual(ask.offerCopy?.amount, "£5.99")
+        XCTAssertEqual(ask.offerCopy?.strikeAmount, "£9.99")
+
+        // Consent honesty: the checkout posts the DISCOUNT rung with the
+        // exact terms the buyer saw echoed — the worker refuses drift.
+        await ask.pressCheckout()
+        XCTAssertEqual(api.licenseCheckoutRequests.count, 1)
+        XCTAssertEqual(api.licenseCheckoutRequests[0].rung, "discount_trial")
+        XCTAssertEqual(
+            api.licenseCheckoutRequests[0].echo,
+            QuoteEcho(trialDays: 4, currency: "gbp", amountMinor: 599))
+        XCTAssertEqual(ask.committedAmount, "£5.99")
+    }
+
+    func testSecondCloseClosesForReal() {
+        let winback = freshWinback()
+        var dismissed = 0
+        let ask = priceScreenAsk(winback: winback, onDismiss: { dismissed += 1 })
+        ask.close()
+        XCTAssertEqual(dismissed, 0)
+        ask.close()
+        XCTAssertEqual(dismissed, 1)
+        // Closing does not burn the standing offer — it is the last offer,
+        // no deadline on it: the next open still quotes the discount.
+        XCTAssertEqual(winback.state, .armed)
+    }
+
+    func testCloseFromReceiptLandsOnTheDiscountedPriceScreen() async {
+        // Only the REOPENED paywall has a ✕ on ⑥/⑦. The first ✕ must land
+        // on ⑧ ALREADY quoting the discounted terms (S6 review F3: the
+        // web ladder's ask-first order parked the decline on the
+        // amount-less reminder question, so a second ✕ could close without
+        // the offer ever being seen). The skipped reminder question stays
+        // honest: checkout with no answer redirects to ⑦ instead of
+        // posting an assumed value.
+        let api = StubCockpitAPI()
+        let winback = freshWinback()
+        var dismissed = 0
+        let ask = AskMachine(
+            license: license(status: "none"), quote: fourDayQuote, guided: false, locale: "en-GB",
+            winback: winback, api: api, onDismiss: { dismissed += 1 })
+        XCTAssertEqual(ask.screen, .receipt)
+        ask.close()
+        XCTAssertEqual(dismissed, 0)
+        XCTAssertEqual(winback.state, .armed)
+        XCTAssertEqual(ask.screen, .price)
+        XCTAssertEqual(ask.offerRung, .discountTrial)
+        XCTAssertNil(ask.remindDays)
+
+        // The unanswered reminder cannot be posted past: checkout redirects
+        // to the question, no wire call.
+        await ask.pressCheckout()
+        XCTAssertTrue(api.licenseCheckoutRequests.isEmpty)
+        XCTAssertEqual(ask.screen, .remind)
+    }
+
+    func testOneDayTrialDeclineLeavesNoDeadPressOnTheMoneyButton() async {
+        // Review delta P2: a 1-day trial has no reminder question
+        // (remindOffsets is empty), so the decline path must pre-answer it
+        // exactly as askReminder() would — otherwise the CTA's redirect
+        // re-runs askReminder into the SAME screen and the first press of
+        // the money button visibly does nothing.
+        let oneDayQuote = LadderQuote(
+            trialDays: 1, chargeDate: fourDayQuote.chargeDate,
+            pricesFull: ["gbp": 999], pricesDiscount: ["gbp": 599])
+        let api = StubCockpitAPI()
+        api.licenseCheckoutResult = .success(checkoutHandoff(url: "https://checkout.stripe.com/c/pay/one"))
+        let winback = freshWinback()
+        let ask = AskMachine(
+            license: license(status: "none"), quote: oneDayQuote, guided: false, locale: "en-GB",
+            winback: winback, api: api, onDismiss: {})
+        ask.close()
+        XCTAssertEqual(ask.screen, .price)
+        XCTAssertEqual(ask.offerRung, .discountTrial)
+        XCTAssertEqual(ask.remindDays, 1)
+        // The very first press opens checkout — no silent redirect.
+        await ask.pressCheckout()
+        XCTAssertEqual(api.licenseCheckoutRequests.count, 1)
+        XCTAssertEqual(api.licenseCheckoutRequests[0].rung, "discount_trial")
+    }
+
+    func testAbandonedCheckoutArmsTheWinback() {
+        let winback = freshWinback()
+        let ask = priceScreenAsk(winback: winback)
+        // The open price screen has no @Published of its own on this path —
+        // the repaint rides the winback→ask objectWillChange republish
+        // (S6 review F5: deleting that sink must fail a gate).
+        var repaints = 0
+        let sink = ask.objectWillChange.sink { _ in repaints += 1 }
+        defer { sink.cancel() }
+        ask.checkoutAbandoned()
+        XCTAssertEqual(winback.state, .armed)
+        XCTAssertEqual(ask.offerRung, .discountTrial)
+        XCTAssertGreaterThan(repaints, 0, "arming must repaint the open screen via the republish sink")
+    }
+
+    func testAbandonedCheckoutWithoutALowerOfferArmsNothing() {
+        // Fail cases (S6 review F2): arming with nothing showable would
+        // burn the once-per-install rung invisibly — no quote (the refetch
+        // failed), or a launch window quoting discount == full, must leave
+        // the ladder intact.
+        let winback = freshWinback()
+        let noQuote = priceScreenAsk(winback: winback, quote: nil)
+        noQuote.setQuote(nil)
+        noQuote.checkoutAbandoned()
+        XCTAssertEqual(winback.state, .intact)
+
+        let launchQuote = LadderQuote(
+            trialDays: 4, chargeDate: fourDayQuote.chargeDate,
+            pricesFull: ["gbp": 599], pricesDiscount: ["gbp": 599])
+        priceScreenAsk(winback: winback, quote: launchQuote).checkoutAbandoned()
+        XCTAssertEqual(winback.state, .intact)
+    }
+
+    func testOncePerInstallSurvivesRelaunchOverTheSameDefaults() {
+        // The wave's persistence line, proven the way a relaunch actually
+        // works: a FRESH model (and a fresh ask) over the SAME defaults.
+        let suite = "ProAskMachineTests.winback.relaunch"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+
+        priceScreenAsk(winback: WinbackModel(defaults: defaults)).close()
+
+        // "Relaunch": everything model-side is rebuilt over the same store.
+        let relaunched = WinbackModel(defaults: defaults)
+        XCTAssertEqual(relaunched.state, .armed, "a relaunch must not forget the offer")
+        var dismissed = 0
+        let ask = priceScreenAsk(winback: relaunched, onDismiss: { dismissed += 1 })
+        XCTAssertEqual(ask.offerRung, .discountTrial)
+        // ...and must not RE-arm it: the ladder does not restart, the ✕
+        // closes for real on the first press.
+        ask.close()
+        XCTAssertEqual(dismissed, 1)
+
+        // spent survives the same way.
+        relaunched.noteActivated()
+        XCTAssertEqual(WinbackModel(defaults: defaults).state, .spent)
+    }
+
+    func testActivationDisarmsPermanently() {
+        let winback = freshWinback()
+        var dismissed = 0
+        let ask = priceScreenAsk(winback: winback, onDismiss: { dismissed += 1 })
+        ask.applyReloadedLicense(license(status: "trialing", active: true))
+        XCTAssertEqual(winback.state, .spent)
+
+        // Fail cases: no trigger resurrects a spent ladder, and the offer
+        // never renders again.
+        ask.checkoutAbandoned()
+        XCTAssertEqual(winback.state, .spent)
+        let again = priceScreenAsk(winback: winback, onDismiss: { dismissed += 1 })
+        XCTAssertEqual(again.offerRung, .full)
+        again.close()
+        XCTAssertEqual(dismissed, 1)
+        XCTAssertEqual(winback.state, .spent)
+    }
+
+    func testPausedNeverSeesTheLadder() {
+        // A lapsed license is not being asked for the first time: its ✕
+        // closes, an abandoned trial-restart checkout arms nothing, and
+        // even an already-armed rung renders full on the paused screen.
+        let winback = freshWinback()
+        var dismissed = 0
+        let ask = priceScreenAsk(winback: winback, guided: false, status: "lapsed", onDismiss: { dismissed += 1 })
+        ask.close()
+        XCTAssertEqual(dismissed, 1)
+        XCTAssertEqual(winback.state, .intact)
+        ask.checkoutAbandoned()
+        XCTAssertEqual(winback.state, .intact)
+
+        winback.arm()
+        XCTAssertEqual(ask.offerRung, .full)
+    }
+
+    func testEqualPricesLeaveTheCloseAsAnExit() {
+        // Fail case: under a launch window both rungs quote the same
+        // amount — there is nothing lower to offer, so the ✕ must remain
+        // an exit (arming would eat it for no offer) and an armed rung
+        // must render full, never a fake markdown.
+        let launchQuote = LadderQuote(
+            trialDays: 4, chargeDate: fourDayQuote.chargeDate,
+            pricesFull: ["gbp": 599], pricesDiscount: ["gbp": 599])
+        let winback = freshWinback()
+        var dismissed = 0
+        let ask = priceScreenAsk(winback: winback, quote: launchQuote, onDismiss: { dismissed += 1 })
+        ask.close()
+        XCTAssertEqual(dismissed, 1)
+        XCTAssertEqual(winback.state, .intact)
+
+        winback.arm()
+        XCTAssertEqual(ask.offerRung, .full)
+    }
+
+    func testDiscountedRenderUsesTheQuotesTermsNeverALiteral() {
+        // The rendered amount comes from the LIVE quote's discount map —
+        // if the worker re-prices the rung, the paywall follows; no local
+        // £5.99 literal survives a server change.
+        let repriced = LadderQuote(
+            trialDays: 4, chargeDate: fourDayQuote.chargeDate,
+            pricesFull: ["gbp": 999], pricesDiscount: ["gbp": 549])
+        let winback = freshWinback()
+        winback.arm()
+        let ask = priceScreenAsk(winback: winback, quote: repriced)
+        XCTAssertEqual(ask.offerRung, .discountTrial)
+        XCTAssertEqual(ask.offerCopy?.amount, "£5.49")
+        XCTAssertEqual(ask.offerCopy?.echo, QuoteEcho(trialDays: 4, currency: "gbp", amountMinor: 549))
     }
 }

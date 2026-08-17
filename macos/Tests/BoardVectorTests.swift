@@ -394,6 +394,11 @@ final class BoardVectorTests: XCTestCase {
             let msg = "case '\(c.name)'"
             switch c.fn {
             case "toPx":
+                // The golden vectors pin the DEFAULT 1160pt track width
+                // (web's own fixed TRACK_PX) — `toPx`'s `trackPx:` param
+                // defaults to `BoardGeometry.trackPx` (1160) so every
+                // pre-F16 call site, and this vector file, keep passing
+                // unchanged.
                 XCTAssertEqual(BoardGeometry.toPx(c.input.minutes), c.want, accuracy: 1e-9, msg)
             case "toPct":
                 XCTAssertEqual(BoardGeometry.toPct(c.input.minutes), c.want, accuracy: 1e-9, msg)
@@ -401,5 +406,59 @@ final class BoardVectorTests: XCTestCase {
                 XCTFail("unknown fn '\(c.fn)'")
             }
         }
+    }
+
+    // MARK: - F16: fluid track width (live per-render, not the fixed 1160pt constant)
+
+    /// The golden vectors above pin `toPx`/`toPct` at the DEFAULT 1160pt
+    /// track width only. F16 (fresh-user audit 2026-08-16, finding F16)
+    /// made the board's track width a LIVE value derived from the
+    /// container's available width every render — this proves the same
+    /// pure conversion math at a SECOND width, 760pt (roughly what a fluid
+    /// track is left with at the cockpit's 1000pt minimum window width
+    /// once a header column of about 240pt is subtracted — 704pt with
+    /// F17's 296pt column, 760 here as a round second width). Expected values are hand-computed the same way the vectors'
+    /// own README documents the 1160pt cases (round(minutes * trackPx/1440
+    /// * 10) / 10) — NOT derived by calling the code under test, so this
+    /// can't vacuously pass a broken formula.
+    func testBoardGeometryFluidWidthAtSecondWidth() {
+        let trackPx = 760.0
+        XCTAssertEqual(BoardGeometry.toPx(0, trackPx: trackPx), 0, accuracy: 1e-9, "0 minutes -> 0px")
+        XCTAssertEqual(BoardGeometry.toPx(1, trackPx: trackPx), 0.5, accuracy: 1e-9, "1 minute")
+        // 37 * 760/1440 * 10 = 195.2777... rounds to 195, /10 = 19.5 — same
+        // rounding case the 1160pt vector's own "37 minutes" case exercises.
+        XCTAssertEqual(BoardGeometry.toPx(37, trackPx: trackPx), 19.5, accuracy: 1e-9, "37 minutes rounds to 1 decimal")
+        XCTAssertEqual(BoardGeometry.toPx(1439, trackPx: trackPx), 759.5, accuracy: 1e-9, "last minute of the day")
+        // toPct is width-independent by definition (percent of the day,
+        // not of the track) — same expected value as the 1160pt vector.
+        XCTAssertEqual(BoardGeometry.toPct(360), 25, accuracy: 1e-9, "quarter of the day")
+    }
+
+    /// F16 fail case: a track width narrower than the header column itself
+    /// — e.g. a container measured mid-layout-pass, or a pathological
+    /// resize below the cockpit's stated 1000x700 minimum — must never
+    /// derive negative, zero, or NaN geometry. `trackWidth(forAvailable:)`
+    /// floors to `minTrackPx`; `ppm(forTrackPx:)`/`toPx` fall back to 0
+    /// (not NaN/negative) for any non-finite or non-positive width that
+    /// reaches them directly.
+    func testBoardGeometryTrackNarrowerThanHeaderStaysSane() {
+        let trackPx = BoardGeometry.trackWidth(forAvailable: 50, headerPx: BoardGeometry.headerPx)
+        XCTAssertTrue(trackPx.isFinite, "trackWidth(forAvailable: 50) must be finite")
+        XCTAssertGreaterThanOrEqual(trackPx, BoardGeometry.minTrackPx, "trackWidth must floor to minTrackPx")
+
+        for minutes in stride(from: 0.0, through: 1439.0, by: 60.0) {
+            let px = BoardGeometry.toPx(minutes, trackPx: trackPx)
+            XCTAssertTrue(px.isFinite, "toPx(\(minutes)) at trackPx=\(trackPx) must be finite")
+            XCTAssertGreaterThanOrEqual(px, 0, "toPx(\(minutes)) at trackPx=\(trackPx) must be non-negative")
+        }
+
+        // Direct guard on the helpers themselves, bypassing the
+        // trackWidth(forAvailable:) floor, for a zero/negative width that
+        // should never reach toPx in practice but must still resolve sanely
+        // if it ever does.
+        XCTAssertEqual(BoardGeometry.ppm(forTrackPx: 0), 0, "ppm at trackPx=0 must not be NaN/negative")
+        XCTAssertEqual(BoardGeometry.ppm(forTrackPx: -100), 0, "ppm at a negative trackPx must not be NaN/negative")
+        XCTAssertFalse(BoardGeometry.toPx(720, trackPx: 0).isNaN, "toPx at trackPx=0 must not be NaN")
+        XCTAssertEqual(BoardGeometry.toPx(720, trackPx: 0), 0, "toPx at trackPx=0 must be 0, not negative")
     }
 }

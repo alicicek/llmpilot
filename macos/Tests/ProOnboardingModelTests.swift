@@ -245,7 +245,7 @@ final class ProOnboardingModelTests: XCTestCase {
             from: Data(#"{"available":true,"active":false,"status":"none","nocard_trial_used":false}"#.utf8))
         let ask = AskMachine(
             license: license, quote: nil, guided: true, locale: "en-GB",
-            api: StubCockpitAPI(), onDismiss: { dismissed += 1 })
+            winback: freshWinback(), api: StubCockpitAPI(), onDismiss: { dismissed += 1 })
 
         // No quote mocked: the ask owes an exit even with nothing to state
         // a price on — and it is the flow's ONLY one at this point.

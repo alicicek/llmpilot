@@ -39,9 +39,30 @@ final class BoardAudio: BoardTicker {
         }
     }
 
+    /// The engine, started with its output graph ALREADY built. macOS 26.5
+    /// (audit F18, 2026-08-17): `AVAudioEngine.start()` on an engine with
+    /// no nodes attached raises the OBJECTIVE-C exception
+    /// `com.apple.coreaudio.avfaudio: required condition is false:
+    /// inputNode != nullptr || outputNode != nullptr` — not a Swift error,
+    /// so `try` never sees it. The old shape (`AVAudioEngine()` → `start()`
+    /// → attach the player later) threw on the FIRST tick of every process;
+    /// thrown from inside a SwiftUI gesture callback it unwound straight
+    /// through AppKit's gesture dispatch, which left the in-flight
+    /// `NSGestureRecognizer` un-reset in the window's gesture environment
+    /// and made every later click in the cockpit dead (hover, NSMenus and
+    /// window chrome kept working). Touching `mainMixerNode` first
+    /// instantiates the mixer→output connection, which is exactly the
+    /// condition the engine asserts (`avtest`: bare start → exception,
+    /// mixer-first start → OK, measured on 26.5).
+    static func makeEngine() -> AVAudioEngine {
+        let e = AVAudioEngine()
+        _ = e.mainMixerNode
+        return e
+    }
+
     private func ensureEngine() -> AVAudioEngine? {
         if let engine, engine.isRunning { return engine }
-        let e = AVAudioEngine()
+        let e = Self.makeEngine()
         do {
             try e.start()
         } catch {
@@ -58,12 +79,19 @@ final class BoardAudio: BoardTicker {
     /// rather than exact digital silence), then plays it once through a
     /// throwaway `AVAudioPlayerNode` that detaches itself on completion.
     private func play(freq: Double, duration: Double, gain: Double, waveform: Waveform) {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in
-                self?.play(freq: freq, duration: duration, gain: gain, waveform: waveform)
-            }
-            return
+        // ALWAYS a hop to the next main-run-loop turn, even from the main
+        // thread. Every tick is called from inside an event dispatch (a
+        // gesture's onEnded, a drag's onChanged) and audio-engine work must
+        // never run there: engine start-up is slow on first use, and any
+        // AVFoundation failure surfacing as an ObjC exception (F18, see
+        // `makeEngine`) would unwind through AppKit's gesture machinery. A
+        // sub-frame delay on a ≤60 ms UI tick is inaudible.
+        DispatchQueue.main.async { [weak self] in
+            self?.playNow(freq: freq, duration: duration, gain: gain, waveform: waveform)
         }
+    }
+
+    private func playNow(freq: Double, duration: Double, gain: Double, waveform: Waveform) {
         guard let engine = ensureEngine() else { return }
         let frameCount = AVAudioFrameCount(duration * sampleRate) + 1
         guard

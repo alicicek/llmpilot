@@ -50,20 +50,25 @@ struct PaywallDots: Equatable {
     }
 }
 
-/// The price screen's bottom-left control — which of "Choose the reminder
-/// day" / "Change the reminder day" / nothing renders, given the current
-/// reminder state. Pulled out of `PaywallPriceScreen` as a pure function so
-/// tests can pin the SELECTION without rendering or pressing anything.
+/// The price screen's bottom-left control — "Choose the reminder day" or
+/// nothing, given the current reminder state. Pulled out of
+/// `PaywallPriceScreen` as a pure function so tests can pin the SELECTION
+/// without rendering or pressing anything.
 enum PriceBottomControl: Equatable {
     case chooseReminder
-    case changeReminder
     case none
 
     /// The `.noThanks` case went with the decline ladder (owner 2026-08-11):
     /// it only ever appeared once a buyer had "declined" into a lower rung,
     /// and there is no lower rung any more. Leaving the paywall is the ✕.
+    ///
+    /// Fresh-user audit 2026-08-16 (F11): `.changeReminder` also went — once
+    /// the reminder is answered, re-picking it from the price screen's
+    /// footer is a redundant affordance (the choice is made once, on the
+    /// reminder screen); the footer settles down to "Restore a purchase"
+    /// alone. `.chooseReminder` stays: it's the FIRST choice, not a change.
     static func resolve(remindDays: Int?, remindOffsets: [Int]) -> PriceBottomControl {
-        if !remindOffsets.isEmpty { return remindDays == nil ? .chooseReminder : .changeReminder }
+        if !remindOffsets.isEmpty, remindDays == nil { return .chooseReminder }
         return .none
     }
 }
@@ -384,7 +389,9 @@ private struct TrialTimelineView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        // F12 (2026-08-16 audit) — 10 -> 16: the three stops sat too close
+        // to breathe against the price line above and the descriptor below.
+        VStack(alignment: .leading, spacing: 16) {
             ForEach(Array(stops.enumerated()), id: \.offset) { _, s in
                 HStack(alignment: .top, spacing: 10) {
                     Circle().fill(s.tone).frame(width: 8, height: 8).padding(.top, 3)
@@ -413,12 +420,18 @@ struct OfferCardView: View {
         VStack(alignment: .leading, spacing: 0) {
             priceLine
             TrialTimelineView(quote: quote, amount: copy.amount, approx: copy.approx, remindDays: remindDays, locale: locale, now: now)
+            // F12 (2026-08-16 audit: the card read crowded) —
+            // more room between the timeline's last row and the statement
+            // descriptor than the timeline's own row gap, so the
+            // descriptor reads as a closing footnote, not one more row.
             Text(LadderLogic.statementNote)
                 .font(.system(size: 10))
                 .foregroundColor(CockpitTheme.ter)
-                .padding(.top, 8)
+                .padding(.top, 14)
         }
-        .padding(14)
+        // F12: 14 -> 20 — the card read crowded at the tight inset (fits
+        // the corridor's fixed 860×560 window at ⑦ with room to spare).
+        .padding(20)
         .background(CockpitTheme.panel)
         .overlay(RoundedRectangle(cornerRadius: 11).stroke(CockpitTheme.hair, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 11))
@@ -811,9 +824,18 @@ struct PaywallPriceScreen: View {
                         .lineSpacing(CockpitTheme.Onboarding.ledeLineSpacing)
                         .foregroundColor(CockpitTheme.sec)
                         .padding(.top, FlowLayout.headlineToLede)
-                    OfferCardView(copy: copy, quote: quote, remindDays: ask.remindDays ?? 1, locale: ask.locale, now: ask.now())
-                        .frame(maxWidth: FlowLayout.copyColumnMaxWidth, alignment: .leading)
-                        .padding(.top, FlowLayout.ledeToVisual)
+                    // The unanswered-reminder fallback shows the date ⑦
+                    // will actually PRESELECT (offsets.first), not a
+                    // different one the buyer never chose — ⑧ renders with
+                    // a nil remindDays only on the win-back decline path
+                    // (S6 review delta P2).
+                    OfferCardView(
+                        copy: copy, quote: quote,
+                        remindDays: ask.remindDays ?? ask.remindOffsets.first ?? 1,
+                        locale: ask.locale, now: ask.now()
+                    )
+                    .frame(maxWidth: FlowLayout.copyColumnMaxWidth, alignment: .leading)
+                    .padding(.top, FlowLayout.ledeToVisual)
 
                     disclosures
 
@@ -890,10 +912,6 @@ struct PaywallPriceScreen: View {
         switch PriceBottomControl.resolve(remindDays: ask.remindDays, remindOffsets: ask.remindOffsets) {
         case .chooseReminder:
             Button("Choose the reminder day", action: { ask.askReminder() })
-                .pwGhost()
-                .accessibilityIdentifier("price-change-reminder")
-        case .changeReminder:
-            Button("Change the reminder day", action: { ask.askReminder() })
                 .pwGhost()
                 .accessibilityIdentifier("price-change-reminder")
         case .none:

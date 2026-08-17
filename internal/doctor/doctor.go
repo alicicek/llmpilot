@@ -1048,13 +1048,19 @@ func (s *sweep) checkBudget(accounts []store.Account) {
 		return
 	}
 	if b.TrippedAt != nil {
-		if clears := b.TrippedAt.Add(switcher.BreakerCooldown); clears.After(s.now) {
+		if clears := b.BreakerClears(); clears != nil && clears.After(s.now) {
+			// Say what actually happened: a first-day sign-in 429 is not "a
+			// token refresh" to the person reading this (audit F7).
+			what := "a token refresh"
+			if b.TrippedBy == switcher.BreakerSourceSignIn {
+				what = "a sign-in"
+			}
 			s.add(Finding{
 				ID: "refresh_breaker_open", Check: CheckRefreshBudget, Severity: Warning,
 				Title: "Refreshes are paused for every account",
-				Detail: fmt.Sprintf("Claude rate-limited a token refresh at %s, so llmpilot stopped refreshing rather than probe a limit it cannot see. Switching still works; the accounts it switches to just may not be freshened. This clears at %s.",
-					localStamp(*b.TrippedAt, s.now), localStamp(clears, s.now)),
-				Remedy: Remedy{Verb: VerbNone, Label: fmt.Sprintf("Nothing to press — it clears at %s", localStamp(clears, s.now))},
+				Detail: fmt.Sprintf("Claude rate-limited %s at %s, so llmpilot stopped refreshing rather than probe a limit it cannot see. Signing in and switching still work; the accounts it switches to just may not be freshened. This clears at %s.",
+					what, localStamp(*b.TrippedAt, s.now), localStamp(*clears, s.now)),
+				Remedy: Remedy{Verb: VerbNone, Label: fmt.Sprintf("Nothing to press — it clears at %s", localStamp(*clears, s.now))},
 			})
 		}
 	}

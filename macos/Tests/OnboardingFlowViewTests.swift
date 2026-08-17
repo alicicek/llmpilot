@@ -69,6 +69,19 @@ final class OnboardingFlowViewTests: XCTestCase {
         XCTAssertEqual(OnboardingAccountsCopy.headline(detected: [], groupCount: 2), "We found 2 accounts.")
     }
 
+    // MARK: - F6 (audit 2026-08-16): number agreement — the headline said
+    // "We found 1 account." and the lede beneath it said "adding THEM" for
+    // the same single account.
+
+    func testAccountsLedeAgreesInNumberWithTheHeadlineItSitsUnder() {
+        XCTAssertEqual(
+            OnboardingAccountsCopy.lede(detected: [], groupCount: 1),
+            "Signed in on this Mac — llmpilot is adding it and will watch its limits live.")
+        XCTAssertEqual(
+            OnboardingAccountsCopy.lede(detected: [], groupCount: 2),
+            "Signed in on this Mac — llmpilot is adding them and will watch their limits live.")
+    }
+
     // MARK: - OnboardingAccountsCopy.rowIsAmbiguous — the raw config-dir
     // path renders ONLY when another row would read as the same email at a
     // glance (design critique 2026-08-09).
@@ -137,6 +150,41 @@ final class OnboardingFlowViewTests: XCTestCase {
             OnboardingAccountsCopy.dirsToAdopt([phantom, live]), ["/Users/x/.claude"],
             "adopting a credential-less dir can only produce the raw engine refusal")
         XCTAssertEqual(OnboardingAccountsCopy.dirsToAdopt([phantom]), [])
+    }
+
+    // MARK: - F1 (audit 2026-08-16): signedOutCandidates — the complement of
+    // corridorCandidates. A CONFIRMED signed-out dir (signed_in == false)
+    // must be acknowledged on screen even though it is never counted or
+    // adopted; a dir where signed-in status is merely unknown (nil) must
+    // NOT be classified as signed out — doubt must never manufacture a
+    // false "signed out" row, same rule corridorCandidates itself follows.
+
+    func testSignedOutCandidatesOnlyClassifiesConfirmedSignOutsAsSignedOut() {
+        let live = DetectedDir(configDir: "/Users/x/.claude", email: "a@example.dev", registered: false, signedIn: true)
+        let phantom = DetectedDir(configDir: "/Users/x/.claude-alt", email: "b@example.dev", registered: false, signedIn: false)
+        let unknown = DetectedDir(configDir: "/Users/x/.claude-unk", email: "c@example.dev", registered: false, signedIn: nil)
+        let adopted = DetectedDir(configDir: "/Users/x/.claude-work", email: "d@example.dev", registered: true, signedIn: true)
+
+        XCTAssertEqual(
+            OnboardingAccountsCopy.signedOutCandidates([live, phantom, unknown, adopted]), [phantom],
+            "only a CONFIRMED signed-out dir is acknowledged — doubt (nil) and live dirs are not")
+        XCTAssertEqual(
+            OnboardingAccountsCopy.signedOutCandidates(nil), [],
+            "still detecting — nothing to acknowledge yet")
+        XCTAssertEqual(OnboardingAccountsCopy.signedOutCandidates([]), [])
+    }
+
+    func testSignedOutCandidatesAndCorridorCandidatesPartitionDetectedWithNoOverlap() {
+        // The two lists together must account for every LIVE and every
+        // CONFIRMED-dead dir exactly once — this is what "acknowledged, not
+        // auto-adopted, not double-counted" means in code.
+        let live = DetectedDir(configDir: "/Users/x/.claude", email: "a@example.dev", registered: false, signedIn: true)
+        let phantom = DetectedDir(configDir: "/Users/x/.claude-alt", email: "b@example.dev", registered: false, signedIn: false)
+        let dirs = [live, phantom]
+        let shown = Set((OnboardingAccountsCopy.corridorCandidates(dirs) ?? []).map(\.configDir))
+        let signedOut = Set(OnboardingAccountsCopy.signedOutCandidates(dirs).map(\.configDir))
+        XCTAssertTrue(shown.isDisjoint(with: signedOut), "no dir is both a live candidate and an acknowledged signed-out row")
+        XCTAssertEqual(shown.union(signedOut), Set(dirs.map(\.configDir)))
     }
 
     // MARK: - the adopt-failure line (audit 2026-08-11): what happened,
@@ -235,6 +283,60 @@ final class OnboardingFlowViewTests: XCTestCase {
         mount(OnboardingFlowView(model: m, accounts: [account], detected: dirs, state: emptyState, ask: nil))
     }
 
+    // MARK: - F2 (audit 2026-08-16): the row's live lane (`RunwayBar` per
+    // bucket, reused from the popover) mounts for both an account whose
+    // snapshot has landed and one that is still being added.
+
+    func testMountsAccountsStepWithALiveSnapshotRenderingTheRunwayLane() {
+        let m = OnboardingModel(tour: true, startedEmpty: true)
+        let dirs = [DetectedDir(configDir: "/Users/x/.claude", email: "a@example.dev", registered: true, signedIn: true)]
+        // Same shape as the audit's reference lane: 5h + wk + a scoped
+        // bucket, all with a reset time.
+        let account = Fixtures.account(
+            id: "a1", label: "a", email: "a@example.dev",
+            buckets: [
+                Fixtures.bucket(kind: "session", percent: 2, resetsAt: Date().addingTimeInterval(3600)),
+                Fixtures.bucket(kind: "weekly_all", percent: 63, resetsAt: Date().addingTimeInterval(86400)),
+                Fixtures.bucket(kind: "weekly_scoped", scope: "Fable", percent: 92, resetsAt: Date().addingTimeInterval(86400)),
+            ])
+        mount(OnboardingFlowView(model: m, accounts: [account], detected: dirs, state: emptyState, ask: nil))
+    }
+
+    func testMountsAccountsStepWithNoSnapshotYetShowingThePlaceholderNotAFleetRow() {
+        // The identity is registered but the daemon hasn't reported a
+        // snapshot yet — "Adding…" must render instead of a blank row, and
+        // must not crash reaching into an empty bucket list.
+        let m = OnboardingModel(tour: true, startedEmpty: true)
+        let dirs = [DetectedDir(configDir: "/Users/x/.claude", email: "a@example.dev", registered: true, signedIn: true)]
+        let account = AccountState(
+            id: "a1", label: "a", email: "a@example.dev", pinned: false, snapshot: nil, tokenNote: nil, stale: nil,
+            configDir: "/Users/x/.claude")
+        mount(OnboardingFlowView(model: m, accounts: [account], detected: dirs, state: emptyState, ask: nil))
+    }
+
+    // MARK: - F1 (audit 2026-08-16): a confirmed signed-out sibling folder
+    // renders as an acknowledged, dimmed row alongside a normal account —
+    // never counted, never adopted, but never silently dropped either.
+
+    func testMountsAccountsStepWithASignedOutSiblingAlongsideALiveAccount() {
+        let m = OnboardingModel(tour: true, startedEmpty: true)
+        let dirs = [
+            DetectedDir(configDir: "/Users/x/.claude", email: "a@outlook.com", registered: true, signedIn: true),
+            DetectedDir(configDir: "/Users/x/.claude-alt", email: "a@gmail.com", registered: false, signedIn: false),
+        ]
+        let account = Fixtures.account(id: "a1", label: "a", email: "a@outlook.com",
+                                        buckets: [Fixtures.bucket(kind: "session", percent: 2)])
+        mount(OnboardingFlowView(model: m, accounts: [account], detected: dirs, state: emptyState, ask: nil))
+    }
+
+    func testMountsAccountsStepWithOnlySignedOutDirsAndZeroLiveGroups() {
+        // The zero-groups branch (OnboardingEmptyAccountsView) plus the
+        // signed-out acknowledgment must coexist without crashing.
+        let m = OnboardingModel(tour: true, startedEmpty: true)
+        let dirs = [DetectedDir(configDir: "/Users/x/.claude-alt", email: "a@gmail.com", registered: false, signedIn: false)]
+        mount(OnboardingFlowView(model: m, accounts: [], detected: dirs, state: emptyState, ask: nil))
+    }
+
     func testMountsAskPhaseWithAndWithoutAnAskMachine() {
         let m = OnboardingModel(tour: true, startedEmpty: false)
         for _ in 0..<4 { m.advance() }
@@ -245,7 +347,7 @@ final class OnboardingFlowViewTests: XCTestCase {
         let license = try! DaemonDates.decoder().decode(
             LicenseInfo.self,
             from: Data(#"{"available":true,"active":false,"status":"none","nocard_trial_used":false}"#.utf8))
-        let ask = AskMachine(license: license, quote: nil, guided: true, locale: "en-GB", api: StubCockpitAPI(), onDismiss: {})
+        let ask = AskMachine(license: license, quote: nil, guided: true, locale: "en-GB", winback: freshWinback(), api: StubCockpitAPI(), onDismiss: {})
         mount(OnboardingFlowView(model: m, accounts: [], detected: nil, state: emptyState, ask: ask))
     }
 

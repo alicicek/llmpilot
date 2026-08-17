@@ -31,6 +31,18 @@ enum BoardTime {
         return kind
     }
 
+    /// The lane-column label: same as `bucketLabel` except a scoped bucket
+    /// carries its WHOLE model name ("Fable", "Opus", "Sonnet"), capitalised.
+    /// The one-letter web abbreviation read as truncation to a stranger
+    /// (fresh-user audit 2026-08-16, F17: "F" for Fable next to "resets Tue
+    /// 13:…"); the board column is sized for the full word now.
+    static func laneLabel(kind: String, scope: String?) -> String {
+        if kind == "weekly_scoped", let scope, !scope.isEmpty {
+            return scope.prefix(1).uppercased() + scope.dropFirst()
+        }
+        return bucketLabel(kind: kind, scope: scope)
+    }
+
     /// web/src/board/severity.ts `findingSeverity`. Reuses
     /// `CockpitTheme.SeverityBand` rather than inventing a parallel enum —
     /// the doctor panel's finding severities ride the SAME shipped

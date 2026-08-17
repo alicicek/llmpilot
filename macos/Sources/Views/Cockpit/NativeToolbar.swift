@@ -56,6 +56,11 @@ struct FlashBanner: View {
 /// (Toolbar.tsx:95-101). Deliberately excludes Toolbar.tsx's "＋ Fresh
 /// window" dropdown — deferred to Phase 3 with the scheduling system.
 /// Add/settings are injected closures; this view wires no dialogs itself.
+///
+/// Header order per audit F15 (2026-08-16, owner decision: drop the healthy
+/// pill; ? first, then ⚙, both left of Add account): [llmpilot] … [pill, only when not
+/// live] [?] [⚙] [＋ Add account]; "＋ Fresh window" is appended by the
+/// caller (NativeCockpitWindow.swift) after this row, still last.
 struct NativeToolbarRow: View {
     let status: FleetViewModel.Status
     let asOfAge: String?
@@ -74,12 +79,17 @@ struct NativeToolbarRow: View {
             Text("llmpilot")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
-            ConnectivityPill(status: status, asOfAge: asOfAge)
-            addAccountButton
+            // F15: the permanently-green "Daemon active" pill is gone —
+            // this slot now shows only the non-healthy states (connecting/
+            // starting/down); nothing renders while the daemon is live.
+            if status != .live {
+                ConnectivityPill(status: status, asOfAge: asOfAge)
+            }
             if let onGuide {
                 guideButton(onGuide)
             }
             settingsButton
+            addAccountButton
         }
     }
 
@@ -126,6 +136,11 @@ struct NativeToolbarRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Settings")
+        // The real-click gate (scripts/e2e-real-click.sh) locates the gear
+        // by identifier: SwiftUI exposes no AXDescription for an
+        // image-only plain button, so the label alone is not addressable
+        // from System Events.
+        .accessibilityIdentifier("cockpit-settings")
     }
 }
 

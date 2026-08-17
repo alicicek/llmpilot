@@ -22,6 +22,10 @@ struct NativeCockpitRootView: View {
     /// ⑨'s make-switchable action (owner 2026-08-12, layer 1) — one model
     /// for both the guided and reopened paths, like quoteModel.
     @StateObject private var activationMove: ActivationMoveModel
+    /// The once-per-install win-back ladder — ONE persisted
+    /// instance over `fleet.defaults`, shared by the guided and reopened
+    /// asks so a trigger on either surface arms the same rung.
+    @StateObject private var winback: WinbackModel
 
     private let api: CockpitDaemonAPI & DaemonAPI
     /// `NativeCockpitWindowController.setFlowMode` — the corridor and the
@@ -145,6 +149,7 @@ struct NativeCockpitRootView: View {
         // leaves the ⑨ list and the facts line recounts itself.
         moveModel.onMoved = { Task { try? await fleet.refresh() } }
         _activationMove = StateObject(wrappedValue: moveModel)
+        _winback = StateObject(wrappedValue: WinbackModel(defaults: fleet.defaults))
         _onboarded = AppStorage(wrappedValue: false, "proOnboarded", store: fleet.defaults)
         _flowClosed = AppStorage(wrappedValue: false, "proFlowClosed", store: fleet.defaults)
         _tourSeen = AppStorage(wrappedValue: false, "llmpilot.tour.seen", store: fleet.defaults)
@@ -288,10 +293,12 @@ struct NativeCockpitRootView: View {
             }
         }
         // Chunk 5A: the tour overlay — mounted at this ancestor of every
-        // `.tourAnchor(_:)`-tagged view (toolbar's daemon pill, fresh-window
-        // button, fleet lanes' switch verb + runway) so its
-        // `TourAnchorPreferenceKey` collects all four. Wrapped in its own
-        // `GeometryReader` to resolve anchors into local coordinates.
+        // `.tourAnchor(_:)`-tagged view (fresh-window button, fleet lanes'
+        // switch verb + runway) so its `TourAnchorPreferenceKey` collects
+        // all three (F15, 2026-08-16: the toolbar's daemon pill lost its
+        // anchor along with the dropped tour step and the healthy pill
+        // itself). Wrapped in its own `GeometryReader` to resolve anchors
+        // into local coordinates.
         //
         // `canGuide` is part of the MOUNT condition, exactly like the web's
         // `{tourOpen && canGuide && <Tour/>}` (App.tsx:599) — review
@@ -335,6 +342,10 @@ struct NativeCockpitRootView: View {
             if let license = newValue {
                 guidedAsk?.applyReloadedLicense(license)
                 reopenedAsk?.applyReloadedLicense(license)
+                // activation through a door no ask ever sees (a
+                // claim from Settings, the daemon's background poll) still
+                // ends the win-back ladder permanently.
+                if license.active { winback.noteActivated() }
             }
             // Phase 6 chunk A: the menu bar's upsell row asks for the
             // paywall before this window necessarily has a license fetched
@@ -654,7 +665,8 @@ struct NativeCockpitRootView: View {
         let ask = AskMachine(
             license: license, quote: quoteModel.quote,
             guided: ProFlowLogic.guided(for: .firstRunFlow),
-            locale: Locale.current.identifier, api: api, onDismiss: dismissOnboarding)
+            locale: Locale.current.identifier, winback: winback, api: api,
+            onDismiss: dismissOnboarding)
         ask.reloadQuote = { [quoteModel] in quoteModel.reload() }
         seedAskStats(ask)
         guidedAsk = ask
@@ -743,7 +755,7 @@ struct NativeCockpitRootView: View {
         let ask = AskMachine(
             license: license, quote: quoteModel.quote,
             guided: ProFlowLogic.guided(for: .reopenedPaywall),
-            locale: Locale.current.identifier, api: api,
+            locale: Locale.current.identifier, winback: winback, api: api,
             onDismiss: {
                 paywallOpen = false
                 reopenedAsk = nil
@@ -794,7 +806,17 @@ struct NativeCockpitRootView: View {
 /// `NativeCockpitWindowController.applyMode` switches between them as
 /// `NativeCockpitRootView.onFlowModeChange` reports whether the corridor
 /// flow is currently mounted.
-private enum WindowMode: Equatable {
+///
+/// Decided in the 2026-08-16 audit walk (F16) — cockpit resizable at
+/// min 1000×700, default 1180×820, corridor fixed: the
+/// cockpit stays resizable (a fleet grows vertically with N accounts, and
+/// screens range from a 13" Air to a 27" display — a size lock would fight
+/// that); the corridor is a one-shot flow with no frame autosave already,
+/// so `applyMode` now also drops `.resizable` from the window's styleMask
+/// while it is mounted, and restores it going back to cockpit. Internal,
+/// not private, so `WindowMode.cockpit.minSize`/`.targetContentSize` are
+/// directly testable (MainMenuTests) without exercising the controller.
+enum WindowMode: Equatable {
     case cockpit
     case corridor
 
@@ -1043,6 +1065,18 @@ final class NativeCockpitWindowController: NSWindowController, NSWindowDelegate 
     /// mode opens), then restores a sane saved frame for the incoming mode
     /// or falls back to its centered default — the same sanity rules
     /// `open()` applies on first construction.
+    ///
+    /// F16 owner decision (2026-08-16, "keep cockpit resizable... corridor
+    /// fixed"): also flips `styleMask`'s `.resizable` bit both ways —
+    /// dropped while the corridor is up (so a user can't drag-resize a
+    /// one-shot flow that never autosaves its frame), restored on the swap
+    /// back to the cockpit (a stale non-resizable mask surviving the swap
+    /// would leave the board un-resizable forever, which is exactly F16's
+    /// bug: the axis stays clipped with no way to fix it by hand). Corridor
+    /// also pins `minSize`/`maxSize` to its exact target content size —
+    /// belt-and-braces so AppKit cannot resize it even if `.resizable` ever
+    /// leaked back in some other way; the cockpit's `maxSize` is restored to
+    /// AppKit's own unbounded default.
     private func applyMode(_ newMode: WindowMode) {
         guard let win = window, newMode != mode else { return }
         // This mode's geometry is the last word. `open()` applies
@@ -1060,15 +1094,30 @@ final class NativeCockpitWindowController: NSWindowController, NSWindowDelegate 
         win.setFrameAutosaveName(newMode.autosaveName ?? "")
         let visible = win.screen?.visibleFrame ?? win_screen?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1180, height: 760)
-        let restored = newMode.autosaveName.map { win.setFrameUsingName($0) } ?? false
-        let f = win.frame
-        let sane = restored
-            && f.width >= newMode.minSize.width && f.height >= newMode.minSize.height
-            && f.width <= visible.width && f.height <= visible.height
-            && visible.intersects(f)
-        if !sane {
-            win.setContentSize(newMode.targetContentSize(in: visible))
+        switch newMode {
+        case .corridor:
+            win.styleMask.remove(.resizable)
+            // No saved frame is ever restored here (autosaveName is nil for
+            // the corridor) — always the exact designed size, pinned as
+            // both the floor and the ceiling so nothing can stretch it.
+            let fixed = newMode.targetContentSize(in: visible)
+            win.minSize = fixed
+            win.maxSize = fixed
+            win.setContentSize(fixed)
             win.center()
+        case .cockpit:
+            win.styleMask.insert(.resizable)
+            win.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+            let restored = newMode.autosaveName.map { win.setFrameUsingName($0) } ?? false
+            let f = win.frame
+            let sane = restored
+                && f.width >= newMode.minSize.width && f.height >= newMode.minSize.height
+                && f.width <= visible.width && f.height <= visible.height
+                && visible.intersects(f)
+            if !sane {
+                win.setContentSize(newMode.targetContentSize(in: visible))
+                win.center()
+            }
         }
     }
 

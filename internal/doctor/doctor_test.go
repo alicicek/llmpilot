@@ -172,6 +172,52 @@ func TestDoctorIsReadOnly(t *testing.T) {
 	}
 }
 
+// TestDoctorBreakerNamesASignIn (fresh-user audit 2026-08-16, F7): when the
+// breaker was tripped by a SIGN-IN 429 the doctor must say a sign-in was
+// rate-limited (not "a token refresh") and clear on the short horizon.
+func TestDoctorBreakerNamesASignIn(t *testing.T) {
+	f := armedFleet(t)
+	tripped := fixedNow.Add(-10 * time.Minute)
+	writeJSON(t, filepath.Join(f.home, "refresh-budget.json"), map[string]any{
+		"version":            1,
+		"attempts":           map[string][]time.Time{},
+		"breaker_tripped_at": tripped,
+		"breaker_source":     switcher.BreakerSourceSignIn,
+	})
+	rep := doctor.Run(context.Background(), f.inputs())
+	fd, ok := findingsByID(rep)["refresh_breaker_open"]
+	if !ok {
+		t.Fatal("a sign-in trip 10 minutes old must still report the breaker open")
+	}
+	if !strings.Contains(fd.Detail, "rate-limited a sign-in") || strings.Contains(fd.Detail, "token refresh") {
+		t.Errorf("detail must name the sign-in, not a refresh: %q", fd.Detail)
+	}
+	if !strings.Contains(fd.Detail, "Signing in and switching still work") {
+		t.Errorf("detail must say sign-in still works: %q", fd.Detail)
+	}
+	// FAIL CASE: the short horizon — the same trip 2h old is CLEAR (a refresh
+	// trip 2h old would still be open for another 22h).
+	writeJSON(t, filepath.Join(f.home, "refresh-budget.json"), map[string]any{
+		"version":            1,
+		"attempts":           map[string][]time.Time{},
+		"breaker_tripped_at": fixedNow.Add(-2 * time.Hour),
+		"breaker_source":     switcher.BreakerSourceSignIn,
+	})
+	rep = doctor.Run(context.Background(), f.inputs())
+	if _, open := findingsByID(rep)["refresh_breaker_open"]; open {
+		t.Error("a sign-in trip 2h old must have cleared (short horizon)")
+	}
+	writeJSON(t, filepath.Join(f.home, "refresh-budget.json"), map[string]any{
+		"version":            1,
+		"attempts":           map[string][]time.Time{},
+		"breaker_tripped_at": fixedNow.Add(-2 * time.Hour),
+	})
+	rep = doctor.Run(context.Background(), f.inputs())
+	if _, open := findingsByID(rep)["refresh_breaker_open"]; !open {
+		t.Error("a refresh trip (no source) 2h old must still be open")
+	}
+}
+
 // TestDoctorCollisions covers the four collision cases the wave names, ending
 // with the honesty trap: an account with no stored organization id is NOT
 // CHECKED, never "no collision".

@@ -218,9 +218,13 @@ enum LadderLogic {
             // The struck reference price only renders when it is genuinely
             // higher — under an active launch window both rungs quote the
             // same amount, and striking a price equal to the offer would be
-            // a fake markdown (the class VOICE bans).
+            // a fake markdown (the class VOICE bans). Same-currency only,
+            // the `hasLowerOffer` rule (S6 review F6): minor units from two
+            // currencies don't compare, and a cross-currency strike would
+            // be a nonsense markdown.
             let strike: String?
-            if let full, let fullMinor = full.echo.amountMinor, let aMinor = a.echo.amountMinor,
+            if let full, full.echo.currency == a.echo.currency,
+                let fullMinor = full.echo.amountMinor, let aMinor = a.echo.amountMinor,
                 fullMinor > aMinor
             {
                 strike = full.text
@@ -230,7 +234,10 @@ enum LadderLogic {
             return RungCopy(
                 rung: .discountTrial,
                 headline: "Same trial, lower price",
-                lede: "\(a.text) is the standing lower price, no deadline on it. Same \(days)-day free trial, same lifetime license.",
+                // the win-back rung states the new price and that
+                // it is the last offer — and stays anti-urgency ("no
+                // deadline on it"), per the wave brief.
+                lede: "\(a.text) is the lower price, and the last offer — no deadline on it. Same \(days)-day free trial, same lifetime license.",
                 amount: a.text, strikeAmount: strike, approx: a.approx,
                 beside: "after a \(days)-day free trial · charged once · yours for life",
                 cta: "Start the trial at \(a.text)",
@@ -238,6 +245,28 @@ enum LadderLogic {
         case .nocardTrial:
             return nil
         }
+    }
+
+    /// Paywall.tsx:246-249 `hasLowerOffer`, resolved for the buyer's OWN
+    /// locale (the same `localAmount` walk both rungs render through): the
+    /// win-back offer only exists while it is genuinely LOWER — under an
+    /// active launch window full already sells at the discount amount, and
+    /// "Same trial, lower price" over an equal price would be a lying
+    /// screen. The rung gates both arming the rung on a ✕ and rendering it
+    /// on this one predicate.
+    static func hasLowerOffer(quote: LadderQuote, locale: String) -> Bool {
+        guard let discount = localAmount(quote.pricesDiscount, locale: locale),
+            let full = localAmount(quote.pricesFull, locale: locale),
+            let discountMinor = discount.echo.amountMinor,
+            let fullMinor = full.echo.amountMinor
+        else { return false }
+        // Minor units only compare within ONE currency — a quote whose two
+        // price maps resolve to different currencies for this locale can't
+        // honestly claim "lower", so it has no offer (stricter than the web
+        // twin's blind minor-unit compare; every shipped quote carries the
+        // same currencies in both maps, so this only changes a malformed
+        // hypothetical).
+        return discount.echo.currency == full.echo.currency && discountMinor < fullMinor
     }
 
     /// Paywall.tsx's `termsSig` (Paywall.tsx:188): identifies terms by

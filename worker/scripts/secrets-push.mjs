@@ -17,7 +17,7 @@ const refs = {
   ENT_SIGNING_KEY_ID: "op://llmpilot/entitlement/signing-key-id",
   PRICE_FULL: `op://llmpilot/stripe/${mode}-price-full`,
   PRICE_DISCOUNT: `op://llmpilot/stripe/${mode}-price-discount`,
-  RESEND_API_KEY: "op://llmpilot/resend/api-key",
+  RESEND_API_KEY: "op://llmpilot/resend/credential",
 };
 
 const apply = process.argv.includes("--apply");

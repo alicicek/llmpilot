@@ -364,6 +364,44 @@ final class AddAccountModelTests: XCTestCase {
         XCTAssertEqual(model.error, "Claude declined the sign-in — try again")
     }
 
+    /// Found in review (both reviewers, confirmed): the REAL exchange
+    /// 429 arrives via the STATUS poll — /v1/login/browser succeeds, the
+    /// code exchange fails later, and the poll's "failed" carries
+    /// code == "rate_limited". The sheet must offer Try again there, not
+    /// only for a 429 on the start call.
+    func testPollFailedWithRateLimitCodeOffersTryAgain() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-rl"))
+        api.browserLoginStatusResult = .success(
+            BrowserLoginStatus(
+                status: "failed",
+                error: "the sign-in server is rate-limited right now — wait a minute and try again",
+                code: "rate_limited"))
+        let model = pollModel(api, clock: VirtualClock())
+
+        await model.runBrowserSignIn()
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertTrue(model.signInRateLimited, "an exchange 429 must arm the Try-again state")
+        XCTAssertEqual(model.browserButtonTitle, AddAccountCopy.tryAgain)
+    }
+
+    /// FAIL CASE: a failed poll WITHOUT the rate-limited code (or with any
+    /// other code) must not arm Try again — the flag keys off the stable
+    /// code, never off the prose.
+    func testPollFailedWithoutRateLimitCodeDoesNotOfferTryAgain() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-nrl"))
+        api.browserLoginStatusResult = .success(
+            BrowserLoginStatus(status: "failed", error: "rate-limited words in prose only", code: ""))
+        let model = pollModel(api, clock: VirtualClock())
+
+        await model.runBrowserSignIn()
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertFalse(model.signInRateLimited, "prose mentioning rate limits must not arm Try again without the code")
+    }
+
     func testPollFailedWithoutServerMessageUsesVerbatimFallback() async {
         let api = StubCockpitAPI()
         api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-3"))
@@ -410,7 +448,63 @@ final class AddAccountModelTests: XCTestCase {
 
         XCTAssertEqual(model.phase, .idle)
         XCTAssertEqual(model.error, "boom")
+        XCTAssertFalse(model.signInRateLimited, "a plain 500 is not the rate-limited case")
+        XCTAssertEqual(model.browserButtonTitle, AddAccountCopy.browserButton, "an ordinary error keeps the default label")
         XCTAssertTrue(api.browserLoginStatusRequests.isEmpty)
+    }
+
+    // MARK: - F8 (2026-08-16 fresh-user audit): sign-in 429 states what
+    // happened + the wait, and swaps the primary button to an explicit retry.
+
+    func testStartBrowserLoginRateLimitedStatesWhatHappenedAndOffersRetry() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .failure(DaemonError.http(429, "rate limited"))
+        let clock = VirtualClock()
+        let model = pollModel(api, clock: clock)
+
+        await model.runBrowserSignIn()
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertEqual(model.error, AddAccountCopy.rateLimitedSignIn)
+        XCTAssertTrue(model.signInRateLimited)
+        XCTAssertEqual(model.browserButtonTitle, AddAccountCopy.tryAgain, "VOICE.md verb+object retry copy")
+    }
+
+    func testRateLimitedButtonTitleClearsOnceARetryStarts() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .failure(DaemonError.http(429, "rate limited"))
+        let clock = VirtualClock()
+        let model = pollModel(api, clock: clock)
+
+        await model.runBrowserSignIn()
+        XCTAssertEqual(model.browserButtonTitle, AddAccountCopy.tryAgain)
+
+        // A fresh attempt (the "Try again" tap) clears the rate-limited
+        // state up front — a successful retry behaves exactly as before.
+        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-8"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "done", error: nil, accountID: "acc-1"))
+        model.openExternal = { _ in }
+
+        await model.runBrowserSignIn()
+
+        XCTAssertFalse(model.signInRateLimited)
+        XCTAssertEqual(model.phase, .done)
+    }
+
+    func testPollFailedAfterAnEarlierRateLimitClearsTheRateLimitedFlag() async {
+        // A start-call 429 followed by a genuinely different poll failure
+        // must not leave the button stuck on "Try again".
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-9"))
+        api.browserLoginStatusResult = .success(
+            BrowserLoginStatus(status: "failed", error: "Claude declined the sign-in — try again", accountID: nil))
+        let clock = VirtualClock()
+        let model = pollModel(api, clock: clock)
+
+        await model.runBrowserSignIn()
+
+        XCTAssertFalse(model.signInRateLimited)
+        XCTAssertEqual(model.browserButtonTitle, AddAccountCopy.browserButton)
     }
 
     // MARK: - poll cancellation on sheet close / Cancel

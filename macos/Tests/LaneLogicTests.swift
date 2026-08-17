@@ -172,10 +172,16 @@ final class LaneLogicTests: XCTestCase {
     // MARK: - connectivity pill label (Toolbar.tsx `pillLabel`)
 
     func testConnectivityPillLabel() {
+        // F15 (audit 2026-08-16): the healthy label is still computable
+        // (previews / any future direct caller) even though the toolbar no
+        // longer mounts the pill for `.live` — see NativeToolbarRow.
         XCTAssertEqual(connectivityPillLabel(status: .live, asOfAge: "9 min ago"), "Daemon active")
         XCTAssertEqual(connectivityPillLabel(status: .connecting, asOfAge: nil), "Connecting")
         XCTAssertEqual(connectivityPillLabel(status: .starting, asOfAge: nil), "Connecting")
-        XCTAssertEqual(connectivityPillLabel(status: .down, asOfAge: "9 min ago"), "Daemon down — as of 9 min ago")
-        XCTAssertEqual(connectivityPillLabel(status: .down, asOfAge: nil), "Daemon not running")
+        // Down-state wording now quotes VOICE.md:27 ("Daemon not running —
+        // nothing here is live") instead of the web's "Daemon down"; the
+        // "as of …" age suffix still appends when a last-known age exists.
+        XCTAssertEqual(connectivityPillLabel(status: .down, asOfAge: "9 min ago"), "Daemon not running — as of 9 min ago")
+        XCTAssertEqual(connectivityPillLabel(status: .down, asOfAge: nil), "Daemon not running — nothing here is live")
     }
 }

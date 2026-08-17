@@ -4,19 +4,23 @@ import XCTest
 /// Chunk 5A — TourModel.swift (web/src/shell/Tour.tsx port). Hermetic: no
 /// view, no daemon. Web twin: web/tests/tour.spec.ts — the case names below
 /// cite the spec case they mirror.
+///
+/// F15 (audit 2026-08-16, owner decision): the tour dropped its fourth step (target "daemon",
+/// which spotlighted the now-gone "Daemon active" pill) — three steps now,
+/// not four. `allTargets` below reflects the three that remain.
 @MainActor
 final class TourModelTests: XCTestCase {
-    private let allTargets: Set<String> = ["runway", "switch", "fresh-window", "daemon"]
+    private let allTargets: Set<String> = ["runway", "switch", "fresh-window"]
 
     // MARK: - full fleet: nothing dropped
-    // web twin: "the guide walks the real cockpit and ends" (STEP 1 OF 4 ...
-    // STEP 4 OF 4, Got it on the last step)
+    // web twin: "the guide walks the real cockpit and ends" — adapted to
+    // STEP 1 OF 3 ... STEP 3 OF 3, Got it on the last step.
 
-    func testFullFleetShowsAllFourStepsInOrder() {
+    func testFullFleetShowsAllThreeStepsInOrder() {
         let model = TourModel()
         model.availableTargets = allTargets
-        XCTAssertEqual(model.live.map(\.target), ["runway", "switch", "fresh-window", "daemon"])
-        XCTAssertEqual(model.total, 4)
+        XCTAssertEqual(model.live.map(\.target), ["runway", "switch", "fresh-window"])
+        XCTAssertEqual(model.total, 3)
         XCTAssertEqual(model.stepNumber, 1)
         XCTAssertEqual(model.current?.target, "runway")
         XCTAssertFalse(model.isLast)
@@ -32,14 +36,9 @@ final class TourModelTests: XCTestCase {
         XCTAssertEqual(model.stepNumber, 2)
         XCTAssertFalse(model.isLast)
 
-        model.advance() // -> fresh-window
+        model.advance() // -> fresh-window, the last one
         XCTAssertEqual(model.current?.target, "fresh-window")
         XCTAssertEqual(model.stepNumber, 3)
-        XCTAssertFalse(model.isLast)
-
-        model.advance() // -> daemon, the last one
-        XCTAssertEqual(model.current?.target, "daemon")
-        XCTAssertEqual(model.stepNumber, 4)
         XCTAssertTrue(model.isLast)
         XCTAssertFalse(model.isDone)
 
@@ -50,13 +49,13 @@ final class TourModelTests: XCTestCase {
 
     // MARK: - one-account fleet: renumbering
     // web twin: "a one-account fleet skips the step whose control does not
-    // exist" — STEP 1 OF 3, Next lands on "Open a window on your own clock"
+    // exist" — STEP 1 OF 2, Next lands on "Open a window on your own clock"
 
     func testSoloFleetDropsSwitchAndRenumbers() {
         let model = TourModel()
-        model.availableTargets = ["runway", "fresh-window", "daemon"] // no "switch" target on screen
-        XCTAssertEqual(model.live.map(\.target), ["runway", "fresh-window", "daemon"])
-        XCTAssertEqual(model.total, 3)
+        model.availableTargets = ["runway", "fresh-window"] // no "switch" target on screen
+        XCTAssertEqual(model.live.map(\.target), ["runway", "fresh-window"])
+        XCTAssertEqual(model.total, 2)
         XCTAssertEqual(model.current?.target, "runway")
         XCTAssertEqual(model.stepNumber, 1)
 
@@ -64,9 +63,32 @@ final class TourModelTests: XCTestCase {
         XCTAssertEqual(model.current?.target, "fresh-window")
         XCTAssertEqual(model.stepNumber, 2)
         XCTAssertEqual(model.current?.title, "Open a window on your own clock")
+        XCTAssertTrue(model.isLast)
     }
 
-    // MARK: - last-step copy is verbatim (App.tsx:92-113)
+    // MARK: - no "daemon" target exists any more
+    // F15: the catalog itself must never re-introduce the dropped step.
+
+    func testCatalogNoLongerCarriesADaemonStep() {
+        XCTAssertFalse(TourStepCatalog.all.map(\.target).contains("daemon"))
+        XCTAssertEqual(TourStepCatalog.all.count, 3)
+    }
+
+    // MARK: - the fresh-window step's copy carries the sentence F15 kept
+    // reachable (audit 2026-08-16: "a menu bar manager like Ice or Bartender
+    // may hide the icon" survives the dropped step, folded into this one).
+
+    func testFreshWindowStepKeepsTheMenuBarManagerSentence() {
+        let model = TourModel()
+        model.availableTargets = allTargets
+        model.advance() // -> switch
+        model.advance() // -> fresh-window
+        XCTAssertEqual(model.current?.target, "fresh-window")
+        XCTAssertTrue(model.current?.body.contains("menu bar manager") == true)
+        XCTAssertTrue(model.current?.body.contains("Ice or Bartender") == true)
+    }
+
+    // MARK: - last-step copy is verbatim (App.tsx:92-113, minus "daemon")
 
     func testStepCopyIsVerbatim() {
         let model = TourModel()
@@ -76,8 +98,6 @@ final class TourModelTests: XCTestCase {
         XCTAssertEqual(model.current?.title, "Move to an account with room")
         model.advance()
         XCTAssertEqual(model.current?.title, "Open a window on your own clock")
-        model.advance()
-        XCTAssertEqual(model.current?.title, "It keeps running without this window")
     }
 
     // MARK: - never shows an empty guide
@@ -97,7 +117,7 @@ final class TourModelTests: XCTestCase {
     func testEndIsIdempotentAndWorksMidWalk() {
         let model = TourModel()
         model.availableTargets = allTargets
-        model.advance() // step 2 of 4
+        model.advance() // step 2 of 3
         model.end()
         XCTAssertTrue(model.isDone)
         model.end() // idempotent
@@ -112,8 +132,7 @@ final class TourModelTests: XCTestCase {
         let first = TourModel()
         first.availableTargets = allTargets
         first.advance()
-        first.advance()
-        XCTAssertEqual(first.stepNumber, 3)
+        XCTAssertEqual(first.stepNumber, 2)
 
         let second = TourModel() // a fresh "Show me around" open
         second.availableTargets = allTargets
