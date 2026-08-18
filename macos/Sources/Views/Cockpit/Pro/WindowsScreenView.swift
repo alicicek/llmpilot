@@ -106,10 +106,9 @@ private struct WindowsScreenBody: View {
                     Rectangle().fill(CockpitTheme.hair).frame(width: 1, height: 5)
                         .position(x: EducationMath.windowsHeaderWidth + trackWidth * CGFloat(EducationMath.pctOfDay(h * 60) / 100), y: 30 - 2.5)
                 }
-                // `to: 22`, not 24 (audit 2026-08-11): the "22" label's slot
-                // is where the "24h · local" caption sits, and the two
-                // rendered on top of each other as "224h · local".
-                ForEach(Array(stride(from: 0, to: 22, by: 2)), id: \.self) { h in
+                // Which hours survive at this width is geometry, not a
+                // constant — see `EducationMath.axisHours`.
+                ForEach(EducationMath.axisHours(trackWidth: trackWidth, boardWidth: geo.size.width), id: \.self) { h in
                     Text(String(format: "%02d", h))
                         .font(CockpitTheme.numeric(9.5))
                         .foregroundColor(CockpitTheme.ter)
@@ -150,10 +149,18 @@ private struct WindowsScreenBody: View {
                     .font(CockpitTheme.Onboarding.status)
                     .foregroundColor(CockpitTheme.sec)
                     .lineLimit(1)
-                    // Status → in-use crossfades over 200ms rather than
-                    // snapping (design critique 2026-08-09).
-                    .contentTransition(.opacity)
-                    .animation(.easeInOut(duration: 0.2), value: beat.opened)
+                    // HARD swap, never a crossfade. N4 (audit 2026-08-17):
+                    // `.contentTransition(.opacity)` drew "Booked — opens
+                    // 07:00" and "In use — resets 12:00" on top of each
+                    // other, both legible, for the 200ms transition — the
+                    // same text-on-text the ③ demo removed with
+                    // `.transition(.identity)` (SwitchDemoView's
+                    // `trailing`). A status label is either one state or
+                    // the other; the colour dot beside it still carries the
+                    // 200ms state change, which is what the 2026-08-09
+                    // critique actually asked for.
+                    .contentTransition(.identity)
+                    .animation(nil, value: beat.opened)
                     .accessibilityIdentifier("edu-windows-status")
             }
             // 46% — mid-window usage, illustrative like every number here
@@ -215,7 +222,7 @@ private struct WindowsScreenBody: View {
             Text(EducationMath.windowsNowLabel)
                 .font(CockpitTheme.numeric(9.5, weight: .bold))
                 .foregroundColor(.white)
-                .padding(.horizontal, 7)
+                .padding(.horizontal, EducationMath.axisNowPillHPadding)
                 .padding(.vertical, 1)
                 .background(Capsule().fill(CockpitTheme.critDeep))
                 .fixedSize()

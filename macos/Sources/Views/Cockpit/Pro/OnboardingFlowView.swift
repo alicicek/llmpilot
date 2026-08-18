@@ -130,9 +130,18 @@ enum OnboardingAccountsCopy {
 
     /// design critique 2026-08-09 — a group's raw config-dir path is an
     /// implementation detail (can be long/identifying) EXCEPT the one case
-    /// it genuinely disambiguates: another group in the same list reading
-    /// as the same email at a glance. `LadderLogic.groupByEmail`'s
-    /// case-SENSITIVE dedupe is the only way two such rows can coexist.
+    /// it genuinely disambiguates: another row on this SCREEN reading as
+    /// the same email at a glance.
+    ///
+    /// N3 (audit 2026-08-17): callers must pass BOTH lists. The live lane
+    /// said "me@gmail.com · Added" and, four rows below, the
+    /// signed-out list said "me@gmail.com — signed out". Both were
+    /// true (`~/.claude` signed in, `~/.claude-alt` signed out, one
+    /// address) but neither row named a folder, because each list was
+    /// checked for ambiguity only against ITSELF — one entry each, so
+    /// neither looked ambiguous — and a stranger read it as the screen
+    /// contradicting itself. The cockpit doctor already gets this right
+    /// ("The same sign-in is live in /Users/x/.claude-alt").
     static func rowIsAmbiguous(_ email: String, among groups: [EmailGroup]) -> Bool {
         groups.filter { $0.email.lowercased() == email.lowercased() }.count > 1
     }
@@ -275,7 +284,7 @@ struct OnboardingSwitchStepView: View {
         // once per view identity, exactly matching the source's
         // `useRef(null)`-guarded one-time freeze.
         let real = eduDemoLanes(state)
-        _lanes = State(initialValue: real ?? eduMaskedLanes)
+        _lanes = State(initialValue: real ?? eduMaskedLanes())
         _masked = State(initialValue: real == nil)
     }
 
@@ -417,8 +426,11 @@ struct OnboardingAccountsStepView: View {
         OnboardingAccountsCopy.headline(detected: candidates, groupCount: groups.count)
     }
 
+    /// N3: ambiguity is a property of the WHOLE screen, not of one list —
+    /// the live lanes and the signed-out acknowledgement sit four rows
+    /// apart and are read together.
     private func isAmbiguous(_ g: EmailGroup) -> Bool {
-        OnboardingAccountsCopy.rowIsAmbiguous(g.email, among: groups)
+        OnboardingAccountsCopy.rowIsAmbiguous(g.email, among: groups + signedOutGroups)
     }
 
     var body: some View {
@@ -598,10 +610,22 @@ struct OnboardingAccountsStepView: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(CockpitTheme.ter)
                 )
-            Text("\(g.email) — signed out")
-                .font(CockpitTheme.Onboarding.controlLabel)
-                .foregroundColor(CockpitTheme.ter)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(g.email) — signed out")
+                    .font(CockpitTheme.Onboarding.controlLabel)
+                    .foregroundColor(CockpitTheme.ter)
+                    .lineLimit(1)
+                // N3: the folder, on the same terms the live row states it
+                // — shown only when this address ALSO appears above, which
+                // is the only case where the two rows look contradictory.
+                if isAmbiguous(g) {
+                    Text(g.dirs.map(\.configDir).joined(separator: " · "))
+                        .font(CockpitTheme.Onboarding.annotation)
+                        .foregroundColor(CockpitTheme.ter)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
             Spacer()
             Button(AddAccountCopy.signInAgain, action: onSignInAgain)
                 .onboardingSecondary()

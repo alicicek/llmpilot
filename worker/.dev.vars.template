@@ -10,5 +10,5 @@ PRICE_FULL={{ op://llmpilot/stripe/test-price-full }}
 PRICE_DISCOUNT={{ op://llmpilot/stripe/test-price-discount }}
 EMAIL_FROM=support@llmpilot.dev
 PUBLIC_ORIGIN=http://localhost:8787
-TRIAL_DAYS=8
+TRIAL_DAYS=4
 RESEND_API_KEY={{ op://llmpilot/resend/credential }}

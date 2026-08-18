@@ -6,7 +6,24 @@ import type Stripe from "stripe";
 import type { WorkerEnv } from "../env.ts";
 import type { Rung } from "../routes/checkout.ts";
 
-export const DEFAULT_TRIAL_DAYS = 8;
+/** The trial length this product sells, and the ONLY one it has ever sold
+ *  (owner 2026-08-18: four days, never anything else). It is also the fallback,
+ *  and those two facts must stay the same number.
+ *
+ *  This was 8. Nothing deployed served 8 — `wrangler.jsonc` has said 4 since
+ *  go-live — but the fallback is what runs the moment `TRIAL_DAYS` is lost
+ *  or fails the sanity floor (a non-integer, or below 3; a too-LARGE value
+ *  passes through untouched), and it is not cosmetic: `quote.ts` prints it as
+ *  the paywall's consent copy AND `checkout.ts` passes it to Stripe as
+ *  `trial_period_days`. So a dropped var silently promised, and charged, a
+ *  free trial twice as long as the one on sale. It also pushed
+ *  `effectiveTrialDays` to 8, and `runReminderSweep` returns early at >= 7 —
+ *  so the same slip would have switched OFF the emails warning people before
+ *  they are charged. `scripts/release-local.sh` guards the deployed value
+ *  against this tree at release time; it cannot guard a var lost afterwards.
+ *  A fallback should fail toward the truth, never toward a longer free trial.
+ *  Pinned equal to `wrangler.jsonc` by a test. */
+export const DEFAULT_TRIAL_DAYS = 4;
 
 /** The effective trial length: env.TRIAL_DAYS when sane (>=3), else the default. */
 export function effectiveTrialDays(env: WorkerEnv): number {

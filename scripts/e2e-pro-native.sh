@@ -16,7 +16,7 @@
 #      it reveals the available account INVENTORY and has nothing to reveal
 #      on a solo machine) is skipped entirely — it is never mounted here,
 #      not shown in some reduced "solo" form.
-#   3. the ask reaches receipt -> remind (answering the 8-day trial's real
+#   3. the ask reaches receipt -> remind (answering the trial's real
 #      remind-day question) -> price, quoting the worker's REAL terms.
 #   4. the price screen quotes ONE price and offers no way to bargain down
 #      (owner 2026-08-11: the decline ladder and its "See a lower price"
@@ -86,7 +86,7 @@ cleanup() {
   [ -n "${DAEMON_PID:-}" ] && kill "$DAEMON_PID" 2>/dev/null || true
   [ -n "${WRANGLER_PID:-}" ] && kill_tree "$WRANGLER_PID"
   /usr/bin/security delete-keychain "$KEYCHAIN" 2>/dev/null || true
-  rm -f worker/.dev.vars
+  [ -z "${DEV_VARS_WRITTEN:-}" ] || rm -f worker/.dev.vars
   if [ -n "${LLMPILOT_DEFAULTS_SUITE:-}" ]; then
     HOME="$REAL_HOME" defaults delete "$LLMPILOT_DEFAULTS_SUITE" 2>/dev/null || true
   # `defaults delete` silently fails on an empty domain and leaves the
@@ -123,6 +123,7 @@ APP="$ROOT/dd/Build/Products/Release/llmpilot.app"
 codesign --force --deep -s - "$APP" 2>/dev/null
 
 echo "== bring up the entitlement worker (op-injected TEST keys, local D1) =="
+DEV_VARS_WRITTEN=1
 (cd worker && op inject -f -i .dev.vars.template -o .dev.vars >/dev/null 2>&1)
 (cd worker && npm run migrate:local >/dev/null 2>&1)
 (cd worker && npm run dev >"$ROOT/wrangler.log" 2>&1) &
@@ -239,6 +240,59 @@ frontmost_app() {
 }
 frontmost_app
 
+# Per-screen LOOK artifacts. E2E_PRO_SHOT_DIR=<dir> captures every corridor
+# screen as it is reached — the corridor's defects have all been VISUAL
+# (audit 2026-08-17: N5's headline gutter jumping 28 -> 110 -> 150pt across
+# screens, N6's missing full stop, N8's dot strip counting a screen a
+# non-buyer never reaches), and none of them is expressible as an AX
+# assertion. Region capture off the window's AX frame; needs the invoking
+# terminal's Screen Recording permission.
+SHOT_DIR=${E2E_PRO_SHOT_DIR:-}
+TOPWIN_SHOT=""
+if [ -n "$SHOT_DIR" ]; then
+  mkdir -p "$SHOT_DIR"
+  TOPWIN_SHOT="$ROOT/topwin"
+  HOME="$REAL_HOME" swiftc -O -o "$TOPWIN_SHOT" scripts/tools/topwin.swift 2>/dev/null || TOPWIN_SHOT=""
+fi
+# EVERY exit path returns 0. `shot` is called as a bare top-level command
+# under `set -e`, so a function that ends on a failed test aborts the whole
+# run — and it would abort in exactly the case the comment above
+# anticipates (no Screen Recording permission -> no file written). A missing
+# LOOK artifact is a missing artifact, never a failed walk.
+shot() { # <name>
+  [ -n "$SHOT_DIR" ] || return 0
+  # Re-assert frontmost and SETTLE before capturing. `screencapture -R`
+  # takes a screen REGION, not a window — if anything has come forward since
+  # the last press (the invoking terminal is the usual culprit), the file is
+  # a photograph of that instead, and it looks like a product screenshot.
+  # Measured 2026-08-18: a whole run's worth of corridor shots came back as
+  # terminal text this way.
+  osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $APP_PID) to true" >/dev/null 2>&1 || true
+  sleep 0.5
+  local f
+  f=$(osascript -e "tell application \"System Events\" to tell (first process whose unix id is $APP_PID) to get {position, size} of window \"$WIN_TITLE\"" 2>/dev/null || true)
+  [ -n "$f" ] || return 0
+  # Refuse to write a shot of somebody else's window. `topwin` is the same
+  # pixel-ownership check the real-click gates use before every press.
+  local cx cy owner
+  cx=$(echo "$f" | awk -F', ' '{printf "%d", $1 + $3/2}')
+  cy=$(echo "$f" | awk -F', ' '{printf "%d", $2 + $4/2}')
+  if [ -z "$TOPWIN_SHOT" ]; then owner="llmpilot pid=$APP_PID (unchecked)"; else
+    owner=$("$TOPWIN_SHOT" "$cx" "$cy" 2>/dev/null || echo "?")
+  fi
+  case "$owner" in
+    "llmpilot pid=$APP_PID "*) ;;
+    *) echo "  NOTE: no shot for $1 — '$owner' owns the pixel, not the cockpit"; return 0 ;;
+  esac
+  screencapture -x -R "$(echo "$f" | awk -F', ' '{printf "%s,%s,%s,%s", $1, $2, $3, $4}')" "$SHOT_DIR/$1.png" 2>/dev/null || true
+  if [ -s "$SHOT_DIR/$1.png" ]; then
+    echo "  shot: $SHOT_DIR/$1.png"
+  else
+    echo "  NOTE: no shot for $1 (Screen Recording permission?) — the LOOK needs another capture"
+  fi
+  return 0
+}
+
 # Per-element walk with try/catch — the ONLY reliable AX-identifier search
 # (a `whose` clause over `entire contents` is invalid AppleScript, -1700;
 # measured elsewhere in this repo: a full walk of a comparable window is
@@ -343,6 +397,7 @@ echo "== [1] zero-account first run: onboarding takeover, not the board =="
 wait_locate_id "edu-wall-lanes" 15 >/dev/null \
   || { echo "E2E PRO-NATIVE: FAIL — wall screen (edu-wall-lanes) not found; onboarding did not take over"; tail -20 "$ROOT/app.log"; exit 1; }
 echo "  wall screen showing (edu-wall-lanes located)"
+shot 01-wall
 BOARD=$(osa_locate_id "fresh-window-menu")
 case "$BOARD" in
   *FOUND*) echo "E2E PRO-NATIVE: FAIL — the board's fresh-window-menu is mounted; onboarding should own the whole window"; exit 1 ;;
@@ -364,6 +419,7 @@ echo "  wall: Continue pressed"
 wait_locate_id "onboarding-accounts-screen" 15 >/dev/null \
   || { echo "E2E PRO-NATIVE: FAIL — accounts screen not found after wall Continue (blind-spot correctly skipped on <2 identities)"; exit 1; }
 echo "  accounts screen showing (blind-spot correctly skipped — this sandbox has zero known identities)"
+shot 02-accounts
 BLIND=$(osa_locate_id "edu-blind-pair")
 case "$BLIND" in
   *FOUND*) echo "E2E PRO-NATIVE: FAIL — edu-blind-pair is mounted; the blind-spot screen must be skipped, not shown, on <2 identities"; exit 1 ;;
@@ -383,6 +439,7 @@ echo "  accounts: skip path pressed (accountsForward == .advance since tour == t
 wait_locate_id "onboarding-switch-step" 15 >/dev/null \
   || { echo "E2E PRO-NATIVE: FAIL — switch-demo screen not found after accounts skip"; exit 1; }
 echo "  switch-demo screen showing"
+shot 03-switch
 wait_press_id "edu-continue" 15 >/dev/null \
   || { echo "E2E PRO-NATIVE: FAIL — switch-demo screen's Continue not pressed"; exit 1; }
 echo "  switch-demo: Continue pressed"
@@ -390,6 +447,17 @@ echo "  switch-demo: Continue pressed"
 wait_locate_id "edu-windows-board" 15 >/dev/null \
   || { echo "E2E PRO-NATIVE: FAIL — windows screen (edu-windows-board) not found after switch-demo Continue"; exit 1; }
 echo "  windows screen showing"
+# TWO captures, because they answer different questions. The burst spans the
+# entry transition, where N4's crossfade drew "Booked - opens 07:00" and "In
+# use - resets 12:00" on top of each other about 1.5s in; the settled shot at
+# the end is the composition check. A single late shot CANNOT see N4 - the
+# settled frame is always innocent.
+for i in $(seq -w 1 12); do
+  shot "04a-windows-entry-$i"
+  sleep 0.22
+done
+sleep 3 # let the beat settle
+shot 04-windows
 wait_press_id "edu-continue" 15 >/dev/null \
   || { echo "E2E PRO-NATIVE: FAIL — windows screen's Continue not pressed"; exit 1; }
 echo "  windows: Continue pressed"
@@ -422,6 +490,7 @@ if ! wait_locate_id "receipt-screen" 20 >/dev/null; then
   esac
 fi
 echo "  receipt screen showing"
+shot 05-receipt
 wait_press_id "receipt-continue" 15 >/dev/null \
   || { echo "E2E PRO-NATIVE: FAIL — receipt-continue not pressed"; exit 1; }
 echo "  receipt: Continue pressed"
@@ -429,6 +498,7 @@ echo "  receipt: Continue pressed"
 wait_locate_id "remind-screen" 15 >/dev/null \
   || { echo "E2E PRO-NATIVE: FAIL — remind screen not found after receipt Continue (an $TRIAL_DAYS-day trial should offer remind days)"; exit 1; }
 echo "  remind screen showing (${TRIAL_DAYS}-day trial)"
+shot 06-remind
 wait_locate_id "remind-offset-1" 5 >/dev/null \
   || { echo "E2E PRO-NATIVE: FAIL — remind-offset-1 not found (an $TRIAL_DAYS-day trial should offer offsets {1,2})"; exit 1; }
 wait_press_id "remind-offset-1" 15 >/dev/null \
@@ -444,6 +514,7 @@ echo "  price screen showing"
 wait_texts_contain "$FULL_STR" 10 \
   || { echo "E2E PRO-NATIVE: FAIL — quoted full amount $FULL_STR not found on the price screen"; exit 1; }
 echo "  price screen quotes the real worker terms: $FULL_STR found"
+shot 07-price
 
 # ============================================================
 # [5] the win-back rung (audit F13): BEFORE any trigger the price
@@ -484,6 +555,7 @@ echo "  proWinback persisted as armed (once per install — a relaunch neither r
 # sandbox window. Region capture off the window's AX frame; requires the
 # invoking terminal's Screen Recording permission — a wallpaper-only image
 # fails the human LOOK, not this script.
+shot 08-winback
 SHOT="$ROOT/discounted-paywall.png"
 WIN_FRAME=$(osascript -e "tell application \"System Events\" to tell (first process whose unix id is $APP_PID) to get {position, size} of window \"$WIN_TITLE\"" 2>/dev/null || true)
 if [ -n "$WIN_FRAME" ]; then
@@ -540,6 +612,35 @@ WINBACK_STATE=$(HOME="$REAL_HOME" defaults read "$LLMPILOT_DEFAULTS_SUITE" proWi
 [ "$WINBACK_STATE" = "armed" ] \
   || { echo "E2E PRO-NATIVE: FAIL — proWinback should still read 'armed' after the second ✕ (got: $WINBACK_STATE)"; exit 1; }
 echo "  proWinback still armed — the standing lower offer survives the close"
+
+# ============================================================
+# [8] the two surfaces the corridor never shows: the Settings sheet's
+# license actions (N7 — F4's secondary-button grammar had not reached
+# them) and the REOPENED Pro flow, which draws as an overlay on the
+# cockpit rather than as window content (N2 — its backdrop used to be
+# 0.95 opaque, so the doctor warning and the board read straight through
+# the comparison table and the price screen's lede).
+# ============================================================
+echo "== [8] Settings sheet -> reopened Pro flow =="
+wait_press_id "cockpit-settings" 15 >/dev/null \
+  || { echo "E2E PRO-NATIVE: FAIL — the Settings gear was not pressed"; exit 1; }
+wait_locate_id "license-card" 15 >/dev/null \
+  || { echo "E2E PRO-NATIVE: FAIL — the Settings sheet's license card never appeared"; exit 1; }
+echo "  Settings sheet open, license card showing"
+shot 09-settings
+wait_press_id "license-turn-on" 15 >/dev/null \
+  || { echo "E2E PRO-NATIVE: FAIL — \"Turn on the autopilot\" was not pressed"; exit 1; }
+REOPENED=""
+for _ in $(seq 1 15); do
+  case "$(osa_locate_id "receipt-screen")$(osa_locate_id "price-screen")" in *FOUND*) REOPENED=1; break ;; esac
+  sleep 1
+done
+[ -n "$REOPENED" ] || { echo "E2E PRO-NATIVE: FAIL — \"Turn on the autopilot\" opened no Pro flow"; exit 1; }
+echo "  reopened Pro flow mounted over the cockpit"
+shot 10-reopened
+wait_press_id "paywall-close" 15 >/dev/null \
+  || { echo "E2E PRO-NATIVE: FAIL — the reopened flow's ✕ was not pressed"; exit 1; }
+echo "  reopened flow dismissed"
 
 if grep -r "sandbox-token\|refreshToken" "$LLMPILOT_HOME" 2>/dev/null; then
   echo "E2E PRO-NATIVE: FAIL — token material found in LLMPILOT_HOME"; exit 1

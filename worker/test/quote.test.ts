@@ -4,7 +4,14 @@
 // terms that drifted from the current derivation.
 
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+// node:url's URL, NOT the global one — `fs.readFile` accepts only the former,
+// and under this tsconfig (lib es2022 + @types/node) they are different types.
+// Without this the file passes `npm test` and fails `npm run check`.
+import { URL } from "node:url";
+
+import { DEFAULT_TRIAL_DAYS } from "../src/lib/terms.ts";
 
 import {
   TEST_INSTALL,
@@ -44,12 +51,12 @@ test("quote: serves env trial days, charge date, and both currencies per price",
   }
 });
 
-test("quote: nonsense TRIAL_DAYS falls back to the default", async () => {
+test("quote: nonsense TRIAL_DAYS falls back to the default, which is the trial on sale", async () => {
   const env = makeEnv(new TestD1(), KEYS.signingKeyB64, { TRIAL_DAYS: "banana" });
-  assert.equal(effectiveTrialDays(env), 8);
+  assert.equal(effectiveTrialDays(env), DEFAULT_TRIAL_DAYS);
   const res = await getQuote(env, "192.0.2.1", makeFakeStripe().stripe);
   assert.equal(res.status, 200);
-  assert.equal(res.body.trial_days, 8);
+  assert.equal(res.body.trial_days, 4);
 });
 
 test("quote: per-IP rate limit answers 429 past the bucket", async () => {
@@ -187,4 +194,51 @@ test("checkout: a changed deployment invalidates an open paywall's echo", async 
   assert.equal(res.status, 409);
   assert.equal(res.body.error, "quote_stale");
   assert.equal(calls(fake.state, "sessions.create").length, 0);
+});
+
+// The fallback and the deployed value are the SAME promise — the paywall's
+// consent copy and Stripe's trial_period_days both come from
+// effectiveTrialDays, so a dropped TRIAL_DAYS must not change what a buyer is
+// told or charged. release-local.sh already refuses a release when the LIVE
+// worker disagrees with wrangler.jsonc; this is the other half, and the half
+// that survives a var lost AFTER release.
+test("the fallback trial length equals the one this tree deploys", async () => {
+  const raw = await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8");
+  // Strip WHOLE-LINE comments only. The anchor is what makes this safe, not
+  // the absence of "//" in the values — wrangler.jsonc's PUBLIC_ORIGIN is
+  // "https://llmpilot.dev", and an unanchored /\/\/.*$/ would truncate it to
+  // "https:" and throw. Trailing comments ("x": 1, // note) are legal JSONC
+  // and are NOT handled, so say that out loud rather than surfacing a raw
+  // SyntaxError to whoever added one.
+  const stripped = raw.replace(/^\s*\/\/.*$/gm, "");
+  let cfg: { vars?: Record<string, unknown> };
+  try {
+    cfg = JSON.parse(stripped);
+  } catch (err) {
+    assert.fail(
+      `could not parse worker/wrangler.jsonc after stripping whole-line comments: ${
+        (err as Error).message
+      }. This test only strips comments that start a line — if you added a trailing one, ` +
+        `move it to its own line or teach this test to handle it.`,
+    );
+    return;
+  }
+  // Number-compare: wrangler accepts "4" and 4, and a strict compare against a
+  // string would call the second one drift.
+  assert.equal(
+    Number(cfg.vars?.TRIAL_DAYS),
+    DEFAULT_TRIAL_DAYS,
+    "wrangler.jsonc TRIAL_DAYS and DEFAULT_TRIAL_DAYS must be the same number — " +
+      "otherwise losing the var silently changes the trial that is promised and charged",
+  );
+});
+
+test("the fallback keeps the trial-ending reminder sweep switched on", async () => {
+  // runReminderSweep returns 0 at >= 7 (Stripe sends its own reminder for long
+  // trials). A fallback at or above that would mean a dropped var ALSO stopped
+  // the emails warning people before they are charged.
+  assert.ok(
+    DEFAULT_TRIAL_DAYS < 7,
+    `DEFAULT_TRIAL_DAYS is ${DEFAULT_TRIAL_DAYS}; at >= 7 a dropped TRIAL_DAYS silently disables the reminder sweep`,
+  );
 });

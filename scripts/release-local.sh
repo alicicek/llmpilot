@@ -65,6 +65,41 @@ case "$TAG" in
     ;;
 esac
 
+# The paywall's "4-day free trial" copy and Stripe's trial_period_days are the
+# SAME number — worker/src/routes/quote.ts and checkout.ts both read
+# effectiveTrialDays(env). A deploy that drops the var does not fail loudly:
+# terms.ts falls back to DEFAULT_TRIAL_DAYS, which is pinned equal to this
+# file's TRIAL_DAYS by a worker test — so a dropped var now degrades to the
+# trial actually on sale rather than to a longer one. This check stays: the
+# fallback protects against a MISSING var, not against a deployed worker
+# configured with a different number. Assert the LIVE worker still agrees
+# before an hour of building and notarizing.
+case "$TAG" in
+  v*)
+    WANT_TRIAL=$(sed -n 's/.*"TRIAL_DAYS"[[:space:]]*:[[:space:]]*"\{0,1\}\([0-9]\{1,\}\)"\{0,1\}.*/\1/p' worker/wrangler.jsonc)
+    if [ -z "$WANT_TRIAL" ]; then
+      echo "ERROR: no TRIAL_DAYS found in worker/wrangler.jsonc — cannot say what" >&2
+      echo "trial length this release expects." >&2
+      exit 1
+    fi
+    if ! QUOTE=$(curl -fsS --max-time 20 https://api.llmpilot.dev/v1/quote); then
+      echo "ERROR: GET https://api.llmpilot.dev/v1/quote failed — refusing to" >&2
+      echo "release without confirming the live trial length." >&2
+      exit 1
+    fi
+    GOT_TRIAL=$(printf '%s' "$QUOTE" | sed -n 's/.*"trial_days"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p')
+    if [ "$GOT_TRIAL" != "$WANT_TRIAL" ]; then
+      echo "ERROR: the live worker serves trial_days=${GOT_TRIAL:-<absent>}, this tree" >&2
+      echo "says $WANT_TRIAL. Redeploy the worker with TRIAL_DAYS=$WANT_TRIAL before" >&2
+      echo "releasing — the paywall copy AND the Stripe charge date follow the" >&2
+      echo "LIVE value, not this file." >&2
+      exit 1
+    fi
+    echo "== live worker: trial_days=$GOT_TRIAL, matches worker/wrangler.jsonc =="
+    ;;
+  *) echo "== prerelease $TAG: skipping the live-quote trial check ==" ;;
+esac
+
 # Every published git object (release tag, tap commits) must carry the GitHub
 # noreply identity, never a personal address. Exported here so every git write
 # below inherits it.

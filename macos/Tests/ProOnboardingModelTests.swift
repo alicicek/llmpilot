@@ -114,7 +114,7 @@ final class ProOnboardingModelTests: XCTestCase {
     func testBlindSpotSkippedAndTotalShrinksWithFewerThanTwoIdentities() {
         let solo = OnboardingModel(tour: true, startedEmpty: false, identityCount: 1)
         XCTAssertEqual(solo.phases, [.wall, .switchDemo, .windows], "blind spot dropped, not replaced")
-        XCTAssertEqual(solo.total, 3 + 4, "the step total shrinks with it — never a hardcoded 8")
+        XCTAssertEqual(solo.total, 3 + 3, "the step total shrinks with it — never a hardcoded 8")
         XCTAssertEqual(solo.phase, .wall)
         solo.advance()
         XCTAssertEqual(solo.phase, .switchDemo, "advancing from the wall skips straight past the blind spot")
@@ -126,7 +126,9 @@ final class ProOnboardingModelTests: XCTestCase {
     func testBlindSpotIncludedWithTwoOrMoreIdentities() {
         let pair = OnboardingModel(tour: true, startedEmpty: false, identityCount: 2)
         XCTAssertEqual(pair.phases, [.wall, .blind, .switchDemo, .windows])
-        XCTAssertEqual(pair.total, 4 + 4)
+        // N8: the ask contributes THREE dots, not four — the fourth screen
+        // ("Pro is on") is only reachable by buying.
+        XCTAssertEqual(pair.total, 4 + 3)
         pair.advance()
         XCTAssertEqual(pair.phase, .blind)
 
@@ -155,7 +157,7 @@ final class ProOnboardingModelTests: XCTestCase {
         m.updateIdentityCount(2)
         XCTAssertEqual(m.identityCount, 2)
         XCTAssertEqual(m.phases, [.wall, .blind, .accounts, .switchDemo, .windows])
-        XCTAssertEqual(m.total, 5 + 4)
+        XCTAssertEqual(m.total, 5 + 3)
         m.advance()
         XCTAssertEqual(m.phase, .blind, "the settled count is what advance() walks")
     }

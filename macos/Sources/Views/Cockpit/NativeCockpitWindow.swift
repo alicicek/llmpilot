@@ -515,14 +515,24 @@ struct NativeCockpitRootView: View {
         }
     }
 
-    /// App.tsx:573-598 — the reopened, non-guided paywall overlay: a dimmed
-    /// full-window backdrop with a scrollable, top-aligned, centered column
+    /// App.tsx:573-598 — the reopened, non-guided paywall overlay: a
+    /// full-window backdrop with a scrollable, top-aligned column
     /// (`overflow-y-auto` + `items-start justify-center py-14`).
+    ///
+    /// N2 (audit 2026-08-17): the backdrop was `CockpitTheme.win` at 0.95
+    /// with no opaque panel behind the content, and the cockpit read
+    /// straight THROUGH the money screens — the doctor's
+    /// `signin_live_elsewhere` warning ran under the comparison table's
+    /// "Watch every limit, live" row, and again under the price screen's
+    /// lede and "No payment due today." Text-on-text on the screen that
+    /// asks for money. The backdrop is now fully opaque: the reopened flow
+    /// gets the same clean surface the first-run corridor has (which was
+    /// never affected — it is real window content, not an overlay).
     @ViewBuilder
     private func reopenedPaywallOverlay() -> some View {
         if paywallOpen, let ask = reopenedAsk {
             ZStack {
-                CockpitTheme.win.opacity(0.95)
+                CockpitTheme.win
                     .ignoresSafeArea()
                 GeometryReader { geo in
                     ScrollView {
@@ -845,7 +855,18 @@ enum WindowMode: Equatable {
     var minSize: NSSize {
         switch self {
         case .cockpit: return NSSize(width: 1000, height: 700)
-        case .corridor: return NSSize(width: 740, height: 520)
+        // The corridor has no range: its floor IS its designed size, so this
+        // must never drift from `targetContentSize`. It was left at 740x520
+        // when the window shrank to fit its content, and 740 WON — this
+        // value feeds `sizeState`, which becomes the hosted SwiftUI root's
+        // `.frame(minWidth:)`, and a root that demands 740 stretches the
+        // window past every `contentMinSize`/`contentMaxSize` pin AppKit
+        // has. Measured 2026-08-18 off a real render (dot strip as the
+        // ruler): the window came up 744pt wide, so the 560pt stage sat in
+        // 92pt side margins against a 28pt top inset — the asymmetry the
+        // owner caught by eye. MainMenuTests asserted 616 and passed,
+        // because it pins the assignment, not the laid-out result.
+        case .corridor: return Self.corridorContentSize
         }
     }
 
@@ -860,18 +881,48 @@ enum WindowMode: Equatable {
             // bar and Dock.
             return NSSize(width: min(1180, visible.width * 0.9), height: min(820, visible.height * 0.9))
         case .corridor:
-            // 860x560, not the original 860x620 (owner 2026-08-10, walking
-            // the real flow on a 16"). The corridor's chrome is a fixed
-            // 156pt (28 top inset + 20 progress row + 20 to headline + 24
-            // min gap + 40 footer + 24 bottom inset), so 620 left 464pt for
-            // content while the SPARSEST screen — accounts with nothing
-            // detected — fills about 160pt of it. The remaining ~280pt
-            // opened a hole under the content roughly half the window tall.
-            // 560 keeps the tallest screen (the receipt table, ~370pt)
-            // comfortably unscrolled while cutting that hole substantially.
-            return NSSize(width: 860, height: 560)
+            return Self.corridorContentSize
         }
     }
+
+    /// The corridor's ONE size — floor, ceiling and target are all this, so
+    /// they cannot drift from each other again.
+    ///
+    /// THE WINDOW IS THE CONTENT (owner 2026-08-18: centred content in a
+    /// window sized to it, like a mobile app's onboarding). Width is
+    /// DERIVED, not chosen:
+    /// `FlowLayout.stageMaxWidth` (the corridor's one column) plus its two
+    /// `minHorizontalInset` margins — so the side margins equal the top
+    /// inset by construction, which is the shape the owner asked for. At
+    /// 860 the same column floated in ~244pt of empty stage; sliding it
+    /// left removed the misalignment but kept the hole, and the owner
+    /// overruled that. Change the column, not this number.
+    ///
+    /// Height keeps the 2026-08-10 reasoning: the chrome is a fixed 151pt
+    /// (28 top inset + 15 progress row + 20 to headline + 24 min gap + 40
+    /// footer + 24 bottom inset), and 620 once left a hole under the
+    /// sparsest screen. A narrower column wraps more, so the tallest screen
+    /// needs measuring, not arithmetic. Read off real renders at this width
+    /// (pixel scan for the last non-background row, not an eyeball): ⑤ the
+    /// Free/Pro table 342pt, ⑦ the price card 327, ② accounts 316, ⑥ the
+    /// reminder 207. 540 leaves 452pt for content after the 24pt min gap,
+    /// the 40pt footer and the 24pt bottom inset — 110pt of headroom over
+    /// the deepest screen, which is what a busier ② (more accounts, more
+    /// signed-out rows) will eat into. Going tighter would trade a cosmetic
+    /// hole on the sparse screens for a scrolling corridor on the full
+    /// ones, which is the worse defect.
+    static let corridorContentSize = NSSize(
+        width: FlowLayout.stageMaxWidth + FlowLayout.minHorizontalInset * 2,
+        height: 540)
+}
+
+/// Content size -> frame size for `win`. `NSWindow.minSize`/`maxSize` are
+/// FRAME sizes — title bar included — while every size constant in this file
+/// is a CONTENT size (the 2026-08-17 audit measured the cockpit's 1180x820
+/// content as an 1180x852 frame: a 32pt bar). One conversion site so the two
+/// spellings cannot drift apart.
+func cockpitFrameSize(forContent content: NSSize, in win: NSWindow) -> NSSize {
+    win.frameRect(forContentRect: NSRect(origin: .zero, size: content)).size
 }
 
 /// Mirrors the window's live minimum content size into SwiftUI. The root's
@@ -938,6 +989,13 @@ final class NativeCockpitWindowController: NSWindowController, NSWindowDelegate 
     /// Which surface is currently applied — cockpit until the corridor
     /// flow is reported mounted (`setFlowMode`). See `WindowMode`.
     private var mode: WindowMode = .cockpit
+    /// The live CONTENT-size floor and ceiling `windowWillResize` enforces.
+    /// `applyMode` is the only writer, so the delegate never re-derives
+    /// which surface is up (the corridor pins itself to its own exact
+    /// target, which is not `WindowMode.corridor.minSize`). N1, audit
+    /// 2026-08-17.
+    private var contentFloor: NSSize = WindowMode.cockpit.minSize
+    private var contentCeiling: NSSize?
     /// Mirrors `mode.minSize` into the hosted SwiftUI root; see
     /// `CockpitWindowSizeState`.
     private let sizeState = CockpitWindowSizeState(minSize: WindowMode.cockpit.minSize)
@@ -968,7 +1026,7 @@ final class NativeCockpitWindowController: NSWindowController, NSWindowDelegate 
                 backing: .buffered, defer: false)
             win.title = "llmpilot"
             if let name = mode.autosaveName { win.setFrameAutosaveName(name) }
-            win.minSize = mode.minSize
+            applyFloor(mode, ceiling: nil, to: win)
             win.isReleasedWhenClosed = false
             win.delegate = self
             // The WINDOW owns its size, not the SwiftUI content. Left to
@@ -1073,10 +1131,11 @@ final class NativeCockpitWindowController: NSWindowController, NSWindowDelegate 
     /// back to the cockpit (a stale non-resizable mask surviving the swap
     /// would leave the board un-resizable forever, which is exactly F16's
     /// bug: the axis stays clipped with no way to fix it by hand). Corridor
-    /// also pins `minSize`/`maxSize` to its exact target content size —
+    /// also pins its floor AND ceiling to its exact target content size —
     /// belt-and-braces so AppKit cannot resize it even if `.resizable` ever
-    /// leaked back in some other way; the cockpit's `maxSize` is restored to
-    /// AppKit's own unbounded default.
+    /// leaked back in some other way; the cockpit's ceiling is restored to
+    /// AppKit's own unbounded default. Both go through `applyFloor`, which
+    /// is also what arms `windowWillResize` — see N1 there.
     private func applyMode(_ newMode: WindowMode) {
         guard let win = window, newMode != mode else { return }
         // This mode's geometry is the last word. `open()` applies
@@ -1089,7 +1148,6 @@ final class NativeCockpitWindowController: NSWindowController, NSWindowDelegate 
         if let outgoing = mode.autosaveName { win.saveFrame(usingName: outgoing) }
         mode = newMode
         sizeState.minSize = newMode.minSize
-        win.minSize = newMode.minSize
         // "" turns autosaving OFF for a mode that must not persist a frame.
         win.setFrameAutosaveName(newMode.autosaveName ?? "")
         let visible = win.screen?.visibleFrame ?? win_screen?.visibleFrame
@@ -1101,13 +1159,23 @@ final class NativeCockpitWindowController: NSWindowController, NSWindowDelegate 
             // the corridor) — always the exact designed size, pinned as
             // both the floor and the ceiling so nothing can stretch it.
             let fixed = newMode.targetContentSize(in: visible)
-            win.minSize = fixed
-            win.maxSize = fixed
+            // The hosted root's own floor must be the size actually applied,
+            // never the mode's nominal minimum: `SizedRootView` turns this
+            // into `.frame(minWidth:)`, and a root demanding more than the
+            // window stretches the window rather than the other way round
+            // (measured 2026-08-18 — a stale 740pt corridor minimum made a
+            // 616pt window come up 744pt wide).
+            sizeState.minSize = fixed
+            applyFloor(newMode, floor: fixed, ceiling: fixed, to: win)
             win.setContentSize(fixed)
             win.center()
         case .cockpit:
             win.styleMask.insert(.resizable)
-            win.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+            // The floor is re-applied AFTER the styleMask flip, not only
+            // before it: AppKit rebuilds the frame view when `.resizable`
+            // changes, and a floor written to the old one is exactly the
+            // kind of silent loss N1 looked like from the outside.
+            applyFloor(newMode, ceiling: nil, to: win)
             let restored = newMode.autosaveName.map { win.setFrameUsingName($0) } ?? false
             let f = win.frame
             let sane = restored
@@ -1119,6 +1187,76 @@ final class NativeCockpitWindowController: NSWindowController, NSWindowDelegate 
                 win.center()
             }
         }
+    }
+
+    /// Writes one surface's size limits into BOTH of AppKit's spellings —
+    /// `contentMinSize`/`contentMaxSize` (what this file's constants mean)
+    /// and their `minSize`/`maxSize` frame twins — and records them for
+    /// `windowWillResize`, which is what actually enforces the floor.
+    ///
+    /// N1 (audit 2026-08-17): a real edge drag took the shipped 1.3.1
+    /// cockpit to 226x231 — the header row vanished and body text was cut
+    /// mid-word at BOTH edges — while `win.minSize` read 1000x700 the whole
+    /// time (MainMenuTests asserted exactly that, and passed).
+    ///
+    /// MECHANISM, settled by experiment 2026-08-18, not by reasoning. With
+    /// `windowWillResize` removed but BOTH spellings written correctly
+    /// (`contentMinSize` 1000x700 AND `minSize` 1000x732),
+    /// `scripts/e2e-real-resize.sh` still reached **228pt**. So AppKit's
+    /// min/max properties are ADVISORY for this window — the delegate is
+    /// what enforces, and everything this function writes is agreement, not
+    /// enforcement. Two corollaries worth keeping: the content-vs-frame
+    /// mix-up this also fixes was never the cause (a 1000pt frame floor
+    /// cannot yield 226pt either), and `contentMinSize` is no better than
+    /// `minSize` here. The likely reason is this window's content view — an
+    /// `NSHostingView` with `sizingOptions = []`, a constraint-based view
+    /// that publishes no size of its own — but that is inference; the
+    /// measured fact is the 228pt above.
+    ///
+    /// Re-run the experiment before deleting `windowWillResize`: comment it
+    /// out and run the gate. If it still stops at 1000, AppKit's behaviour
+    /// changed and this can shrink.
+    private func applyFloor(_ m: WindowMode, floor: NSSize? = nil, ceiling: NSSize?, to win: NSWindow) {
+        let low = floor ?? m.minSize
+        contentFloor = low
+        contentCeiling = ceiling
+        win.contentMinSize = low
+        win.minSize = cockpitFrameSize(forContent: low, in: win)
+        let unbounded = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        win.contentMaxSize = ceiling ?? unbounded
+        win.maxSize = ceiling.map { cockpitFrameSize(forContent: $0, in: win) } ?? unbounded
+    }
+
+    /// `windowWillResize`'s whole body as a pure function of FRAME sizes —
+    /// split out so the arithmetic is pinned by a test that needs no
+    /// window, no display and no drag. That test pins THIS FUNCTION ONLY —
+    /// it would pass unchanged if the delegate were never invoked, so it is
+    /// not evidence that the floor holds. The only evidence for that is
+    /// `scripts/e2e-real-resize.sh`, which posts a real drag (the AX suites
+    /// cannot see a live resize at all — the same blind spot that hid F18).
+    static func clampedFrameSize(_ proposed: NSSize, floor: NSSize, ceiling: NSSize?) -> NSSize {
+        var w = max(proposed.width, floor.width)
+        var h = max(proposed.height, floor.height)
+        if let ceiling {
+            w = min(w, ceiling.width)
+            h = min(h, ceiling.height)
+        }
+        return NSSize(width: w, height: h)
+    }
+
+    /// N1: the cockpit's 1000x700 floor, enforced where AppKit actually
+    /// asks — USER-DRIVEN resizes (a live edge/corner drag) and `zoom`.
+    /// NOT programmatic frame changes: `setFrame(_:display:)` skips the
+    /// delegate, and `setContentSize`, `setFrameUsingName` and `center`
+    /// all go through it, so those rely on `applyFloor`'s property writes
+    /// instead. Nothing here depends on that distinction — it is recorded
+    /// because an earlier version of this comment got it wrong, which is
+    /// the same class of assumption that produced N1.
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        Self.clampedFrameSize(
+            frameSize,
+            floor: cockpitFrameSize(forContent: contentFloor, in: sender),
+            ceiling: contentCeiling.map { cockpitFrameSize(forContent: $0, in: sender) })
     }
 
     func windowWillClose(_ notification: Notification) {

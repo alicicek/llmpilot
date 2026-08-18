@@ -162,4 +162,43 @@ final class ProEducationTimingTests: XCTestCase {
         XCTAssertTrue(model.booked)
         XCTAssertTrue(model.opened)
     }
+    // MARK: - ⑤ axis labels survive a narrow board (owner 2026-08-18)
+
+    /// The corridor narrowed to fit its content, and the axis broke in two
+    /// places at once: "20" ran into the "24h · local" caption ("2024h ·
+    /// local") and the now-line's "10:20" pill sat on top of "12". Both are
+    /// now decided from geometry.
+    func testAxisThinsAndDropsCollidingLabelsOnANarrowBoard() {
+        // The corridor's own board: the 560pt stage - 228pt header = 332pt
+        // track — pinned to the layout constant so a future stage change
+        // cannot silently move this test off the geometry it exercises.
+        let narrowBoard: CGFloat = FlowLayout.stageMaxWidth
+        let narrowTrack: CGFloat = narrowBoard - 228
+        XCTAssertEqual(
+            EducationMath.axisStep(trackWidth: narrowTrack), 2,
+            "332pt of track is 27.7pt a slot — 2-hourly is comfortable, and the first threshold (440) thinned it for no reason")
+        let narrow = EducationMath.axisHours(trackWidth: narrowTrack, boardWidth: narrowBoard)
+
+        XCTAssertFalse(narrow.contains(20), "20 would collide with the 24h · local caption")
+        XCTAssertFalse(narrow.contains(10), "10 IS the now-pill")
+        XCTAssertFalse(narrow.contains(12), "12 needs an 11pt pill half-width — 10:20 does not fit in one")
+        XCTAssertTrue(narrow.contains(8), "08 clears the trimmed pill (needs <= 20.3, pill is 20)")
+        // 00 02 04 06 08 [10:20] 14 16 18 — the pill names the exact time
+        // between 08 and 14, and the hourly ticks under it are untouched.
+        XCTAssertEqual(narrow, [0, 2, 4, 6, 8, 14, 16, 18], "everything that clears both draws")
+
+        // Wide enough (the cockpit-sized board) and the 2h density returns.
+        let wideTrack: CGFloat = 576
+        let wideBoard: CGFloat = 804
+        XCTAssertEqual(EducationMath.axisStep(trackWidth: wideTrack), 2)
+        let wide = EducationMath.axisHours(trackWidth: wideTrack, boardWidth: wideBoard)
+        XCTAssertTrue(wide.contains(20), "at this width 20 clears the caption — the old hard-coded stop at 22 hid it")
+        XCTAssertFalse(wide.contains(10), "10 is still under the now-pill")
+        XCTAssertFalse(wide.contains(22), "22 never clears the caption at any width this ships at")
+
+        // A genuinely tiny track still thins — the threshold moved, it did
+        // not disappear.
+        XCTAssertEqual(EducationMath.axisStep(trackWidth: 260), 4)
+    }
+
 }

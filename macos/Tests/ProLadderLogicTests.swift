@@ -146,7 +146,7 @@ final class ProLadderLogicTests: XCTestCase {
         let copy = LadderLogic.rungCopy(.discountTrial, quote: quote, locale: "en-GB")
         XCTAssertEqual(copy?.amount, "£5.99")
         XCTAssertEqual(copy?.strikeAmount, "£9.99")
-        XCTAssertEqual(copy?.headline, "Same trial, lower price")
+        XCTAssertEqual(copy?.headline, "Same trial, lower price.")
     }
 
     func testRungCopyNocardTrialIsNeverRendered() {
@@ -246,4 +246,21 @@ final class ProLadderLogicTests: XCTestCase {
         let partialObj = try XCTUnwrap(try JSONSerialization.jsonObject(with: partial) as? [String: Any])
         XCTAssertEqual(Set(partialObj.keys), ["currency", "amount_minor"])
     }
+    /// The worker's `effectiveTrialDays` accepts any integer >= 3, so the
+    /// indefinite article in "after a N-day free trial" is config-reachable
+    /// and cannot be a literal. It read "a 8-day" for anything starting with
+    /// an 8 — on the screen that asks for money.
+    func testTheTrialArticleFollowsTheSoundOfTheNumber() {
+        XCTAssertEqual(LadderLogic.article(4), "a")
+        XCTAssertEqual(LadderLogic.article(3), "a")
+        XCTAssertEqual(LadderLogic.article(5), "a")
+        XCTAssertEqual(LadderLogic.article(7), "a")
+        XCTAssertEqual(LadderLogic.article(8), "an", "eight")
+        XCTAssertEqual(LadderLogic.article(11), "an", "eleven")
+        XCTAssertEqual(LadderLogic.article(18), "an", "eighteen")
+        XCTAssertEqual(LadderLogic.article(80), "an", "eighty")
+        XCTAssertEqual(LadderLogic.article(12), "a", "twelve")
+        XCTAssertEqual(LadderLogic.article(21), "a", "twenty-one")
+    }
+
 }

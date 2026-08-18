@@ -100,6 +100,29 @@ final class OnboardingFlowViewTests: XCTestCase {
             "the only row with this email — nothing to disambiguate")
     }
 
+    /// N3 (audit 2026-08-17): ② listed `me@gmail.com · Added` on the
+    /// live lane and `me@gmail.com — signed out` four rows below,
+    /// with NO folder on either — because each list was tested for ambiguity
+    /// against itself alone (one entry each, so neither looked ambiguous)
+    /// and a stranger read the screen as contradicting itself. Ambiguity is
+    /// a property of the whole screen; the view now passes
+    /// `groups + signedOutGroups`.
+    func testTheSameEmailLiveAndSignedOutIsAmbiguousOnlyWhenBOTHListsAreChecked() {
+        let live = DetectedDir(configDir: "/Users/x/.claude", email: "me@gmail.com", registered: true, signedIn: true)
+        let dead = DetectedDir(configDir: "/Users/x/.claude-alt", email: "me@gmail.com", registered: false, signedIn: false)
+        let liveGroups = LadderLogic.groupByEmail(OnboardingAccountsCopy.corridorCandidates([live, dead]) ?? [])
+        let signedOutGroups = LadderLogic.groupByEmail(OnboardingAccountsCopy.signedOutCandidates([live, dead]))
+        XCTAssertEqual(liveGroups.count, 1)
+        XCTAssertEqual(signedOutGroups.count, 1)
+
+        XCTAssertFalse(
+            OnboardingAccountsCopy.rowIsAmbiguous("me@gmail.com", among: liveGroups),
+            "the shipped 1.3.1 behaviour: one list, one row, no folder shown on either half")
+        XCTAssertTrue(
+            OnboardingAccountsCopy.rowIsAmbiguous("me@gmail.com", among: liveGroups + signedOutGroups),
+            "checked across BOTH lists the address is ambiguous, so both rows name their folder")
+    }
+
     // MARK: - automatic adoption (owner 2026-08-11). Detection was always
     // automatic; ADOPTION was not, so the corridor could list a user's
     // accounts and leave with none of them registered.

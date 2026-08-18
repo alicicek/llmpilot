@@ -115,9 +115,18 @@ final class OnboardingModel: ObservableObject {
         return p
     }
 
-    /// Onboarding.tsx:131 — the step-dots total (the ask's own 4 steps are
+    /// Onboarding.tsx:131 — the step-dots total (the ask's own steps are
     /// added on top of the education/accounts phases).
-    var total: Int { phases.count + (tour ? 4 : 0) }
+    ///
+    /// THREE, not the web's four. N8 (audit 2026-08-17): the ask's fourth
+    /// screen is `.active` ("Pro is on"), which only exists after a
+    /// purchase — so a strip counting 8 ran 1 of 8 … 7 of 8 and stopped,
+    /// and the win-back re-drew as 7 of 8 before exiting to the cockpit.
+    /// Everyone who declines saw a promise of one more screen than the
+    /// flow can give them. The strip now counts what a non-buyer actually
+    /// walks; `.active` is the arrival, not a step, and carries no dots
+    /// (`PaywallDots.position`).
+    var total: Int { phases.count + (tour ? 3 : 0) }
 
     /// Onboarding.tsx:132 `stepOf`.
     func stepOf(_ p: OnboardingPhase) -> Int? {

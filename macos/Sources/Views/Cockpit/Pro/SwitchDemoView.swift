@@ -158,12 +158,12 @@ private struct SwitchDemoBody: View {
 
     /// One percentage representation per row: an active/ready lane shows
     /// its trailing "N%" (plus a sentence-case "Active" chip when it's the
-    /// active one); a rested lane trades its percent for a "Resting until
-    /// HH:MM" caption instead — never both.
+    /// active one); a rested lane trades its percent for a "Resets at HH:MM
+    /// · ~3h" caption instead — never both.
     ///
     /// HARD swap between the two, never a crossfade: the row animates
     /// `isResting` for its chrome, and SwiftUI's default opacity transition
-    /// drew "Resting until 17:19" on top of "97% Active" for the swap's
+    /// drew the rest caption on top of "97% Active" for the swap's
     /// duration — the one number the demo exists to show was never cleanly
     /// legible and two lanes read Active at once (critic pass 2026-08-17).
     /// `.transition(.identity)` keeps the last climbing frame — 97% — as
@@ -171,7 +171,7 @@ private struct SwitchDemoBody: View {
     @ViewBuilder
     private func trailing(isActive: Bool, isResting: Bool, percent: Int, lane: EduLane) -> some View {
         if isResting {
-            Text("Resting until \(lane.resets ?? "its window resets")")
+            Text(SwitchDemoModel.restCaption(resets: lane.resets, restsForMinutes: lane.restsForMinutes))
                 .font(CockpitTheme.Onboarding.annotation)
                 .foregroundColor(CockpitTheme.ter)
                 .lineLimit(1)

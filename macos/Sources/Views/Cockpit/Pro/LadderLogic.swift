@@ -209,7 +209,7 @@ enum LadderLogic {
                 headline: "Try the autopilot free for \(days) days.",
                 lede: "It switches before the wall, revives stale accounts, and fires your scheduled windows — you never lose your place mid-thought.",
                 amount: a.text, strikeAmount: nil, approx: a.approx,
-                beside: "after a \(days)-day free trial · charged once · yours for life",
+                beside: "after \(article(days)) \(days)-day free trial · charged once · yours for life",
                 cta: "Start the \(days)-day free trial",
                 echo: QuoteEcho(trialDays: days, currency: a.echo.currency, amountMinor: a.echo.amountMinor))
         case .discountTrial:
@@ -233,18 +233,40 @@ enum LadderLogic {
             }
             return RungCopy(
                 rung: .discountTrial,
-                headline: "Same trial, lower price",
+                // N6 (audit 2026-08-17): the full stop. Every other
+                // corridor headline ends with one — "You know this
+                // moment.", "We found 1 account.", "Try the autopilot free
+                // for N days." — and this was the single exception, on the
+                // second money screen.
+                headline: "Same trial, lower price.",
                 // the win-back rung states the new price and that
                 // it is the last offer — and stays anti-urgency ("no
                 // deadline on it"), per the wave brief.
                 lede: "\(a.text) is the lower price, and the last offer — no deadline on it. Same \(days)-day free trial, same lifetime license.",
                 amount: a.text, strikeAmount: strike, approx: a.approx,
-                beside: "after a \(days)-day free trial · charged once · yours for life",
+                beside: "after \(article(days)) \(days)-day free trial · charged once · yours for life",
                 cta: "Start the trial at \(a.text)",
                 echo: QuoteEcho(trialDays: days, currency: a.echo.currency, amountMinor: a.echo.amountMinor))
         case .nocardTrial:
             return nil
         }
+    }
+
+    /// "a" or "an" for the trial length. `effectiveTrialDays` accepts ANY
+    /// integer >= 3 from the worker's env, so the article cannot be baked
+    /// into the string: 8, 11 and 18 all read "a 8-day free trial" on the
+    /// screen that asks for money. Caught 2026-08-18 — and nearly written
+    /// off, because the trial actually on sale is 4, where the hardcoded
+    /// "a" happens to be right. Config-reachable, so it is fixed rather
+    /// than hidden.
+    ///
+    /// English takes the article from the SOUND, not the letter: 8 and 18
+    /// are "an" (eighteen, eight), 11 is "an" (eleven), everything else
+    /// this can serve is "a".
+    static func article(_ days: Int) -> String {
+        let leading = String(describing: days).first
+        if days == 11 || days == 18 { return "an" }
+        return leading == "8" ? "an" : "a"
     }
 
     /// Paywall.tsx:246-249 `hasLowerOffer`, resolved for the buyer's OWN

@@ -13,6 +13,12 @@ struct EduLane: Equatable {
     let low: Int
     /// HH:MM the lane's live window resets, when the snapshot knows it.
     let resets: String?
+    /// How far off that reset is, in minutes. Owner 2026-08-18: the caption
+    /// must say roughly how long the rest is, not just when it ends — a clock
+    /// time alone makes the reader do the subtraction, and the whole point
+    /// of the screen is how long you would be stuck. `nil` when unknown,
+    /// which renders the clock alone rather than a guess.
+    var restsForMinutes: Int? = nil
 }
 
 /// SwitchDemo.tsx:23-25 `sessionBucket` — the session-shaped bucket a
@@ -22,10 +28,17 @@ private func eduSessionBucket(_ account: AccountState) -> Bucket? {
 }
 
 /// SwitchDemo.tsx:27-33 `toLane`.
-private func eduToLane(_ account: AccountState) -> EduLane {
+private func eduToLane(_ account: AccountState, now: Date) -> EduLane {
     let bucket = eduSessionBucket(account)
-    let resets = bucket?.resetsAt.map(EducationMath.hhmm)
-    return EduLane(email: account.email, low: Int((bucket?.percent ?? 0).rounded()), resets: resets)
+    let resetsAt = bucket?.resetsAt
+    // A reset already in the past carries no distance — the snapshot is
+    // simply stale, and "~-1h" is worse than the clock alone.
+    let minutes = resetsAt.map { Int(($0.timeIntervalSince(now) / 60).rounded()) }.flatMap { $0 > 0 ? $0 : nil }
+    return EduLane(
+        email: account.email,
+        low: Int((bucket?.percent ?? 0).rounded()),
+        resets: resetsAt.map(EducationMath.hhmm),
+        restsForMinutes: minutes)
 }
 
 /// SwitchDemo.tsx:38-50 `demoLanes` — the switch story's two lanes: the
@@ -33,7 +46,7 @@ private func eduToLane(_ account: AccountState) -> EduLane {
 /// headroom (ties break toward array order, mirroring `Array.sort`'s
 /// stable sort). `nil` when the fleet cannot tell the story (fewer than
 /// two distinct, non-empty emails).
-func eduDemoLanes(_ state: DaemonState) -> [EduLane]? {
+func eduDemoLanes(_ state: DaemonState, now: Date = Date()) -> [EduLane]? {
     var byEmail: [String: AccountState] = [:]
     var order: [String] = []
     for account in state.accounts where !account.email.isEmpty {
@@ -50,7 +63,7 @@ func eduDemoLanes(_ state: DaemonState) -> [EduLane]? {
         .sorted { eduSessionBucket($0)?.percent ?? 0 < eduSessionBucket($1)?.percent ?? 0 }
         .first
     guard let target else { return nil }
-    return [eduToLane(active), eduToLane(target)]
+    return [eduToLane(active, now: now), eduToLane(target, now: now)]
 }
 
 /// SwitchDemo.tsx's fallback when `demoLanes` can't tell a real story:
@@ -63,10 +76,22 @@ func eduDemoLanes(_ state: DaemonState) -> [EduLane]? {
 /// Demo identities read as real addresses everywhere user-visible — the
 /// fresh-user audit 2026-08-16 (F10) caught this fallback pair still on
 /// the old @example.dev placeholder.
-let eduMaskedLanes: [EduLane] = [
-    EduLane(email: "kai@llmpilot.dev", low: 9, resets: "17:19"),
-    EduLane(email: "mira@llmpilot.dev", low: 0, resets: nil),
-]
+/// A FUNCTION of `now`, not a constant. It used to hardcode "17:19", which
+/// is a reset in the past for anyone walking the corridor after tea time —
+/// and once the caption started naming the distance too (owner 2026-08-18)
+/// a fixed clock would have read "~-2h". The fixture's story is "about
+/// three hours stuck", so three hours is what it stores and the clock is
+/// derived.
+func eduMaskedLanes(now: Date = Date()) -> [EduLane] {
+    let restsForMinutes = 3 * 60 + 19
+    return [
+        EduLane(
+            email: "kai@llmpilot.dev", low: 9,
+            resets: EducationMath.hhmm(now.addingTimeInterval(TimeInterval(restsForMinutes * 60))),
+            restsForMinutes: restsForMinutes),
+        EduLane(email: "mira@llmpilot.dev", low: 0, resets: nil),
+    ]
+}
 
 /// The animated beat behind `SwitchDemoView` — design critique 2026-08-09
 /// replaced `SwitchDemo.tsx`'s forever-looping effect with a ONE-SHOT
@@ -105,7 +130,7 @@ final class SwitchDemoModel: ObservableObject {
     @Published private(set) var percentA: Int
     @Published private(set) var percentB: Int
     /// The index of the lane now resting (nil until the handoff lands) —
-    /// drives each row's "Resting until HH:MM" caption.
+    /// drives each row's "Resets at HH:MM · ~3h" caption.
     @Published private(set) var restingIndex: Int?
     @Published private(set) var line: String?
     @Published private(set) var settled: Bool
@@ -271,13 +296,52 @@ final class SwitchDemoModel: ObservableObject {
 
     static func switchingLine(to lane: EduLane) -> String { "Switching to \(lane.email)…" }
 
+    /// The rested lane's trailing caption. Owner 2026-08-18: name the reset
+    /// clock AND roughly how far off it is — the clock
+    /// alone left the reader subtracting, and how long you are stuck IS the
+    /// point of this screen.
+    ///
+    /// The distance is approximate on purpose (`~`): it is rounded to whole
+    /// hours above an hour, and the demo's own reset drifts a minute while
+    /// the animation plays. Unknown distance renders the clock alone rather
+    /// than a guess; unknown clock keeps the old sentence.
+    static func restCaption(resets: String?, restsForMinutes: Int?) -> String {
+        guard let resets else { return "Resets when its window does" }
+        guard let minutes = restsForMinutes, minutes > 0 else { return "Resets at \(resets)" }
+        return "Resets at \(resets) · ~\(approxDuration(minutes: minutes))"
+    }
+
+    /// "~3h" / "~45m", in the same clipped unit register the lanes already
+    /// speak ("5h", "wk"). Under an hour stays in minutes because rounding
+    /// 45 minutes to "~1h" would overstate the wait on the one screen that
+    /// is arguing about waiting.
+    static func approxDuration(minutes: Int) -> String {
+        minutes < 60 ? "\(minutes)m" : "\(Int((Double(minutes) / 60).rounded()))h"
+    }
+
+    /// The same distance for VoiceOver, which reads "3h" as "three h".
+    static func approxDurationSpoken(minutes: Int) -> String {
+        if minutes < 60 { return "about \(minutes) minute\(minutes == 1 ? "" : "s")" }
+        let hours = Int((Double(minutes) / 60).rounded())
+        return "about \(hours) hour\(hours == 1 ? "" : "s")"
+    }
+
+    /// The settled sentence's rest clause. Same facts as `restCaption`, in
+    /// prose rather than as a label — "·" does not belong mid-sentence.
+    static func restClause(for lane: EduLane, spoken: Bool = false) -> String {
+        guard let resets = lane.resets else { return "\(lane.email) resets when its window does" }
+        guard let minutes = lane.restsForMinutes, minutes > 0 else {
+            return "\(lane.email) resets at \(resets)"
+        }
+        let away = spoken ? approxDurationSpoken(minutes: minutes) : "~\(approxDuration(minutes: minutes))"
+        return "\(lane.email) resets at \(resets), \(away) away"
+    }
+
     /// SwitchDemo.tsx's original `lineFor` — the settled summary sentence.
     static func lineFor(lanes: [EduLane], spent: Int, next: Int) -> String {
         let spentLane = lanes[spent]
         let nextLane = lanes[next]
-        let rest = spentLane.resets.map { "\(spentLane.email) rests until \($0)" }
-            ?? "\(spentLane.email) rests until its window resets"
-        return "Switched to \(nextLane.email) — \(rest)"
+        return "Switched to \(nextLane.email) — \(restClause(for: spentLane))"
     }
 
     /// ONE coherent VoiceOver sentence for the settled demo — fixes VO
@@ -286,8 +350,6 @@ final class SwitchDemoModel: ObservableObject {
     static func voiceOverSummary(lanes: [EduLane], spent: Int, next: Int) -> String {
         let spentLane = lanes[spent]
         let nextLane = lanes[next]
-        let rest = spentLane.resets.map { "\(spentLane.email) rests until \($0)." }
-            ?? "\(spentLane.email) rests until its window resets."
-        return "Switched to \(nextLane.email). \(rest)"
+        return "Switched to \(nextLane.email). \(restClause(for: spentLane, spoken: true))."
     }
 }

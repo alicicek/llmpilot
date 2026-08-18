@@ -28,21 +28,42 @@ struct StepPosition: Equatable {
 
 /// `Paywall.tsx`'s `dots` prop (`{ base, total } | undefined`) — `nil` means
 /// "not a guided run" (`guided == false`), matching `dots !== undefined` in
-/// the web source. The screens below add the same per-screen OFFSET the web
-/// JSX adds inline (`dots.base + 1` for ⑦, `+2` for ⑧, `+3` for ⑨).
+/// the web source. `position(for:base:)` below adds the same per-screen
+/// OFFSET the web JSX adds inline — except ⑨, which no longer counts (N8).
 struct PaywallDots: Equatable {
     var base: Int
     var total: Int
 
+    /// Whether the stage should still RESERVE the progress row's height on
+    /// a screen that shows no dots. Only the guided arrival screen: N8
+    /// dropped `.active`'s position, and `OnboardingStage` omits the row
+    /// AND its gap when `position` is nil — so the headline jumped up by
+    /// the row plus its gap on the one screen that confirms a payment —
+    /// undoing the fixed-height row's whole reason for existing (see
+    /// `OnboardingProgressRow`'s doc comment: "let the indicator drift to a
+    /// different on-screen position screen to screen"). The NON-guided
+    /// reopened paywall keeps collapsing: it never shows a strip on any
+    /// screen, so there is no rhythm to hold.
+    static func reservesProgressRow(for screen: AskScreen, base dots: PaywallDots?) -> Bool {
+        dots != nil && screen == .active
+    }
+
     /// The per-screen dot OFFSET Paywall.tsx's JSX adds inline (`dots.base
-    /// + 1` for ⑦, `+2` for ⑧, `+3` for ⑨; every other screen uses `base`
-    /// unmodified). Pulled out as a pure, directly-testable function — the
-    /// container view (`PaywallView`) calls this instead of repeating the
-    /// per-case arithmetic inline.
+    /// + 1` for ⑦, `+2` for ⑧; every other screen uses `base` unmodified).
+    /// Pulled out as a pure, directly-testable function — the container
+    /// view (`PaywallView`) calls this instead of repeating the per-case
+    /// arithmetic inline.
+    ///
+    /// N8 (audit 2026-08-17): `.active` gets NO position, where the web
+    /// gave it `base + 3`. "Pro is on" is only reachable by buying, so
+    /// counting it made the strip overstate the flow for every person who
+    /// declines — they walk to `.price` and stop. `.price` is now the last
+    /// dot, and the arrival screen shows no strip at all. See
+    /// `OnboardingModel.total`, which drops to `phases.count + 3` to match.
     static func position(for screen: AskScreen, base dots: PaywallDots?) -> StepPosition? {
         guard let dots else { return nil }
         switch screen {
-        case .active: return StepPosition(step: dots.base + 3, total: dots.total)
+        case .active: return nil
         case .remind: return StepPosition(step: dots.base + 1, total: dots.total)
         case .price: return StepPosition(step: dots.base + 2, total: dots.total)
         case .paused, .noTerms, .receipt: return StepPosition(step: dots.base, total: dots.total)
@@ -235,6 +256,10 @@ private struct AccessibilityIdentifierIfSet: ViewModifier {
 struct OnboardingStage<Content: View, Footer: View>: View {
     var position: StepPosition?
     var dotsIdentifier: String? = nil
+    /// Hold the row's height with no dots in it — see
+    /// `PaywallDots.reservesProgressRow`. Default false: a screen with no
+    /// strip anywhere in its flow simply starts higher.
+    var reservesProgressRow = false
     @ViewBuilder var content: () -> Content
     @ViewBuilder var footer: () -> Footer
 
@@ -243,6 +268,11 @@ struct OnboardingStage<Content: View, Footer: View>: View {
             if let position {
                 OnboardingProgressRow(step: position.step, total: position.total, identifier: dotsIdentifier)
                     .padding(.bottom, FlowLayout.progressToHeadline)
+            } else if reservesProgressRow {
+                Color.clear
+                    .frame(height: FlowLayout.progressRowHeight)
+                    .padding(.bottom, FlowLayout.progressToHeadline)
+                    .accessibilityHidden(true)
             }
             content()
             Spacer(minLength: FlowLayout.contentToFooterMin)
@@ -429,8 +459,9 @@ struct OfferCardView: View {
                 .foregroundColor(CockpitTheme.ter)
                 .padding(.top, 14)
         }
-        // F12: 14 -> 20 — the card read crowded at the tight inset (fits
-        // the corridor's fixed 860×560 window at ⑦ with room to spare).
+        // F12: 14 -> 20 — the card read crowded at the tight inset.
+        // Re-measured at the 616×540 content-fit corridor: ⑦ is 327pt deep
+        // against 452pt available, so the roomier padding still fits.
         .padding(20)
         .background(CockpitTheme.panel)
         .overlay(RoundedRectangle(cornerRadius: 11).stroke(CockpitTheme.hair, lineWidth: 1))
@@ -477,25 +508,47 @@ struct OfferCardView: View {
 /// CTA (a mobile-port pattern with no place on a resizable desktop window).
 enum FlowLayout {
     // MARK: stage + margins
-    /// The main visual stage's own cap — narrower content is simply
-    /// centered with more margin.
-    static let stageMaxWidth: CGFloat = 820
+    /// The corridor's ONE column. Owner 2026-08-18: centred content in a
+    /// window that fits it, the way a mobile app's onboarding does — so
+    /// the stage stopped being a wide canvas
+    /// that a narrow column floats in, and became the column itself. The
+    /// window is then sized to it (`WindowMode.corridor.targetContentSize`
+    /// = this + 2x `minHorizontalInset`), which is what removes the dead
+    /// space rather than sliding the content into it: the progress dots,
+    /// the "N of M" label, the headline, the card and the footer now all
+    /// span exactly this width, so every edge lines up down the screen.
+    ///
+    /// Supersedes both the 2026-08-17 walk's leading-alignment (N5 — it
+    /// killed the gutter jump by abandoning centring, which the owner
+    /// overruled) and F16's 860pt corridor.
+    static let stageMaxWidth: CGFloat = 560
     /// The window's horizontal inset never drops below this, even at the
     /// corridor's own minimum width — `onboardingCanvas()`'s modifier
     /// ORDER is what makes the inset win over the cap at small widths
     /// (padding applied outside the cap, so it shrinks the stage rather
     /// than starving the margin); see that function.
     static let minHorizontalInset: CGFloat = 28
-    /// Body copy's own inner cap, leading-aligned to the stage — long
-    /// lines stay readable even when the stage itself is the full 820pt.
-    /// Also the reminder-choices list and the price/offer card's cap.
+    /// Body copy's own inner cap. Now EQUAL to the stage: the stage is the
+    /// readable column, so an inner cap that differed would re-introduce
+    /// the very misalignment the one-column change removes. Kept as its own
+    /// constant because it means something different (line length) and may
+    /// diverge again.
     static let copyColumnMaxWidth: CGFloat = 560
-    static let receiptTableMaxWidth: CGFloat = 640
+    /// The Free/Pro table. Was 640 — wider than the copy column, which is
+    /// what made ⑤'s content sit on a different grid from ⑥/⑦'s.
+    static let receiptTableMaxWidth: CGFloat = 560
     static let topInset: CGFloat = 28
     static let bottomInset: CGFloat = 24
 
     // MARK: vertical rhythm (spacing scale: 4, 8, 12, 16, 20, 24, 32, 40)
-    static let progressRowHeight: CGFloat = 20
+    /// Fits its tallest occupant (the 11pt "N of M" label, ~14pt of line
+    /// box) and nothing more. FIXED is the load-bearing part — that is what
+    /// stops the indicator drifting screen to screen — but the value was
+    /// 20, which parked 6pt of empty row above the dots and made the
+    /// corridor's top gap read 34pt against 28pt sides (owner 2026-08-18:
+    /// the top gap must match the side margins). Measured off a render,
+    /// not assumed.
+    static let progressRowHeight: CGFloat = 15
     static let progressToHeadline: CGFloat = 20
     static let headlineToLede: CGFloat = 8
     static let ledeToVisual: CGFloat = 24
@@ -559,11 +612,23 @@ struct PaywallReceiptScreen: View {
     var body: some View {
         OnboardingStage(position: dots, dotsIdentifier: "step-dots") {
             ZStack(alignment: .topTrailing) {
-                // The ask screens read as a CENTERED card (owner 2026-08-12:
-                // leading-aligned in the 820pt stage, the table sat against
-                // a large empty right half and "looked off") — the column
-                // caps at its widest element and centers in the stage; text
-                // stays leading-aligned INSIDE the column.
+                // ONE GRID for the whole corridor. N5 (audit 2026-08-17):
+                // the headline's left gutter jumped 28pt (screens ①–④) →
+                // 110pt (⑤) → 150pt (⑥/⑦/win-back) because each ask screen
+                // centered its own capped column inside the stage, so the
+                // headline slid right as you clicked through. Every screen
+                // now starts at the stage's leading edge; the column still
+                // caps at its widest element, it just no longer floats.
+                //
+                // This REVERSED owner 2026-08-12 (centered card) while
+                // the stage was still wider than the column; the 2026-08-18
+                // content-fit reshape then dissolved the tension:
+                // `stageMaxWidth` IS the column now and the window is
+                // derived from it, so a leading-aligned stage and a centred
+                // one occupy the same pixels. What is left for this
+                // alignment to decide is only that ragged elements inside
+                // the column share one left edge instead of wobbling
+                // around its centre line.
                 VStack(alignment: .leading, spacing: 0) {
                     // Emphasis is WEIGHT, not the reserved accent blue
                     // (design/DESIGN-SYSTEM.md — design critique 2026-08-09).
@@ -736,8 +801,8 @@ struct PaywallRemindScreen: View {
                         .foregroundColor(CockpitTheme.sec)
                         .padding(.top, FlowLayout.disclosureToClosing)
                 }
-                // Centered card, same reasoning as the receipt (owner
-                // 2026-08-12).
+                // Centered in the stage — which is now the column itself,
+                // so this only bites if a column is ever made narrower.
                 .frame(maxWidth: FlowLayout.copyColumnMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
                 if let onClose {
@@ -844,8 +909,8 @@ struct PaywallPriceScreen: View {
                         .foregroundColor(CockpitTheme.sec)
                         .padding(.top, FlowLayout.disclosureToClosing)
                 }
-                // Centered card, same reasoning as the receipt (owner
-                // 2026-08-12).
+                // Centered in the stage — which is now the column itself,
+                // so this only bites if a column is ever made narrower.
                 .frame(maxWidth: FlowLayout.copyColumnMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
                 if ask.closeButtonVisible {
@@ -1079,6 +1144,8 @@ struct PaywallNoTermsScreen: View {
 struct PaywallActiveScreen: View {
     let ask: AskMachine
     let dots: StepPosition?
+    /// N8 residual — see `PaywallDots.reservesProgressRow`.
+    var reservesProgressRow = false
     let locale: String
     /// The fleet's promotable watch-only lanes (ProFlowLogic.watchOnlyLanes)
     /// — empty hides the whole section. Supplied with `move` by the
@@ -1094,7 +1161,10 @@ struct PaywallActiveScreen: View {
     }
 
     var body: some View {
-        OnboardingStage(position: dots, dotsIdentifier: "step-dots") {
+        OnboardingStage(
+            position: dots, dotsIdentifier: "step-dots",
+            reservesProgressRow: reservesProgressRow
+        ) {
             VStack(alignment: .leading, spacing: 0) {
                 // Green is meaningful here (success/guaranteed state,
                 // design/DESIGN-SYSTEM.md), not decoration — kept.
@@ -1254,8 +1324,9 @@ struct PaywallView: View {
             switch ask.screen {
             case .active:
                 PaywallActiveScreen(
-                    ask: ask, dots: PaywallDots.position(for: .active, base: dots), locale: ask.locale,
-                    watchOnly: watchOnly, move: activationMove)
+                    ask: ask, dots: PaywallDots.position(for: .active, base: dots),
+                    reservesProgressRow: PaywallDots.reservesProgressRow(for: .active, base: dots),
+                    locale: ask.locale, watchOnly: watchOnly, move: activationMove)
             case .remind:
                 if let quote = ask.quote {
                     PaywallRemindScreen(

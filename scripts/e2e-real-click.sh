@@ -66,23 +66,18 @@ if [ "$PRE_FRAME" != "ABSENT" ]; then
   HOME="$REAL_HOME" defaults delete dev.llmpilot.menubar "NSWindow Frame llmpilot-cockpit" 2>/dev/null || true
 fi
 
-# ---- the two click tools (Swift, compiled per run — no binaries in git) ----
-mkdir -p "$ROOT/tools"
-HOME="$REAL_HOME" swiftc -O -o "$ROOT/tools/realclick" scripts/tools/realclick.swift 2>/dev/null
-HOME="$REAL_HOME" swiftc -O -o "$ROOT/tools/topwin" scripts/tools/topwin.swift 2>/dev/null
-REALCLICK="$ROOT/tools/realclick"; TOPWIN="$ROOT/tools/topwin"
-
-APP=${APP:-}
-if [ -z "$APP" ]; then
-  HOME="$REAL_HOME" xcodebuild -project macos/llmpilot.xcodeproj -scheme llmpilot \
-    -configuration Release -derivedDataPath "$ROOT/dd" build >/dev/null
-  APP="$ROOT/dd/Build/Products/Release/llmpilot.app"
-  codesign --force --deep -s - "$APP" 2>/dev/null
-fi
-echo "== app under test: $APP =="
-
+# Installed HERE, before the tool builds and the app build: the snapshot
+# above already deleted the owner's saved frame, so from this point every
+# exit path — including a missing Swift toolchain — must restore it.
 cleanup() {
   [ -n "${APP_PID:-}" ] && kill "$APP_PID" 2>/dev/null || true
+  # WAIT for it to actually go. A dying NSApplication flushes its own
+  # autosaved window frame to cfprefsd, and the restore below writes to the
+  # owner's REAL dev.llmpilot.menubar domain — kill-then-write races that
+  # flush and can leave the owner's cockpit at the sandbox's size.
+  if [ -n "${APP_PID:-}" ]; then
+    for _ in $(seq 1 40); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.1; done
+  fi
   [ -n "${DAEMON_PID:-}" ] && kill "$DAEMON_PID" 2>/dev/null || true
   HOME="$REAL_HOME" defaults delete "$LLMPILOT_DEFAULTS_SUITE" 2>/dev/null || true
   rm -f "$REAL_HOME/Library/Preferences/$LLMPILOT_DEFAULTS_SUITE.plist" 2>/dev/null || true
@@ -102,6 +97,24 @@ cleanup() {
   rm -rf "$ROOT"
 }
 trap cleanup EXIT
+
+# ---- the two click tools (Swift, compiled per run — no binaries in git) ----
+mkdir -p "$ROOT/tools"
+HOME="$REAL_HOME" swiftc -O -o "$ROOT/tools/realclick" scripts/tools/realclick.swift 2>"$ROOT/swiftc.err" \
+  || { echo "E2E REAL-CLICK: FAIL — swiftc failed on scripts/tools/realclick.swift:"; cat "$ROOT/swiftc.err"; exit 1; }
+HOME="$REAL_HOME" swiftc -O -o "$ROOT/tools/topwin" scripts/tools/topwin.swift 2>"$ROOT/swiftc.err" \
+  || { echo "E2E REAL-CLICK: FAIL — swiftc failed on scripts/tools/topwin.swift:"; cat "$ROOT/swiftc.err"; exit 1; }
+REALCLICK="$ROOT/tools/realclick"; TOPWIN="$ROOT/tools/topwin"
+
+APP=${APP:-}
+if [ -z "$APP" ]; then
+  HOME="$REAL_HOME" xcodebuild -project macos/llmpilot.xcodeproj -scheme llmpilot \
+    -configuration Release -derivedDataPath "$ROOT/dd" build >/dev/null
+  APP="$ROOT/dd/Build/Products/Release/llmpilot.app"
+  codesign --force --deep -s - "$APP" 2>/dev/null
+fi
+echo "== app under test: $APP =="
+
 
 # ---- demo daemon ----
 LLMPILOT_DEMO=1 "$BIN" daemon run >"$ROOT/daemon.log" 2>&1 &

@@ -58,7 +58,9 @@ hourly cron checks reminders. The daily cron repairs active or trialing
 subscriptions missing `cancel_at` and emits a structured alarm count for
 anything it cannot repair.
 
-`TRIAL_DAYS` is deployed as 4 (code default 8). Every rung leads with the
+`TRIAL_DAYS` is deployed as 4, and the code default is 4 — pinned equal to
+`wrangler.jsonc` by a worker test, so losing the var degrades to the trial
+actually on sale rather than to a longer one. Every rung leads with the
 trial; the full rung converts to its one lifetime charge at trial end. Stripe
 supplies its own pre-charge reminder only for trials of 7 days or more, so
 any shorter value activates the custom hourly sweep — never deploy such a

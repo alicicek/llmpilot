@@ -31,12 +31,12 @@ private let previewEmptyState = DaemonState(
 
 /// Wrap a screen in a real-window-sized canvas so the onboarding layout
 /// (centered content, bottom-pinned CTA) shows the way it will in the app.
-/// `width`/`height` default to the corridor's normal opening size (design
-/// 2026-08-10: 860×560) — a caller overrides them for the
-/// minimum-window-size check.
+/// `width`/`height` default to the corridor's ONE size (the 2026-08-18
+/// content-fit reshape) — pinned to the constant so these previews cannot
+/// drift back to a canvas the shipped window can no longer produce.
 private struct OnboardingPreviewFrame<Content: View>: View {
-    var width: CGFloat = 860
-    var height: CGFloat = 560
+    var width: CGFloat = WindowMode.corridorContentSize.width
+    var height: CGFloat = WindowMode.corridorContentSize.height
     @ViewBuilder var content: () -> Content
     var body: some View {
         content()
@@ -282,21 +282,6 @@ private func previewPausedAsk() -> AskMachine {
         PaywallPausedScreen(
             ask: previewPausedAsk(), dots: nil, quoteFailed: false,
             onRetryQuote: {}, onRecover: {})
-    }
-}
-
-#Preview("minimum window size (740×520)") {
-    OnboardingPreviewFrame(width: 740, height: 520) {
-        WallScreen(step: 0, total: 8, email: "you@example.com", onContinue: {})
-    }
-}
-
-#Preview("minimum window size — receipt (740×520)") {
-    OnboardingPreviewFrame(width: 740, height: 520) {
-        PaywallReceiptScreen(
-            quote: previewQuote, accountsSwitchable: 2,
-            onContinue: {}, onClose: nil,
-            dots: StepPosition(step: 5, total: 8))
     }
 }
 

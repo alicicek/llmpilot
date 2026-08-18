@@ -40,9 +40,29 @@ final class PaywallViewsTests: XCTestCase {
         XCTAssertEqual(PaywallDots.position(for: .receipt, base: dots), StepPosition(step: 3, total: 10))
         XCTAssertEqual(PaywallDots.position(for: .remind, base: dots), StepPosition(step: 4, total: 10))
         XCTAssertEqual(PaywallDots.position(for: .price, base: dots), StepPosition(step: 5, total: 10))
-        XCTAssertEqual(PaywallDots.position(for: .active, base: dots), StepPosition(step: 6, total: 10))
+        // N8: the arrival screen is not a step — only a buyer ever sees it,
+        // so counting it made the strip promise a screen a decliner cannot
+        // reach.
+        XCTAssertNil(PaywallDots.position(for: .active, base: dots))
         XCTAssertEqual(PaywallDots.position(for: .paused, base: dots), StepPosition(step: 3, total: 10))
         XCTAssertEqual(PaywallDots.position(for: .noTerms, base: dots), StepPosition(step: 3, total: 10))
+    }
+
+    /// The arrival screen shows no dots (it is only reachable by buying) but
+    /// must still hold the row's height, or the headline jumps up on the
+    /// screen that confirms a payment. The non-guided reopened paywall has
+    /// no strip anywhere, so it collapses instead.
+    func testOnlyTheGuidedArrivalScreenReservesTheProgressRow() {
+        let dots = PaywallDots(base: 3, total: 10)
+        XCTAssertTrue(PaywallDots.reservesProgressRow(for: .active, base: dots))
+        for screen: AskScreen in [.receipt, .remind, .price, .paused, .noTerms] {
+            XCTAssertFalse(
+                PaywallDots.reservesProgressRow(for: screen, base: dots),
+                "\(screen) renders a real row — nothing to reserve")
+        }
+        XCTAssertFalse(
+            PaywallDots.reservesProgressRow(for: .active, base: nil),
+            "the reopened, non-guided paywall never shows a strip at all")
     }
 
     func testDotsPositionIsNilWhenNotGuided() {

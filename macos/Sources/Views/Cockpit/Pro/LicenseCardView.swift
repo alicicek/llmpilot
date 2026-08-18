@@ -105,8 +105,22 @@ struct LicenseCardView: View {
                 }
                 Spacer(minLength: 8)
                 if showTurnOn {
+                    // PLAIN macOS button — no style modifier (owner
+                    // 2026-08-18). N7 (audit 2026-08-17) caught these three
+                    // actions as bare grey text while "Customize statusline"
+                    // and "Close" in the SAME sheet were real buttons. The
+                    // first fix reached for the corridor's hairline grammar
+                    // (`onboardingSecondary`, from F4), which left TWO
+                    // different bordered looks in one sheet. This is a
+                    // SYSTEM surface — its neighbours are system toggles,
+                    // `.roundedBorder` fields and a system Close — so the
+                    // native button IS the local grammar, and it brings its
+                    // own focus ring and keyboard behaviour rather than
+                    // re-implementing them. The hairline style stays where
+                    // it belongs, on the corridor's custom canvas.
+                    // `pwGhost` also stays for genuine text links, which is
+                    // what "Cancel trial" beside this is.
                     Button("Turn on the autopilot", action: onTurnOn)
-                        .pwGhost()
                         .accessibilityIdentifier("license-turn-on")
                 }
                 if canCancel, !confirming {
@@ -214,8 +228,7 @@ struct LicenseCardView: View {
                     // network blip must not erase the typed address.
                     if await model.recover(email: value) { email = "" }
                 }
-            })
-            .pwGhost()
+            }) // plain macOS button — see the turn-on button above
             .disabled(model.busy || email.isEmpty)
             .accessibilityIdentifier("license-recover-submit")
         }
@@ -235,8 +248,7 @@ struct LicenseCardView: View {
                     // LicenseSection.tsx:106 — success-only clear.
                     if await model.claim(token: value) { code = "" }
                 }
-            })
-            .pwGhost()
+            }) // plain macOS button — see the turn-on button above
             .disabled(model.busy || code.isEmpty)
             .accessibilityIdentifier("license-claim-submit")
         }

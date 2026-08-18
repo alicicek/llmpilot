@@ -4,6 +4,66 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-08-19
+
+A fresh-install audit of 1.3.1 found eight defects across first run, the
+Pro screens, and Settings. All of them are fixed here, along with what
+fixing them turned up, and the first-run window was reshaped to fit its
+content. Nothing about accounts, schedules, or settings data changes.
+
+### Changed
+
+- **The first-run window fits its content.** The tour and price screens
+  floated a narrow column in an 860×560 canvas — the progress dots sat
+  against the window edges while the content sat far inside them. The
+  window is now 616×540 and the dots, headline, card, and footer share
+  one centred 560pt column, so the margins are equal on both sides and
+  the top, like a mobile onboarding card.
+- **The schedule demo's hour axis is decided by geometry.** Labels sit
+  every two hours, and one that would collide with the "now" pill or the
+  corner caption drops out instead of overprinting it — at this window
+  width the axis reads 00 02 04 06 08 · 10:20 · 14 16 18.
+- **The switch demo says how long the rested account rests.** Its
+  caption names the wait beside the reset clock (e.g. "Resets at 17:19 ·
+  ~3h") instead of leaving the subtraction to you.
+- **Settings' license actions are real buttons.** Turn on the autopilot,
+  Restore by email, and Restore with code were bare grey text beside real
+  buttons in the same sheet; they are now plain macOS buttons, and the
+  two Restore buttons stay dimmed until their field has something in it.
+
+### Fixed
+
+- **The window's minimum size is enforced.** A real edge drag could take
+  the cockpit down to under a quarter of its 1000×700 minimum, clipping
+  every panel mid-word. It now stops at the floor, and a new end-to-end
+  gate drags the window edge with real mouse events to prove it.
+- **The reopened Pro screen is opaque.** Opening Pro again from the board
+  drew the Free/Pro comparison over a translucent backdrop with the
+  cockpit reading through it.
+- **Two rows, one address — both name their folder.** When the same email
+  is signed in from one folder and signed out in another, first run's
+  account inventory showed both rows with no folder on either, and the
+  screen read as contradicting itself.
+- **The schedule demo's status swaps cleanly.** "Booked — opens 07:00"
+  and "In use — resets 12:00" were crossfaded on top of each other for a
+  beat at each change; the swap is now instant.
+- **The progress dots count the screens you actually walk.** The strip
+  no longer counts a screen that only a buyer ever sees, so it stops
+  promising a step the flow cannot give you; the confirmation screen
+  keeps its layout instead of jumping when the strip goes.
+- **The trial's article can no longer go wrong.** The trial length comes
+  from the payment server while the words around it hardcoded "a" —
+  right for the 4-day trial on sale, wrong for any length that takes
+  "an". The article now follows the number's sound. The lower offer's
+  line also gained its full stop: "Same trial, lower price."
+- **The payment server's fallback trial is the trial on sale.** If the
+  configured trial length ever went missing, the server fell back to 8
+  days — quoting it in the paywall's consent copy, sending it to Stripe
+  as the charge date, and, at that length, switching off the emails that
+  warn people before they are charged. The fallback is now 4, pinned
+  equal to the deployed value by a test, and the release script refuses
+  to ship while the live server disagrees with the tree.
+
 ## [1.3.1] - 2026-08-17
 
 The build the launch posts point at: a fresh-user walk of 1.3.0 on a
@@ -378,6 +438,9 @@ Initial public release: live usage for every account, lock-first switching,
 window scheduling, the cockpit, the menu bar app, the statusline, and the
 one-time Pro autopilot.
 
+[1.3.2]: https://github.com/alicicek/llmpilot/compare/v1.3.1...v1.3.2
+[1.3.1]: https://github.com/alicicek/llmpilot/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/alicicek/llmpilot/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/alicicek/llmpilot/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/alicicek/llmpilot/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/alicicek/llmpilot/compare/v1.2.0...v1.2.1

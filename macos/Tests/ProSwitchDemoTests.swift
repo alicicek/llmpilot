@@ -35,7 +35,7 @@ final class ProSwitchDemoTests: XCTestCase {
         ]
         XCTAssertEqual(
             SwitchDemoModel.lineFor(lanes: lanes, spent: 0, next: 1),
-            "Switched to b@x.com — a@x.com rests until 10:00"
+            "Switched to b@x.com — a@x.com resets at 10:00"
         )
     }
 
@@ -46,7 +46,7 @@ final class ProSwitchDemoTests: XCTestCase {
         ]
         XCTAssertEqual(
             SwitchDemoModel.lineFor(lanes: lanes, spent: 0, next: 1),
-            "Switched to b@x.com — a@x.com rests until its window resets"
+            "Switched to b@x.com — a@x.com resets when its window does"
         )
     }
 
@@ -55,10 +55,19 @@ final class ProSwitchDemoTests: XCTestCase {
     func test_maskedLanes_matchFixtureState() {
         // F10 (2026-08-16 audit): SPEC-127 "demo identities read real" —
         // a real-looking domain, not the old @example.dev placeholder.
-        XCTAssertEqual(eduMaskedLanes, [
-            EduLane(email: "kai@llmpilot.dev", low: 9, resets: "17:19"),
-            EduLane(email: "mira@llmpilot.dev", low: 0, resets: nil),
-        ])
+        // A FUNCTION of now: the pair used to hardcode "17:19", which is a
+        // reset in the PAST for anyone walking the corridor after tea time —
+        // and once the caption names the distance too, a fixed clock reads
+        // "~-2h". The story is "about three hours stuck", so that is what it
+        // stores and the clock is derived.
+        let now = Date(timeIntervalSince1970: 1_755_500_000)
+        let lanes = eduMaskedLanes(now: now)
+        XCTAssertEqual(lanes.map(\.email), ["kai@llmpilot.dev", "mira@llmpilot.dev"])
+        XCTAssertEqual(lanes.map(\.low), [9, 0])
+        XCTAssertEqual(lanes[0].restsForMinutes, 3 * 60 + 19)
+        XCTAssertEqual(lanes[0].resets, EducationMath.hhmm(now.addingTimeInterval(199 * 60)))
+        XCTAssertNil(lanes[1].resets, "the second lane has no reset to name")
+        XCTAssertNil(lanes[1].restsForMinutes)
     }
 
     // MARK: - eduDemoLanes
@@ -132,7 +141,7 @@ final class ProSwitchDemoTests: XCTestCase {
         ]
         XCTAssertEqual(
             SwitchDemoModel.voiceOverSummary(lanes: lanes, spent: 0, next: 1),
-            "Switched to b@x.com. a@x.com rests until 10:00."
+            "Switched to b@x.com. a@x.com resets at 10:00."
         )
     }
 
@@ -149,7 +158,7 @@ final class ProSwitchDemoTests: XCTestCase {
         XCTAssertEqual(model.percentB, 10, "B's own real low")
         XCTAssertEqual(model.restingIndex, 0)
         XCTAssertTrue(model.settled)
-        XCTAssertEqual(model.line, "Switched to b@x.com — a@x.com rests until 10:00")
+        XCTAssertEqual(model.line, "Switched to b@x.com — a@x.com resets at 10:00")
     }
 
     // MARK: - SwitchDemoModel: the one-shot beat, start to settle
@@ -204,7 +213,7 @@ final class ProSwitchDemoTests: XCTestCase {
         XCTAssertFalse(model.settled)
         clock.advance(byMs: 1) // settleDelayMs (300) elapses: 2200ms total
         XCTAssertTrue(model.settled)
-        XCTAssertEqual(model.line, "Switched to b@x.com — a@x.com rests until 10:00")
+        XCTAssertEqual(model.line, "Switched to b@x.com — a@x.com resets at 10:00")
         XCTAssertEqual(clock.nowMs, 2200)
 
         // F9: B keeps creeping in the background past `settled` — "you
@@ -228,11 +237,11 @@ final class ProSwitchDemoTests: XCTestCase {
     /// invisible jump that happened 1400ms earlier.
     func test_switchDemo_aPercentReads97AtTheMomentOfTheSwitch() {
         let clock = ManualEduClock()
-        let model = SwitchDemoModel(lanes: eduMaskedLanes, reducedMotion: false, clock: clock)
+        let model = SwitchDemoModel(lanes: eduMaskedLanes(), reducedMotion: false, clock: clock)
         model.start()
         clock.advance(byMs: SwitchDemoModel.restMs + SwitchDemoModel.climbMs)
         XCTAssertEqual(model.percentA, SwitchDemoModel.switchPercent)
-        XCTAssertEqual(model.line, SwitchDemoModel.switchingLine(to: eduMaskedLanes[1]))
+        XCTAssertEqual(model.line, SwitchDemoModel.switchingLine(to: eduMaskedLanes()[1]))
     }
 
     /// the other account creeps upward after the handoff so the user sees
@@ -301,4 +310,69 @@ final class ProSwitchDemoTests: XCTestCase {
         clock.advance(byMs: SwitchDemoModel.creepMs)
         XCTAssertEqual(model.percentB, 18)
     }
+    // MARK: - the rested lane's caption (owner 2026-08-18): the reset clock
+    // AND roughly how long the lane rests, never the clock alone.
+
+    func testRestCaptionNamesTheClockAndRoughlyHowLong() {
+        XCTAssertEqual(
+            SwitchDemoModel.restCaption(resets: "17:19", restsForMinutes: 3 * 60 + 19),
+            "Resets at 17:19 · ~3h")
+        // Rounds to whole hours above an hour — the "~" is doing that work.
+        XCTAssertEqual(
+            SwitchDemoModel.restCaption(resets: "20:40", restsForMinutes: 3 * 60 + 40),
+            "Resets at 20:40 · ~4h")
+    }
+
+    func testRestCaptionKeepsMinutesUnderAnHour() {
+        // 45 minutes rounded to "~1h" would overstate the wait on the one
+        // screen that is arguing about waiting.
+        XCTAssertEqual(SwitchDemoModel.approxDuration(minutes: 45), "45m")
+        XCTAssertEqual(SwitchDemoModel.approxDuration(minutes: 59), "59m")
+        XCTAssertEqual(SwitchDemoModel.approxDuration(minutes: 60), "1h")
+        XCTAssertEqual(
+            SwitchDemoModel.restCaption(resets: "09:05", restsForMinutes: 45),
+            "Resets at 09:05 · ~45m")
+    }
+
+    func testRestCaptionFallsBackRatherThanGuessing() {
+        XCTAssertEqual(
+            SwitchDemoModel.restCaption(resets: "17:19", restsForMinutes: nil),
+            "Resets at 17:19", "unknown distance shows the clock alone")
+        XCTAssertEqual(
+            SwitchDemoModel.restCaption(resets: "17:19", restsForMinutes: 0),
+            "Resets at 17:19", "a reset already due carries no distance")
+        XCTAssertEqual(
+            SwitchDemoModel.restCaption(resets: nil, restsForMinutes: nil),
+            "Resets when its window does")
+    }
+
+    func testALaneWhoseResetHasPassedCarriesNoDistance() {
+        let now = Date(timeIntervalSince1970: 1_755_500_000)
+        let stale = state(
+            accounts: [
+                account(id: "a", email: "a@x.com", percent: 90, resetsAt: now.addingTimeInterval(-3600)),
+                account(id: "b", email: "b@x.com", percent: 10, resetsAt: now.addingTimeInterval(7200)),
+            ],
+            activeID: "a")
+        let lanes = try! XCTUnwrap(eduDemoLanes(stale, now: now))
+        XCTAssertNil(lanes[0].restsForMinutes, "a stale snapshot must not render \"~-1h\"")
+        XCTAssertEqual(lanes[1].restsForMinutes, 120)
+    }
+
+    func testTheSettledSentenceCarriesTheDistanceToo() {
+        let lanes = [
+            EduLane(email: "a@x.com", low: 20, resets: "10:00", restsForMinutes: 3 * 60 + 19),
+            EduLane(email: "b@x.com", low: 10, resets: nil),
+        ]
+        XCTAssertEqual(
+            SwitchDemoModel.lineFor(lanes: lanes, spent: 0, next: 1),
+            "Switched to b@x.com — a@x.com resets at 10:00, ~3h away")
+        // VoiceOver reads "3h" as "three h", so it gets the words.
+        XCTAssertEqual(
+            SwitchDemoModel.voiceOverSummary(lanes: lanes, spent: 0, next: 1),
+            "Switched to b@x.com. a@x.com resets at 10:00, about 3 hours away.")
+        XCTAssertEqual(SwitchDemoModel.approxDurationSpoken(minutes: 60), "about 1 hour")
+        XCTAssertEqual(SwitchDemoModel.approxDurationSpoken(minutes: 45), "about 45 minutes")
+    }
+
 }
