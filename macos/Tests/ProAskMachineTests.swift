@@ -472,6 +472,17 @@ final class ProAskMachineTests: XCTestCase {
         return ask
     }
 
+    /// Presses checkout on a price-screen ask (a real handoff, the only
+    /// way a sheet ever exists) and returns the identity the composition
+    /// root captures when it presents that sheet — what the sheet's
+    /// post-close decider must carry back into `checkoutAbandoned(_:)`.
+    private func openCheckout(_ ask: AskMachine, api: StubCockpitAPI, url: String) async -> CheckoutIdentity {
+        api.licenseCheckoutResult = .success(checkoutHandoff(url: url))
+        await ask.pressCheckout()
+        XCTAssertEqual(ask.handoffURL, url)
+        return ask.liveCheckout!
+    }
+
     func testPressCheckoutDivertsWhenAFreshReadShowsTheLicenseActive() async {
         // Found in review: the daemon's activation poll outlives
         // PostCheckoutReload's decision window (license.go pollFor = 10
@@ -600,36 +611,287 @@ final class ProAskMachineTests: XCTestCase {
         XCTAssertEqual(api.licenseCheckoutRequests[0].rung, "discount_trial")
     }
 
-    func testAbandonedCheckoutArmsTheWinback() {
+    func testAbandonedCheckoutArmsTheWinback() async {
         let winback = freshWinback()
-        let ask = priceScreenAsk(winback: winback)
+        let api = StubCockpitAPI()
+        let ask = priceScreenAsk(winback: winback, api: api)
+        let closed = await openCheckout(ask, api: api, url: "https://checkout.stripe.com/c/pay/one")
+        ask.checkoutSheetClosed()
+        XCTAssertNil(ask.liveCheckout, "the closed sheet's identity lives with its decider, not the machine")
         // The open price screen has no @Published of its own on this path —
         // the repaint rides the winback→ask objectWillChange republish
         // (S6 review F5: deleting that sink must fail a gate).
         var repaints = 0
         let sink = ask.objectWillChange.sink { _ in repaints += 1 }
         defer { sink.cancel() }
-        ask.checkoutAbandoned()
+        ask.checkoutAbandoned(closed)
         XCTAssertEqual(winback.state, .armed)
         XCTAssertEqual(ask.offerRung, .discountTrial)
         XCTAssertGreaterThan(repaints, 0, "arming must repaint the open screen via the republish sink")
     }
 
-    func testAbandonedCheckoutWithoutALowerOfferArmsNothing() {
+    func testAbandonDecisionNeverArmsBehindALiveNewerCheckout() async {
+        // Before 1.3.3 the abandon decider ran in a detached Task with no
+        // identity guard against a NEWER checkout. Cancel the sheet, press
+        // the money button again inside the ~10s re-read window, and the
+        // OLD decision arms while a full-price session is open — the price
+        // screen behind the live sheet repaints a struck-through "lower
+        // price" the buyer did not consent to (Stripe still charges what
+        // its sheet says; the app's label goes stale).
+        let api = StubCockpitAPI()
+        let winback = freshWinback()
+        let ask = priceScreenAsk(winback: winback, api: api)
+        // sheet 1 opens at full price, then is cancelled — decider #1's
+        // window begins, carrying sheet 1's identity.
+        let closedOne = await openCheckout(ask, api: api, url: "https://checkout.stripe.com/c/pay/one")
+        ask.checkoutSheetClosed()
+
+        // Inside that window: the money button again → sheet 2 is LIVE.
+        _ = await openCheckout(ask, api: api, url: "https://checkout.stripe.com/c/pay/two")
+        XCTAssertEqual(api.licenseCheckoutRequests.count, 2)
+        XCTAssertEqual(api.licenseCheckoutRequests[1].rung, "full")
+
+        // Decider #1 ends still-inactive and reports its abandonment.
+        ask.checkoutAbandoned(closedOne)
+        XCTAssertEqual(winback.state, .intact, "an older checkout's abandonment must not arm behind a live newer one")
+        XCTAssertEqual(ask.offerRung, .full, "the label behind the live full-price sheet must stay full")
+    }
+
+    func testAbandonVerdictBelongsToTheNewestCheckoutOnly() async {
+        // The identity leg on its own, with NO live sheet and NO press in
+        // flight on the deciding machine at verdict time — the two state
+        // legs cannot be what stops these, only the checkout identity can.
+        let api = StubCockpitAPI()
+        let winback = freshWinback()
+        let ask = priceScreenAsk(winback: winback, api: api)
+        let closedOne = await openCheckout(ask, api: api, url: "https://checkout.stripe.com/c/pay/one")
+        ask.checkoutSheetClosed()
+
+        // (1) Both sheets closed, decider #1 reports first: sheet 2's own
+        // decider owns the verdict — #1 must not pre-empt its activation
+        // window (a buyer who paid in sheet 2 would see the discount flash
+        // in, and a press there would open a discount session and cancel
+        // the daemon poll about to activate the paid one).
+        let closedTwo = await openCheckout(ask, api: api, url: "https://checkout.stripe.com/c/pay/two")
+        ask.checkoutSheetClosed()
+        XCTAssertNil(ask.handoffURL)
+        ask.checkoutAbandoned(closedOne)
+        XCTAssertEqual(winback.state, .intact, "a superseded decider must not arm")
+        // ...and the newest checkout's own verdict still arms (pass case).
+        ask.checkoutAbandoned(closedTwo)
+        XCTAssertEqual(winback.state, .armed)
+
+        // (2) A newer press that FAILED on the wire still voids the older
+        // verdict: the buyer's last act was trying to buy, not declining.
+        let winback2 = freshWinback()
+        let api2 = StubCockpitAPI()
+        let ask2 = priceScreenAsk(winback: winback2, api: api2)
+        let closedThree = await openCheckout(ask2, api: api2, url: "https://checkout.stripe.com/c/pay/three")
+        ask2.checkoutSheetClosed()
+        api2.licenseCheckoutResult = .failure(DaemonError.down)
+        await ask2.pressCheckout()
+        XCTAssertNotNil(ask2.checkoutError)
+        XCTAssertNil(ask2.handoffURL)
+        ask2.checkoutAbandoned(closedThree)
+        XCTAssertEqual(winback2.state, .intact, "a verdict for a checkout the buyer already superseded is void")
+    }
+
+    func testAbandonVerdictIsVoidedByACheckoutOnAnotherAskOverTheSameLadder() async {
+        // The ladder is per install, the asks are not: `openPaywall`
+        // builds a fresh AskMachine per open, and the menu-bar upsell can
+        // open one while an earlier ask's sheet is still up. So ask A's
+        // sheet closes (decider A starts), and inside its window the buyer
+        // walks ask B to a LIVE full-price sheet. Decider A's verdict is
+        // about a checkout that is no longer the newest on the install —
+        // it must not arm behind B's sheet, even though A itself has no
+        // press in flight and no sheet live.
+        let winback = freshWinback()
+        let apiA = StubCockpitAPI()
+        let askA = priceScreenAsk(winback: winback, api: apiA)
+        let closedA = await openCheckout(askA, api: apiA, url: "https://checkout.stripe.com/c/pay/a")
+        askA.checkoutSheetClosed()
+
+        let apiB = StubCockpitAPI()
+        let askB = priceScreenAsk(winback: winback, api: apiB, guided: false)
+        _ = await openCheckout(askB, api: apiB, url: "https://checkout.stripe.com/c/pay/b")
+        XCTAssertNil(askA.handoffURL)
+        XCTAssertNotNil(askB.handoffURL)
+
+        askA.checkoutAbandoned(closedA)
+        XCTAssertEqual(winback.state, .intact, "ask A's stale verdict must not arm behind ask B's live sheet")
+        XCTAssertEqual(askB.offerRung, .full)
+
+        // Fail case of the fail case: with B's sheet closed and no newer
+        // checkout event, B's own verdict arms.
+        let closedB = askB.liveCheckout!
+        askB.checkoutSheetClosed()
+        askB.checkoutAbandoned(closedB)
+        XCTAssertEqual(winback.state, .armed)
+    }
+
+    func testAbandonVerdictWaitsForEveryPressInFlightOnTheInstall() async {
+        // The in-flight leg is install-wide, not per ask: ask A's press is
+        // still creating its session on the wire when ask B presses, opens,
+        // closes, and B's decider reports. B's identity IS the newest event
+        // (A's press came earlier), so only the in-flight count can refuse
+        // — and it must, or the discount lands while A's full-price session
+        // is being created. Once A's press exits WITHOUT a handoff, B's
+        // verdict is again the newest event with nothing in flight: it arms.
+        let winback = freshWinback()
+        let apiA = StubCockpitAPI()
+        apiA.licenseCheckoutDelay = 0.3
+        apiA.licenseCheckoutResult = .failure(DaemonError.down) // exits without a sheet
+        let askA = priceScreenAsk(winback: winback, api: apiA)
+        let pressA = Task { await askA.pressCheckout() }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(winback.checkoutsInFlight, 1)
+
+        let apiB = StubCockpitAPI()
+        let askB = priceScreenAsk(winback: winback, api: apiB, guided: false)
+        let closedB = await openCheckout(askB, api: apiB, url: "https://checkout.stripe.com/c/pay/b")
+        askB.checkoutSheetClosed()
+        askB.checkoutAbandoned(closedB)
+        XCTAssertEqual(winback.state, .intact, "no verdict while a session is being created anywhere on the install")
+
+        await pressA.value
+        XCTAssertEqual(winback.checkoutsInFlight, 0)
+        XCTAssertNotNil(askA.checkoutError)
+        askB.checkoutAbandoned(closedB)
+        XCTAssertEqual(winback.state, .armed, "with A's press over and no newer event, B's own verdict stands")
+    }
+
+    func testCloseIsInertWhileThisAsksCheckoutPressIsOnTheWireOrItsSheetIsLive() async {
+        // The ✕'s door to the same harm the decider guards: press the
+        // money button, and for the 0.5–3s the press is on the wire the
+        // screen is still up. A ✕ in that gap used to arm and repaint at
+        // £5.99 — then the full-price sheet the press was building landed
+        // over it. Now the ✕ neither arms nor dismisses while the press is
+        // in flight, nor while the sheet it produced is live; once the
+        // sheet has closed, the next ✕ is an ordinary decline and arms.
+        let winback = freshWinback()
+        let api = StubCockpitAPI()
+        api.licenseCheckoutDelay = 0.3
+        api.licenseCheckoutResult = .success(checkoutHandoff(url: "https://checkout.stripe.com/c/pay/wire"))
+        var dismissed = 0
+        let ask = priceScreenAsk(winback: winback, api: api, onDismiss: { dismissed += 1 })
+        let press = Task { await ask.pressCheckout() }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertTrue(ask.busy)
+        XCTAssertEqual(winback.checkoutsInFlight, 1)
+        XCTAssertFalse(ask.closeEnabled, "the ✕ is dimmed while the press is on the wire")
+
+        ask.close()
+        XCTAssertEqual(winback.state, .intact, "a ✕ while the press is on the wire must not arm")
+        XCTAssertEqual(dismissed, 0, "nor dismiss — the sheet about to present owns the next decision")
+        XCTAssertEqual(ask.offerRung, .full)
+
+        await press.value
+        XCTAssertEqual(ask.handoffURL, "https://checkout.stripe.com/c/pay/wire")
+        XCTAssertEqual(winback.checkoutsInFlight, 0)
+        XCTAssertFalse(ask.closeEnabled, "and stays dimmed for the sheet's whole life, not just the press")
+        ask.close()
+        XCTAssertEqual(winback.state, .intact, "a ✕ while the sheet is live must not arm either")
+        XCTAssertEqual(dismissed, 0)
+
+        ask.checkoutSheetClosed()
+        XCTAssertTrue(ask.closeEnabled)
+        ask.close()
+        XCTAssertEqual(winback.state, .armed, "with nothing in flight and no sheet, ✕ is the ordinary first decline")
+        XCTAssertEqual(ask.offerRung, .discountTrial)
+        XCTAssertEqual(dismissed, 0)
+    }
+
+    func testCloseIsInertWhileAnotherAsksCheckoutPressIsOnTheWire() async {
+        // Install-wide, like the decider's in-flight leg: ask A's press is
+        // still creating its full-price session when ask B (another
+        // machine over the same ladder) is ✕-ed. B must not arm the
+        // shared ladder under A's session. Once A's press exits, B's ✕ is
+        // an ordinary decline again.
+        let winback = freshWinback()
+        let apiA = StubCockpitAPI()
+        apiA.licenseCheckoutDelay = 0.3
+        apiA.licenseCheckoutResult = .failure(DaemonError.down) // exits without a sheet
+        let askA = priceScreenAsk(winback: winback, api: apiA)
+        let pressA = Task { await askA.pressCheckout() }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(winback.checkoutsInFlight, 1)
+
+        var dismissedB = 0
+        let askB = priceScreenAsk(winback: winback, api: StubCockpitAPI(), guided: false, onDismiss: { dismissedB += 1 })
+        askB.close()
+        XCTAssertEqual(winback.state, .intact, "no ✕ arms while a session is being created anywhere on the install")
+        XCTAssertEqual(dismissedB, 0)
+
+        await pressA.value
+        XCTAssertEqual(winback.checkoutsInFlight, 0)
+        askB.close()
+        XCTAssertEqual(winback.state, .armed)
+        XCTAssertEqual(dismissedB, 0)
+    }
+
+    func testCloseDismissesWithoutArmingWhileAPostCloseDecisionIsPending() {
+        // For ~10s after a sheet closes the decider is still finding out
+        // whether that checkout was paid (activation lags) or abandoned.
+        // A ✕ in that window must not arm ahead of it — it would paint the
+        // lower offer over a price the buyer may just have paid — but it
+        // must still be an exit: it dismisses, the decider decides.
+        let winback = freshWinback()
+        var dismissed = 0
+        let ask = priceScreenAsk(winback: winback, onDismiss: { dismissed += 1 })
+        winback.noteDecisionPending()
+        XCTAssertTrue(ask.closeEnabled, "not dimmed — the ✕ still works as an exit")
+        ask.close()
+        XCTAssertEqual(dismissed, 1, "a ✕ inside the decision window dismisses")
+        XCTAssertEqual(winback.state, .intact, "but never arms ahead of the decider")
+        XCTAssertEqual(ask.offerRung, .full)
+
+        winback.noteDecisionEnded()
+        ask.close()
+        XCTAssertEqual(winback.state, .armed, "with no decision pending, ✕ is the ordinary first decline again")
+        XCTAssertEqual(dismissed, 1)
+    }
+
+    func testAHandoffTheViewCannotPresentNeverBecomesALiveSheet() async {
+        // A broken daemon answering with an empty URL must not leave
+        // `handoffURL` set forever — nothing would present, nothing would
+        // close it, and the ✕ would stay inert on this ask. The press
+        // reports an error instead and the ✕ keeps working.
+        let winback = freshWinback()
+        let api = StubCockpitAPI()
+        api.licenseCheckoutResult = .success(checkoutHandoff(url: ""))
+        var dismissed = 0
+        let ask = priceScreenAsk(winback: winback, api: api, onDismiss: { dismissed += 1 })
+        await ask.pressCheckout()
+        XCTAssertNil(ask.handoffURL)
+        XCTAssertNil(ask.liveCheckout)
+        XCTAssertNotNil(ask.checkoutError)
+        XCTAssertTrue(ask.closeEnabled)
+        ask.close()
+        XCTAssertEqual(winback.state, .armed)
+        XCTAssertEqual(dismissed, 0)
+    }
+
+    func testAbandonedCheckoutWithoutALowerOfferArmsNothing() async {
         // Fail cases (S6 review F2): arming with nothing showable would
         // burn the once-per-install rung invisibly — no quote (the refetch
         // failed), or a launch window quoting discount == full, must leave
         // the ladder intact.
         let winback = freshWinback()
-        let noQuote = priceScreenAsk(winback: winback, quote: nil)
-        noQuote.setQuote(nil)
-        noQuote.checkoutAbandoned()
+        let api = StubCockpitAPI()
+        let noQuote = priceScreenAsk(winback: winback, api: api)
+        let closed = await openCheckout(noQuote, api: api, url: "https://checkout.stripe.com/c/pay/one")
+        noQuote.checkoutSheetClosed()
+        noQuote.setQuote(nil) // the post-close refetch failed
+        noQuote.checkoutAbandoned(closed)
         XCTAssertEqual(winback.state, .intact)
 
         let launchQuote = LadderQuote(
             trialDays: 4, chargeDate: fourDayQuote.chargeDate,
             pricesFull: ["gbp": 599], pricesDiscount: ["gbp": 599])
-        priceScreenAsk(winback: winback, quote: launchQuote).checkoutAbandoned()
+        let launch = priceScreenAsk(winback: winback, api: api, quote: launchQuote)
+        let closedLaunch = await openCheckout(launch, api: api, url: "https://checkout.stripe.com/c/pay/two")
+        launch.checkoutSheetClosed()
+        launch.checkoutAbandoned(closedLaunch)
         XCTAssertEqual(winback.state, .intact)
     }
 
@@ -659,16 +921,21 @@ final class ProAskMachineTests: XCTestCase {
         XCTAssertEqual(WinbackModel(defaults: defaults).state, .spent)
     }
 
-    func testActivationDisarmsPermanently() {
+    func testActivationDisarmsPermanently() async {
         let winback = freshWinback()
+        let api = StubCockpitAPI()
         var dismissed = 0
-        let ask = priceScreenAsk(winback: winback, onDismiss: { dismissed += 1 })
+        let ask = priceScreenAsk(winback: winback, api: api, onDismiss: { dismissed += 1 })
+        // A checkout was open and closed; its decider is still pending
+        // when the activation lands through another door.
+        let closed = await openCheckout(ask, api: api, url: "https://checkout.stripe.com/c/pay/one")
+        ask.checkoutSheetClosed()
         ask.applyReloadedLicense(license(status: "trialing", active: true))
         XCTAssertEqual(winback.state, .spent)
 
         // Fail cases: no trigger resurrects a spent ladder, and the offer
         // never renders again.
-        ask.checkoutAbandoned()
+        ask.checkoutAbandoned(closed)
         XCTAssertEqual(winback.state, .spent)
         let again = priceScreenAsk(winback: winback, onDismiss: { dismissed += 1 })
         XCTAssertEqual(again.offerRung, .full)
@@ -677,17 +944,21 @@ final class ProAskMachineTests: XCTestCase {
         XCTAssertEqual(winback.state, .spent)
     }
 
-    func testPausedNeverSeesTheLadder() {
+    func testPausedNeverSeesTheLadder() async {
         // A lapsed license is not being asked for the first time: its ✕
         // closes, an abandoned trial-restart checkout arms nothing, and
         // even an already-armed rung renders full on the paused screen.
         let winback = freshWinback()
+        let api = StubCockpitAPI()
         var dismissed = 0
-        let ask = priceScreenAsk(winback: winback, guided: false, status: "lapsed", onDismiss: { dismissed += 1 })
+        let ask = priceScreenAsk(
+            winback: winback, api: api, guided: false, status: "lapsed", onDismiss: { dismissed += 1 })
         ask.close()
         XCTAssertEqual(dismissed, 1)
         XCTAssertEqual(winback.state, .intact)
-        ask.checkoutAbandoned()
+        let closed = await openCheckout(ask, api: api, url: "https://checkout.stripe.com/c/pay/restart")
+        ask.checkoutSheetClosed()
+        ask.checkoutAbandoned(closed)
         XCTAssertEqual(winback.state, .intact)
 
         winback.arm()

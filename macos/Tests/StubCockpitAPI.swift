@@ -185,8 +185,16 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
     private(set) var licenseRecoverRequests: [String] = []
     private(set) var licenseClaimRequests: [String] = []
 
+    /// Holds a checkout press on the wire for this long before answering —
+    /// lets a test observe the install while a session is still being
+    /// created (the abandon decider's in-flight leg).
+    var licenseCheckoutDelay: TimeInterval = 0
+
     func licenseCheckout(rung: String, echo: QuoteEcho, remindDaysBefore: Int?) async throws -> CheckoutHandoff {
         licenseCheckoutRequests.append((rung, echo, remindDaysBefore))
+        if licenseCheckoutDelay > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(licenseCheckoutDelay * 1_000_000_000))
+        }
         return try licenseCheckoutResult.get()
     }
 

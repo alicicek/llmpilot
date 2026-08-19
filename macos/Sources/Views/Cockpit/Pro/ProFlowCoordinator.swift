@@ -118,6 +118,19 @@ enum WinbackState: String {
     case spent
 }
 
+/// Which checkout an abandon verdict is about: one install-wide checkout
+/// event number. Minted ONLY by `WinbackModel.noteCheckoutHandoff()` — the
+/// stored member is fileprivate, so nothing outside this file can forge
+/// one — the moment a handoff lands, captured by the composition root when
+/// it presents that handoff's sheet, and presented back through
+/// `AskMachine.checkoutAbandoned(_:)` when the sheet's post-close decider
+/// reports. Any checkout event after it (a press anywhere on this
+/// install, or a later handoff) makes it stale, and a stale identity's
+/// verdict is discarded.
+struct CheckoutIdentity: Equatable {
+    fileprivate let event: Int
+}
+
 /// The persisted once-per-install win-back state. Keyed to the SAME
 /// `fleet.defaults` suite the `proOnboarded`/`proFlowClosed` flags use
 /// (NativeCockpitWindow.swift), so an e2e sandbox run never leaks it into a
@@ -129,10 +142,73 @@ final class WinbackModel: ObservableObject {
 
     @Published private(set) var state: WinbackState
     private let defaults: UserDefaults
+    /// Every checkout event on this install, in order: a press that got
+    /// past `AskMachine.pressCheckout`'s guards, and a handoff that landed.
+    /// Counted HERE, not per AskMachine — every ask (the corridor's, and
+    /// each reopened paywall's; `openPaywall` builds a fresh machine per
+    /// open) shares this one model, and the harm an abandon verdict can do
+    /// lands here on the shared ladder, so the identity it is checked
+    /// against must be install-wide too. Process-lifetime only: a decider
+    /// does not survive a relaunch either.
+    private var checkoutEvents = 0
+    /// Presses currently between their guards and their exit, on any ask —
+    /// the install-wide "a checkout session is being created right now"
+    /// fact. A verdict minted AFTER such a press (a later sheet's) is the
+    /// newest event and would otherwise arm while that session is still on
+    /// the wire; the abandon decider refuses while this is non-zero, and so
+    /// does the ✕ (`AskMachine.close()`). Published: every ask republishes
+    /// this model, so the ✕'s enabled state follows it.
+    @Published private(set) var checkoutsInFlight = 0
+    /// Post-close decisions still running (`PostCheckoutReload.run`, ~10s
+    /// after a sheet closes): the verdict on the checkout that just closed
+    /// — paid or abandoned — is not in yet. A ✕ in that window must not
+    /// arm ahead of it: a buyer who just PAID leaves through the same
+    /// Cancel an abandoner uses, the activation push has not landed, and
+    /// `license.active` still reads false — arming there would paint the
+    /// lower offer over a price they already paid. The ✕ still dismisses;
+    /// the decider decides, on this shared ladder, when its window ends.
+    @Published private(set) var decisionsPending = 0
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
         state = defaults.string(forKey: Self.key).flatMap(WinbackState.init) ?? .intact
+    }
+
+    /// A checkout press got past its guards somewhere on this install.
+    /// Intent to buy exists from here on — whether or not the press lands
+    /// — so every abandon verdict still pending for an earlier sheet is
+    /// stale from this moment; and until `noteCheckoutPressEnded()` the
+    /// press counts as in flight.
+    func noteCheckoutPressed() {
+        checkoutEvents += 1
+        checkoutsInFlight += 1
+    }
+
+    /// The press exited — landed, diverted, or failed. Paired with
+    /// `noteCheckoutPressed()` by `AskMachine.pressCheckout`'s defer.
+    func noteCheckoutPressEnded() {
+        checkoutsInFlight = max(0, checkoutsInFlight - 1)
+    }
+
+    /// A post-close decision started / ended (`PostCheckoutReload.run`
+    /// brackets its whole window). While any is pending, `AskMachine.close()`
+    /// dismisses without arming.
+    func noteDecisionPending() { decisionsPending += 1 }
+    func noteDecisionEnded() { decisionsPending = max(0, decisionsPending - 1) }
+
+    /// A handoff landed — the sheet about to present. Returns the identity
+    /// its post-close abandon verdict must carry. Also an event of its own
+    /// (not just the press): a slow wire call landing AFTER a later press
+    /// still supersedes that press's verdict, whichever machine took it.
+    func noteCheckoutHandoff() -> CheckoutIdentity {
+        checkoutEvents += 1
+        return CheckoutIdentity(event: checkoutEvents)
+    }
+
+    /// The abandon decider's identity leg: is `closed` still the newest
+    /// checkout event on this install?
+    func isNewestCheckout(_ closed: CheckoutIdentity) -> Bool {
+        closed.event == checkoutEvents
     }
 
     /// A decline trigger fired. Only `intact` arms — `armed` is already the
@@ -323,11 +399,26 @@ enum PostCheckoutReload {
     static let defaultRereads = 4
     static let defaultRereadDelay: TimeInterval = 2.5
 
+    /// `closed` is the identity of the checkout whose sheet just closed
+    /// (`ask.liveCheckout`, captured by the composition root when it
+    /// presented that sheet); the abandon verdict is presented back through
+    /// it, so any newer checkout event on the install — a press on any ask,
+    /// live or in flight, or a later sheet closed with its own decider still
+    /// running — voids this one instead of being armed behind. Nil — no
+    /// ask, or no identity captured — decides nothing: the reload still
+    /// pulls license/state/quote and still routes an activation, but never
+    /// arms.
     static func run(
         api: CockpitDaemonAPI, fleet: FleetViewModel, quote: ProQuoteModel, ask: AskMachine?,
+        closed: CheckoutIdentity?,
         rereads: Int = PostCheckoutReload.defaultRereads,
         rereadDelay: TimeInterval = PostCheckoutReload.defaultRereadDelay
     ) async {
+        // The whole window is a pending decision on the shared ladder: a ✕
+        // pressed inside it dismisses but does not arm (see
+        // `WinbackModel.decisionsPending`) — this run decides.
+        ask?.winback.noteDecisionPending()
+        defer { ask?.winback.noteDecisionEnded() }
         var license = try? await api.license(reveal: false)
         _ = try? await fleet.refresh()
         quote.reload()
@@ -361,8 +452,10 @@ enum PostCheckoutReload {
         if let license {
             if license.active {
                 ask?.applyReloadedLicense(license)
-            } else {
-                ask?.checkoutAbandoned()
+            } else if let closed {
+                // The verdict names the checkout it is about; the machine
+                // discards it if any newer checkout event has happened.
+                ask?.checkoutAbandoned(closed)
             }
         }
     }

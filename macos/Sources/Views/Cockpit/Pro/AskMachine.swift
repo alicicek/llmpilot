@@ -102,6 +102,25 @@ final class AskMachine: ObservableObject {
     /// the composition root passes its single persisted instance.
     let winback: WinbackModel
 
+    /// The checkout whose sheet is live, or about to be: minted by the
+    /// shared ladder (`WinbackModel.noteCheckoutHandoff`) the moment
+    /// `handoffURL` lands, cleared with it when the sheet closes. The
+    /// composition root captures it when it PRESENTS the sheet and hands it
+    /// to that sheet's post-close decider, which presents it back through
+    /// `checkoutAbandoned(_:)` — so the verdict is bound to the checkout at
+    /// present time, never read back at close time (where a superseded
+    /// sheet's deferred close could see a successor's state).
+    private(set) var liveCheckout: CheckoutIdentity?
+
+    /// Whether the ✕ does anything right now — false while a checkout press
+    /// is in flight anywhere on the install or this ask's sheet is live
+    /// (`close()`'s first guard). The price screen binds its ✕'s
+    /// `.disabled` to this, so a ✕ that would do nothing is dimmed for as
+    /// long as it would do nothing — the press AND the sheet's whole life.
+    /// Observable: `handoffURL` is published here and `checkoutsInFlight`
+    /// on the ladder every ask republishes.
+    var closeEnabled: Bool { winback.checkoutsInFlight == 0 && handoffURL == nil }
+
     private let api: CockpitDaemonAPI & DaemonAPI
     private var seenQuote: LadderQuote?
     private var checkoutInFlight = false
@@ -209,9 +228,36 @@ final class AskMachine: ObservableObject {
     /// real: the second press while armed, any press once spent, the paused
     /// screen (never asked twice), and a paywall with nothing lower to show
     /// (arming there would eat the buyer's exit for no offer).
+    ///
+    /// INERT WHILE A CHECKOUT IS IN FLIGHT OR LIVE (1.3.3): the same harm
+    /// `checkoutAbandoned(_:)` guards against has a second door here. A
+    /// press of the money button is on the wire for 0.5–3s (the license
+    /// pre-read plus the daemon → worker → Stripe round trip) with the
+    /// screen still showing; a ✕ inside that gap used to arm, repaint the
+    /// screen at the lower price, and then the full-price sheet the press
+    /// was building landed on top of it — a stale label behind a live
+    /// sheet again. So while any press is in flight anywhere on the install
+    /// (`WinbackModel.checkoutsInFlight`, the same install-wide count the
+    /// decider checks), or this ask's sheet is live, the ✕ does nothing at
+    /// all: it neither arms nor dismisses — the sheet about to present (or
+    /// already up) owns the next decision, and its Cancel bar is the exit.
+    /// The price screen disables the ✕ on the same terms (`closeEnabled`)
+    /// so the press cannot happen through the UI; this guard is the belt for
+    /// every other caller.
+    ///
+    /// DISMISSES WITHOUT ARMING WHILE A POST-CLOSE DECISION IS PENDING
+    /// (1.3.3): for ~10s after a sheet closes, `PostCheckoutReload.run` is
+    /// still finding out whether that checkout was paid or abandoned —
+    /// `license.active` lags a paying buyer's activation push, and the
+    /// buyer left through the same Cancel an abandoner uses. A ✕ in that
+    /// window used to arm at once, painting the lower offer over a price
+    /// they may just have paid. Now it only dismisses; the decider decides
+    /// on the shared ladder (an abandoner still gets the offer, on the
+    /// next open), and `noteActivated` spends it for a buyer.
     func close() {
-        if winback.state == .intact, !paused, !license.active, let quote,
-            LadderLogic.hasLowerOffer(quote: quote, locale: locale)
+        guard closeEnabled else { return }
+        if winback.decisionsPending == 0, winback.state == .intact, !paused, !license.active,
+            let quote, LadderLogic.hasLowerOffer(quote: quote, locale: locale)
         {
             winback.arm()
             // Land on ⑧ so the NEXT render IS the discounted terms — the
@@ -247,8 +293,30 @@ final class AskMachine: ObservableObject {
     /// nothing shown, then surface "the last offer" on a later first
     /// render nobody declined. By decision time the post-close quote
     /// refetch has landed back in `quote`, so this reads current terms.
-    func checkoutAbandoned() {
-        guard !paused, !license.active, let quote,
+    ///
+    /// IDENTITY-GUARDED (before 1.3.3 the decider had no notion of which
+    /// checkout it was deciding for): it is a detached Task that reports
+    /// ~10s after the sheet closed, and by then the buyer may have pressed
+    /// the money button again — on this ask or on a fresh one
+    /// (`openPaywall` builds a machine per open; all share `winback`) — a NEWER
+    /// full-price session mid-flight or live in a new sheet, or already
+    /// closed with its own decider still inside its window. Arming here
+    /// would repaint a struck-through "lower price" behind that live sheet
+    /// (Stripe charges what its sheet says; the app's label goes stale), or
+    /// pre-empt the newer decider before its activation window has run. So
+    /// the verdict is accepted only while `closed` is still the newest
+    /// checkout event on the whole install (`WinbackModel.isNewestCheckout`
+    /// — every press and every handoff, on any ask, is an event), while no
+    /// press is in flight anywhere on the install
+    /// (`WinbackModel.checkoutsInFlight` — an EARLIER press still creating
+    /// its session is not a later event, so the identity leg alone would
+    /// let a later sheet's verdict arm over it), and while THIS ask has no
+    /// sheet live. That last leg is implied by the identity leg (a live
+    /// handoff, here or on another ask, is a later event than any closed
+    /// one) and stays explicit as the moment-of-harm fact.
+    func checkoutAbandoned(_ closed: CheckoutIdentity) {
+        guard winback.isNewestCheckout(closed), winback.checkoutsInFlight == 0, handoffURL == nil,
+            !paused, !license.active, let quote,
             LadderLogic.hasLowerOffer(quote: quote, locale: locale)
         else { return }
         winback.arm()
@@ -309,8 +377,13 @@ final class AskMachine: ObservableObject {
     /// sanctioned "start again here" path on both sides; the paid case is
     /// covered by the live license push (`applyReloadedLicense`) flipping
     /// this machine to `.active`, which unrenders the button.
+    ///
+    /// Clears `liveCheckout` with it — the decider for this close already
+    /// holds the identity the root captured at present time; nothing is
+    /// minted or read here (see `liveCheckout`).
     func checkoutSheetClosed() {
         handoffURL = nil
+        liveCheckout = nil
     }
 
     /// Paywall.tsx:339-353 + App.tsx:332-403 `onCheckout` — the price
@@ -333,8 +406,19 @@ final class AskMachine: ObservableObject {
         }
         guard !checkoutInFlight else { return }
         checkoutInFlight = true
+        // This press IS the newer checkout from here on — recorded on the
+        // shared ladder before the first suspension point below, so any
+        // abandon verdict still pending for an earlier sheet, on ANY ask,
+        // is stale whether or not this press lands, and no verdict at all
+        // is accepted while it is in flight (see `checkoutAbandoned(_:)`).
+        winback.noteCheckoutPressed()
         busy = true
         checkoutError = nil
+        defer {
+            checkoutInFlight = false
+            busy = false
+            winback.noteCheckoutPressEnded()
+        }
         // Pre-flight license re-read (found in review): the daemon keeps
         // an activation poll alive for up to 10 minutes (license.go
         // pollFor), far past PostCheckoutReload's decision window, and a
@@ -347,14 +431,23 @@ final class AskMachine: ObservableObject {
         // anyway), so only a POSITIVE active read diverts.
         if let fresh = try? await api.license(reveal: false), fresh.active {
             applyReloadedLicense(fresh)
-            checkoutInFlight = false
-            busy = false
             return
         }
         do {
             let result = try await api.licenseCheckout(
                 rung: copy.rung.rawValue, echo: copy.echo, remindDaysBefore: remindDays)
+            // A handoff the view cannot present (an empty or malformed
+            // URL — the daemon refuses to emit one, so only a broken daemon
+            // gets here) must not become a live sheet that never closes:
+            // `handoffURL` would stay set, and with it the ✕ inert.
+            guard URL(string: result.url) != nil else {
+                checkoutError = "That didn't take — try again."
+                return
+            }
             committedAmount = copy.amount
+            // Identity first, then the URL the view presents on — the root
+            // reads `liveCheckout` inside that presentation.
+            liveCheckout = winback.noteCheckoutHandoff()
             handoffURL = result.url
         } catch {
             if let apiErr = error as? ApiError, apiErr.code == "quote_stale" {
@@ -372,8 +465,6 @@ final class AskMachine: ObservableObject {
                     mapped ?? (error as? LocalizedError)?.errorDescription ?? "That didn't take — try again."
             }
         }
-        checkoutInFlight = false
-        busy = false
     }
 }
 

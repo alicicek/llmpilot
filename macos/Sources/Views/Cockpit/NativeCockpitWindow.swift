@@ -781,6 +781,11 @@ struct NativeCockpitRootView: View {
     /// and on close runs the post-checkout reload (deliverable 4).
     private func presentCheckout(_ url: URL, ask: AskMachine) {
         guard let window = NativeCockpitWindowController.shared.window else { return }
+        // Bind the post-close decider to THIS handoff now, at present time:
+        // the sheet's onClosed may fire long after (or, for a superseded
+        // sheet, out of order with) the machine's own state, so nothing is
+        // read back from the machine at close.
+        let presented = ask.liveCheckout
         // "Start again here": end any sheet already up before presenting the
         // new one. Its onClosed runs from beginSheet's completion — AFTER the
         // new assignment below — so the release is identity-guarded: only the
@@ -801,8 +806,13 @@ struct NativeCockpitRootView: View {
             // The sheet is gone — the machine's "Checkout is open in the
             // payment window" line must not outlive it (P1-5).
             ask.checkoutSheetClosed()
+            // The decider carries the identity captured above: a checkout
+            // pressed after it — on this ask or a fresh one — is a newer
+            // checkout event, and this sheet's stale "abandoned" verdict
+            // must not arm behind the new sheet or inside its decider's
+            // window.
             Task {
-                await PostCheckoutReload.run(api: api, fleet: fleet, quote: quoteModel, ask: ask)
+                await PostCheckoutReload.run(api: api, fleet: fleet, quote: quoteModel, ask: ask, closed: presented)
             }
         }
         checkoutController = controller

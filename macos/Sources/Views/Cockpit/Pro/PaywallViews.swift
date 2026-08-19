@@ -162,6 +162,11 @@ struct PaywallCloseButtonView: View {
     var onClick: () -> Void
     var label = "Close the paywall"
     var testID = "paywall-close"
+    // Explicit disabled treatment, as the primary button style has: a
+    // `.plain` button with its own colours gets no dimming for free, and
+    // the price screen disables this ✕ while a checkout is in flight or
+    // its sheet is live (AskMachine.closeEnabled).
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: onClick) {
@@ -172,6 +177,7 @@ struct PaywallCloseButtonView: View {
                 .background(CockpitTheme.panel)
                 .overlay(Circle().stroke(CockpitTheme.hair, lineWidth: 1))
                 .clipShape(Circle())
+                .opacity(isEnabled ? 1 : 0.45)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -914,7 +920,14 @@ struct PaywallPriceScreen: View {
                 .frame(maxWidth: FlowLayout.copyColumnMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity)
                 if ask.closeButtonVisible {
+                    // Dimmed for exactly as long as it would do nothing —
+                    // the press on the wire and the sheet's whole life
+                    // (AskMachine.closeEnabled): a ✕ in the 0.5–3s press
+                    // gap used to arm the lower offer behind the full-price
+                    // sheet the press was building. close() refuses it too;
+                    // this keeps the press from happening.
                     PaywallCloseButtonView(onClick: { ask.close() })
+                        .disabled(!ask.closeEnabled)
                 }
             }
         } footer: {
@@ -1026,8 +1039,11 @@ struct PaywallPausedScreen: View {
                 }
                 // Paused ALWAYS shows its ✕ (AskMachine.closeButtonVisible
                 // returns true unconditionally for .paused) — the 1.2.6
-                // regression this pins shipped with none at all.
+                // regression this pins shipped with none at all. Dimmed on
+                // the same terms as the price screen's while it would do
+                // nothing (a checkout in flight or live on this ladder).
                 PaywallCloseButtonView(onClick: { ask.close() })
+                    .disabled(!ask.closeEnabled)
             }
         } footer: {
             HStack(spacing: FlowLayout.footerControlSpacing) {

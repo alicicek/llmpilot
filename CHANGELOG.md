@@ -4,6 +4,41 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-08-19
+
+Two fixes to the Pro price screen's lower offer, on the Mac app only. No
+price, trial length, or offer changes: £9.99 / $12.99 after the 4-day
+free trial, and the one lower offer at £5.99 / $7.99, are exactly what
+1.3.1 and 1.3.2 sold. Nothing about accounts, schedules, or settings data
+changes.
+
+### Fixed
+
+- **The lower offer is decided for the checkout you actually closed.**
+  Backing out of a checkout without paying arms the price screen's one
+  lower offer — on the screen itself if it is still open, otherwise the
+  next time it opens. That decision is reached about ten seconds after
+  the payment window closes, and until now it did not know which window
+  it was about: back out, press the trial button again inside those
+  seconds, and the lower offer armed behind the new full-price checkout —
+  the screen re-drew at £5.99 with £9.99 struck through while the open
+  window still charged £9.99. Every checkout press and payment window on
+  the install is now a numbered event, and a closed window's verdict
+  counts only while that window is still the newest; a newer press
+  anywhere voids it. What you pay was always, and remains, what the
+  payment window says — a closed window's verdict can no longer paint a
+  stale price behind a newer one.
+- **The ✕ waits for the checkout.** Pressing the trial button takes a
+  moment — the app asks the payment server for a checkout — and in that
+  moment the price screen's ✕ still worked: it armed the lower offer and
+  re-drew the screen at £5.99, and then the full-price payment window the
+  button was opening landed on top of it. The ✕ is now dimmed and does
+  nothing from the press until that payment window has closed; the
+  window's own Cancel is the way out. And for the ten seconds after it
+  closes, while the app is still finding out whether you paid, the ✕
+  closes the screen and leaves the lower offer to that answer — it is
+  no longer decided ahead of it.
+
 ## [1.3.2] - 2026-08-19
 
 A fresh-install audit of 1.3.1 found eight defects across first run, the
@@ -438,6 +473,7 @@ Initial public release: live usage for every account, lock-first switching,
 window scheduling, the cockpit, the menu bar app, the statusline, and the
 one-time Pro autopilot.
 
+[1.3.3]: https://github.com/alicicek/llmpilot/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/alicicek/llmpilot/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/alicicek/llmpilot/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/alicicek/llmpilot/compare/v1.2.3...v1.3.0
