@@ -969,7 +969,11 @@ struct PaywallPriceScreen: View {
             calloutBox(err, testID: "license-error").padding(.top, FlowLayout.visualToDisclosure)
         }
         if let handoff = ask.handoffURL {
-            Text("Checkout is open in the payment window — finish there, or start again here.")
+            Text(
+                ask.browserOpen
+                    ? "Checkout is open in your browser — finish there, or start again here."
+                    : "Checkout is open in the payment window — finish there, or start again here."
+            )
                 .font(CockpitTheme.Onboarding.status)
                 .foregroundColor(CockpitTheme.sec)
                 .padding(.top, FlowLayout.visualToDisclosure)

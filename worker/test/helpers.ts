@@ -81,6 +81,7 @@ export interface FakeStripeState {
   subscription?: Record<string, unknown>;
   calls: Array<{ method: string; args: unknown[] }>;
   failSubscriptionUpdate?: boolean;
+  failExpire?: boolean;
   subscriptions?: Record<string, unknown>[];
   subscriptionPages?: Record<string, unknown>[][];
   invoicePayments?: Record<string, unknown>[];
@@ -102,6 +103,11 @@ export function makeFakeStripe(state: Partial<FakeStripeState> = {}) {
         async create(params: Record<string, unknown>) {
           rec("sessions.create", params);
           return { id: "cs_new", url: "https://checkout.stripe.com/c/cs_new", client_secret: null };
+        },
+        async expire(id: string) {
+          rec("sessions.expire", id);
+          if (st.failExpire) throw new Error("session_not_expireable");
+          return { id, status: "expired" };
         },
       },
     },

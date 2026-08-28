@@ -41,8 +41,12 @@ enum AddAccountCopy {
     static let pollTimeout = "Didn't detect a completed sign-in — finish it in your browser, or try again."
     // F8 (2026-08-16 fresh-user audit): the token-endpoint 429 on sign-in
     // start read as an unrecoverable dead end — same primary button, no
-    // stated wait. States what happened and how long to wait.
-    static let rateLimitedSignIn = "The sign-in server is rate-limited — wait a minute, then try again."
+    // stated wait. States what happened and how long to wait. P2 copy fix
+    // (wave S12): also states that the retry is a FRESH sign-in — the
+    // failed exchange consumed this attempt's code, replaying it can never
+    // work, and copy implying "wait and the same sign-in resumes" misled.
+    static let rateLimitedSignIn =
+        "The sign-in server is rate-limited — wait a minute, then try again. That starts a fresh sign-in; this attempt's code won't work again."
     // VOICE.md: verb+object — replaces the default browser-button label
     // while a rate-limited error is showing, so the retry path is explicit.
     static let tryAgain = "Try again"

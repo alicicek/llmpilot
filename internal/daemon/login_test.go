@@ -283,7 +283,8 @@ func TestLoginBrowserStatusFailedOnExchangeError(t *testing.T) {
 	// it must say what happened, name the retry in the app, and release the
 	// tab; the doubled "try again … and try again" copy is gone.
 	page := string(pageBytes)
-	for _, want := range []string{"rate-limited", "Try again in llmpilot", "You can close this tab"} {
+	// ("won't" arrives HTML-escaped, so the pin stops at "work again".)
+	for _, want := range []string{"rate-limited", "Try again in llmpilot", "You can close this tab", "fresh sign-in", "work again"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("429 callback page lacks %q:\n%s", want, page)
 		}

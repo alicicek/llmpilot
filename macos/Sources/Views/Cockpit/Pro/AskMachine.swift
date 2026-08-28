@@ -112,14 +112,27 @@ final class AskMachine: ObservableObject {
     /// sheet's deferred close could see a successor's state).
     private(set) var liveCheckout: CheckoutIdentity?
 
+    /// Whether the checkout handoff has LANDED in the default browser
+    /// (1.3.4). False from press until `browserDidOpen()`: while the wire
+    /// call runs and while NSWorkspace is still launching the browser, the
+    /// paywall is the only surface and its ✕ stays inert. Once the browser
+    /// owns the payment surface the paywall may dismiss again (dismiss-only
+    /// — the pending decision keeps `close()` from arming; the daemon's
+    /// checkout_outcome decides). Never true in the fallback-sheet flow,
+    /// where the sheet's whole life keeps the ✕ inert exactly as 1.3.3 did.
+    @Published private(set) var browserOpen = false
+
     /// Whether the ✕ does anything right now — false while a checkout press
-    /// is in flight anywhere on the install or this ask's sheet is live
-    /// (`close()`'s first guard). The price screen binds its ✕'s
-    /// `.disabled` to this, so a ✕ that would do nothing is dimmed for as
-    /// long as it would do nothing — the press AND the sheet's whole life.
-    /// Observable: `handoffURL` is published here and `checkoutsInFlight`
-    /// on the ladder every ask republishes.
-    var closeEnabled: Bool { winback.checkoutsInFlight == 0 && handoffURL == nil }
+    /// is in flight anywhere on the install, while the browser handoff is
+    /// still opening, or while this ask's fallback SHEET is live (`close()`'s
+    /// first guard). The price screen binds its ✕'s `.disabled` to this, so
+    /// a ✕ that would do nothing is dimmed for as long as it would do
+    /// nothing — the press, the launch, and the sheet's whole life. A
+    /// checkout open in the BROWSER re-enables it: that surface outlives any
+    /// paywall, and the ✕ then dismisses without deciding anything.
+    /// Observable: `handoffURL`/`browserOpen` are published here and
+    /// `checkoutsInFlight` on the ladder every ask republishes.
+    var closeEnabled: Bool { winback.checkoutsInFlight == 0 && (handoffURL == nil || browserOpen) }
 
     private let api: CockpitDaemonAPI & DaemonAPI
     private var seenQuote: LadderQuote?
@@ -256,7 +269,12 @@ final class AskMachine: ObservableObject {
     /// next open), and `noteActivated` spends it for a buyer.
     func close() {
         guard closeEnabled else { return }
-        if winback.decisionsPending == 0, winback.state == .intact, !paused, !license.active,
+        // Never arm while the checkout is open in the BROWSER (1.3.4): the ✕
+        // is dismiss-only there — that surface outlives the paywall, and the
+        // verdict on it belongs to the daemon's checkout_outcome, not a UI
+        // close (owner decision 2026-08-27; the belt for `decisionsPending`,
+        // which the running `CheckoutDecider.watch` already holds up).
+        if winback.decisionsPending == 0, !browserOpen, winback.state == .intact, !paused, !license.active,
             let quote, LadderLogic.hasLowerOffer(quote: quote, locale: locale)
         {
             winback.arm()
@@ -315,11 +333,44 @@ final class AskMachine: ObservableObject {
     /// handoff, here or on another ask, is a later event than any closed
     /// one) and stays explicit as the moment-of-harm fact.
     func checkoutAbandoned(_ closed: CheckoutIdentity) {
-        guard winback.isNewestCheckout(closed), winback.checkoutsInFlight == 0, handoffURL == nil,
-            !paused, !license.active, let quote,
+        guard winback.isNewestCheckout(closed), winback.checkoutsInFlight == 0,
+            handoffURL == nil || browserOpen
+        else { return }
+        // The verdict ends the browser handoff this machine is narrating: a
+        // declined buyer's tab sits on the "Nothing was charged" page and an
+        // abandoned one went silent past the daemon's deadline — either way
+        // "finish in your browser" must not outlive the verdict, and the
+        // next press is a fresh handoff (whose mint expires the old
+        // session server-side). The fallback-sheet flow reaches here with
+        // these already nil — the sheet closed before its verdict could.
+        if browserOpen {
+            handoffURL = nil
+            browserOpen = false
+            liveCheckout = nil
+        }
+        guard !paused, !license.active, let quote,
             LadderLogic.hasLowerOffer(quote: quote, locale: locale)
         else { return }
         winback.arm()
+    }
+
+    /// Whether this ask's fallback SHEET currently owns the payment surface
+    /// (handoff live, browser never confirmed). The decider's watch holds a
+    /// verdict back while this is true — the sheet's back-arrow path is
+    /// mid-flight and the verdict delivers the moment the sheet closes
+    /// (money review 2026-08-27 F6: returning early dropped it forever).
+    var sheetLive: Bool { handoffURL != nil && !browserOpen }
+
+    /// The composition root reports the NSWorkspace launch landed: the
+    /// default browser now owns the payment surface. Ends the ✕-inert span
+    /// that started at the press (owner decision 2026-08-27: inert spans
+    /// press→browser-open, then dismiss-only while the decision is pending).
+    /// IDENTITY-BOUND (money review 2026-08-27 F4): NSWorkspace completions
+    /// can land out of order across rapid re-presses — a stale launch's
+    /// completion must not flip the state of the handoff that superseded it.
+    func browserDidOpen(for identity: CheckoutIdentity) {
+        guard handoffURL != nil, liveCheckout == identity else { return }
+        browserOpen = true
     }
 
     /// Paywall.tsx:288-291 `onContinue` on the Remind screen.
@@ -383,6 +434,7 @@ final class AskMachine: ObservableObject {
     /// minted or read here (see `liveCheckout`).
     func checkoutSheetClosed() {
         handoffURL = nil
+        browserOpen = false
         liveCheckout = nil
     }
 
@@ -446,7 +498,10 @@ final class AskMachine: ObservableObject {
             }
             committedAmount = copy.amount
             // Identity first, then the URL the view presents on — the root
-            // reads `liveCheckout` inside that presentation.
+            // reads `liveCheckout` inside that presentation. A fresh handoff
+            // is not open anywhere yet — the ✕ goes inert again until the
+            // root reports the new launch landed.
+            browserOpen = false
             liveCheckout = winback.noteCheckoutHandoff()
             handoffURL = result.url
         } catch {

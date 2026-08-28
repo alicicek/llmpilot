@@ -378,85 +378,78 @@ final class ActivationMoveModel: ObservableObject {
     }
 }
 
-/// The one native-only step App.tsx has no equivalent of: a checkout
-/// SUCCESS there is a page navigation the browser's own SSE reconnect
-/// quietly catches up on afterward — nothing in App.tsx explicitly reloads
-/// on "checkout closed" because there is no such event. The native
-/// `CheckoutSheet` is presented IN-APP with no page reload, so closing it
-/// must actively pull the three surfaces an SSE reconnect would otherwise
-/// refresh for free: license, state, quote (this chunk's brief, deliverable
-/// 4) — then, if the reload landed an ACTIVE license, route the still-open
-/// `AskMachine` to the "Pro is on" screen via `applyReloadedLicense`, the
-/// native equivalent of Paywall.tsx re-rendering against a live `license`
-/// prop.
+/// The browser-handoff decider (1.3.4, retiring PostCheckoutReload's 10s
+/// sheet-close reread heuristic): from the moment a handoff lands — the
+/// default browser opened, or the fallback sheet presented — this watches
+/// GET /v1/license until the DAEMON delivers a verdict. Activation routes
+/// the still-open `AskMachine` to "Pro is on" (`applyReloadedLicense`);
+/// `checkout_outcome` — "declined" within seconds of the buyer clicking the
+/// hosted page's back arrow (the worker recorded the cancel-token hit), or
+/// "abandoned" when the daemon's 10-minute activation poll lapses in
+/// silence — presents the abandon verdict through the same identity guards
+/// as ever. UI-close events decide NOTHING anymore: a browser flow has no
+/// close to key on, and the fallback sheet follows the same one-decider
+/// rule (owner decision 2026-08-27).
 @MainActor
-enum PostCheckoutReload {
-    /// The production abandon-decision window. These constants ARE the F1
-    /// fix — their product must span several ticks of the daemon's 3s
-    /// activation poll (license.go pollEvery), and every behavior test
-    /// passes fast overrides, so a dedicated test pins the product
-    /// (review delta: "the one part of the fix no gate defends").
-    static let defaultRereads = 4
-    static let defaultRereadDelay: TimeInterval = 2.5
+enum CheckoutDecider {
+    /// Poll cadence against the LOCAL daemon (cheap loopback read), chosen
+    /// to ride the daemon's own 3s worker poll (license.go pollEvery) the
+    /// way PostCheckoutReload's 2.5s rereads did.
+    static let defaultPollDelay: TimeInterval = 2.5
+    /// Safety ceiling past the daemon's own 10-minute verdict deadline
+    /// (license.go pollFor delivers "abandoned" at 10:00): a daemon that
+    /// restarted mid-window loses its poll and would otherwise leave this
+    /// watch running forever. A watch that ends here decides nothing.
+    static let defaultDeadline: TimeInterval = 11 * 60
 
-    /// `closed` is the identity of the checkout whose sheet just closed
-    /// (`ask.liveCheckout`, captured by the composition root when it
-    /// presented that sheet); the abandon verdict is presented back through
-    /// it, so any newer checkout event on the install — a press on any ask,
-    /// live or in flight, or a later sheet closed with its own decider still
-    /// running — voids this one instead of being armed behind. Nil — no
-    /// ask, or no identity captured — decides nothing: the reload still
-    /// pulls license/state/quote and still routes an activation, but never
-    /// arms.
-    static func run(
+    /// `presented` is the identity of the checkout whose handoff this watch
+    /// belongs to (`ask.liveCheckout`, captured by the composition root at
+    /// present time); the verdict is presented back through it, so any newer
+    /// checkout event on the install voids this one instead of being armed
+    /// behind. Nil — no ask, or no identity captured — decides nothing: the
+    /// watch still routes an activation, but never arms.
+    static func watch(
         api: CockpitDaemonAPI, fleet: FleetViewModel, quote: ProQuoteModel, ask: AskMachine?,
-        closed: CheckoutIdentity?,
-        rereads: Int = PostCheckoutReload.defaultRereads,
-        rereadDelay: TimeInterval = PostCheckoutReload.defaultRereadDelay
+        presented: CheckoutIdentity?,
+        pollDelay: TimeInterval = CheckoutDecider.defaultPollDelay,
+        deadline: TimeInterval = CheckoutDecider.defaultDeadline,
+        now: () -> Date = Date.init
     ) async {
-        // The whole window is a pending decision on the shared ladder: a ✕
+        // The whole watch is a pending decision on the shared ladder: a ✕
         // pressed inside it dismisses but does not arm (see
-        // `WinbackModel.decisionsPending`) — this run decides.
+        // `WinbackModel.decisionsPending`) — the daemon's verdict decides.
         ask?.winback.noteDecisionPending()
         defer { ask?.winback.noteDecisionEnded() }
-        var license = try? await api.license(reveal: false)
-        _ = try? await fleet.refresh()
-        quote.reload()
-        // this reload is ALSO the abandoned-checkout decider (the
-        // wave's decision line: the post-checkout license reload decides,
-        // not a timer). One instantaneous read is NOT enough evidence
-        // (adversarial review F1, P0): in production checkout the embedded
-        // Stripe page completes IN the sheet (worker checkout.ts:
-        // redirect_on_completion "never" — /pro/activated never navigates),
-        // so a buyer who just PAID leaves via the same Cancel button an
-        // abandoner uses, and GET /v1/license answers from the local store
-        // that only the daemon's ~3s activation poll (license.go pollEvery)
-        // updates. Deciding on the first read would arm the win-back — and
-        // strike a "lower price" over the amount they just paid — for a
-        // paying buyer. So the reload re-reads across several poll ticks
-        // (~10s), exits the moment activation lands, and only a license
-        // that is STILL inactive at the end counts as abandoned. The
-        // license reload remains the sole decider; it is just given long
-        // enough to be right. A reload that never succeeds (nil throughout)
-        // proves neither and triggers nothing.
-        var remaining = rereads
-        while remaining > 0, license?.active != true {
-            remaining -= 1
-            try? await Task.sleep(nanoseconds: UInt64(max(rereadDelay, 0) * 1_000_000_000))
-            // The DECIDING read is the final one: a failed re-read replaces
-            // earlier evidence with nil rather than letting a stale
-            // inactive first read call a still-activating purchase
-            // abandoned (found in review).
-            license = try? await api.license(reveal: false)
-        }
-        if let license {
-            if license.active {
-                ask?.applyReloadedLicense(license)
-            } else if let closed {
-                // The verdict names the checkout it is about; the machine
-                // discards it if any newer checkout event has happened.
-                ask?.checkoutAbandoned(closed)
+        let end = now().addingTimeInterval(deadline)
+        while !Task.isCancelled, now() < end {
+            if let license = try? await api.license(reveal: false) {
+                if license.active {
+                    ask?.applyReloadedLicense(license)
+                    // The surfaces an SSE reconnect would refresh for free in
+                    // the web flow: fleet facts and the quote, pulled once
+                    // the checkout is over.
+                    _ = try? await fleet.refresh()
+                    quote.reload()
+                    return
+                }
+                if let outcome = license.checkoutOutcome, !outcome.isEmpty, ask?.sheetLive != true {
+                    // Verdict FIRST, on the terms that priced this checkout —
+                    // `quote.reload()` clears the quote before refetching,
+                    // and `checkoutAbandoned`'s lower-offer guard must judge
+                    // the terms the buyer actually declined, not a nil
+                    // mid-refetch hole. While the fallback SHEET is still
+                    // up, the verdict WAITS instead of being consumed — the
+                    // machine would refuse it behind a live sheet, and an
+                    // early return here would drop it forever (money review
+                    // 2026-08-27 F6); the poll delivers it the tick after
+                    // the sheet closes.
+                    if let presented { ask?.checkoutAbandoned(presented) }
+                    _ = try? await fleet.refresh()
+                    quote.reload()
+                    return
+                }
             }
+            try? await Task.sleep(nanoseconds: UInt64(max(pollDelay, 0) * 1_000_000_000))
         }
     }
 }

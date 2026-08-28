@@ -4,7 +4,7 @@
 
 import { Hono } from "hono";
 import type { WorkerEnv } from "./env.ts";
-import { checkoutPage, createCheckout } from "./routes/checkout.ts";
+import { checkoutPage, createCheckout, declinedRoute } from "./routes/checkout.ts";
 import { getQuote } from "./routes/quote.ts";
 import { webhookRoute } from "./routes/webhook.ts";
 import { activateRoute, cancelRoute, claimRecoveryRoute, recoverRoute, validateRoute } from "./routes/api.ts";
@@ -27,6 +27,7 @@ async function jsonBody(req: Request): Promise<Record<string, unknown> | null> {
 
 app.get("/healthz", (c) => c.json({ ok: true }));
 app.get("/checkout", (c) => checkoutPage(c.env, c.req.raw));
+app.get("/checkout/declined", (c) => declinedRoute(c.env, c.req.raw));
 
 // The landing site renders its pricing from the same quote the app paywall
 // uses — CORS for exactly the site origins, GET only (no preflight needed).

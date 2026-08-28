@@ -36,7 +36,7 @@ export async function fulfillSession(
   env: WorkerEnv,
   stripe: Stripe,
   sessionId: string,
-): Promise<{ lic: LicenseRow | null; state: string }> {
+): Promise<{ lic: LicenseRow | null; state: string; sessionStatus?: string }> {
   const db = env.ENT_DB;
   const session = await stripe.checkout.sessions.retrieve(sessionId, {
     expand: ["subscription", "invoice"],
@@ -117,7 +117,11 @@ export async function fulfillSession(
     return { lic: (await licenseBy(db, "id", lic.id)) as LicenseRow, state: "trialing" };
   }
 
-  return { lic, state: "not_paid" };
+  // The session's own lifecycle rides the not-paid answer so the daemon's
+  // reconcile poll can stop once nothing can pay this session anymore
+  // (money review 2026-08-27 F12 — an expired session polled for 24h is
+  // pure metered waste).
+  return { lic, state: "not_paid", sessionStatus: typeof session.status === "string" ? session.status : undefined };
 }
 
 /** Resolve the license an invoice belongs to. Dahlia: linkage lives at

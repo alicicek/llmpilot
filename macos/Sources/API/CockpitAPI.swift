@@ -346,19 +346,14 @@ extension HTTPDaemonClient: CockpitDaemonAPI {
 
     // MARK: licensing mutations (Phase 4 chunk A — checkout/cancel/recover/claim)
 
+    // (CheckoutRequestBody lives at file scope below so a test can pin the
+    // ui field — money review 2026-08-27 F5: nothing asserted the client
+    // actually asks for the hosted flow.)
+
     func licenseCheckout(rung: String, echo: QuoteEcho, remindDaysBefore: Int?) async throws -> CheckoutHandoff {
-        struct Body: Encodable {
-            var rung: String
-            var quote: QuoteEcho
-            var remindDaysBefore: Int?
-            enum CodingKeys: String, CodingKey {
-                case rung, quote
-                case remindDaysBefore = "remind_days_before"
-            }
-        }
         let data = try await cPost(
             "v1/license/checkout",
-            body: Body(rung: rung, quote: echo, remindDaysBefore: remindDaysBefore))
+            body: CheckoutRequestBody(rung: rung, quote: echo, remindDaysBefore: remindDaysBefore))
         return try DaemonDates.decoder().decode(CheckoutHandoff.self, from: data)
     }
 
@@ -425,5 +420,21 @@ extension HTTPDaemonClient: CockpitDaemonAPI {
         try DaemonDates.decoder().decode(
             BrowserLoginStatus.self,
             from: try await cGet("v1/login/browser/status", query: ["attempt": attempt], bearer: true))
+    }
+}
+
+/// POST /v1/license/checkout's body. File-scope so a test can pin that the
+/// 1.3.4 client asks for the HOSTED (browser) flow: hosted sessions carry
+/// the success/cancel URLs whose cancel hit is the decider's real back-out
+/// signal. The daemon's default stays "embedded" so a 1.3.3 app keeps its
+/// sheet flow against a newer daemon.
+struct CheckoutRequestBody: Encodable {
+    var rung: String
+    var ui = "hosted"
+    var quote: QuoteEcho
+    var remindDaysBefore: Int?
+    enum CodingKeys: String, CodingKey {
+        case rung, ui, quote
+        case remindDaysBefore = "remind_days_before"
     }
 }

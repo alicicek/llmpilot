@@ -388,6 +388,9 @@ struct LicenseInfo: Decodable, Equatable {
     var licenseIDMasked: String?
     var nocardTrialUsed: Bool
     var errorCode: String?
+    /// The live checkout's back-out verdict ("declined" | "abandoned") — the
+    /// only signal the win-back decider arms on (license.go licenseInfo).
+    var checkoutOutcome: String?
 
     enum CodingKeys: String, CodingKey {
         case available, active, status, kind, features, seats
@@ -398,6 +401,7 @@ struct LicenseInfo: Decodable, Equatable {
         case licenseIDMasked = "license_id_masked"
         case nocardTrialUsed = "nocard_trial_used"
         case errorCode = "error_code"
+        case checkoutOutcome = "checkout_outcome"
     }
 
     init(from decoder: Decoder) throws {
@@ -415,6 +419,7 @@ struct LicenseInfo: Decodable, Equatable {
         licenseIDMasked = try c.decodeIfPresent(String.self, forKey: .licenseIDMasked)
         nocardTrialUsed = try c.decodeIfPresent(Bool.self, forKey: .nocardTrialUsed) ?? false
         errorCode = try c.decodeIfPresent(String.self, forKey: .errorCode)
+        checkoutOutcome = try c.decodeIfPresent(String.self, forKey: .checkoutOutcome)
     }
 }
 

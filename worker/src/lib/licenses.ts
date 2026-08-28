@@ -5,6 +5,9 @@
 //   trialing → lapsed                      (cancelled / conversion failed — honest pause)
 //   trialing|lifetime → revoked            (full refund / dispute)
 // Revoked is terminal: nothing re-mints a revoked license.
+// declined_at is a FLAG on pending, not a status: the buyer backed out of the
+// hosted checkout (win-back signal). Payment supersedes it — the row leaves
+// pending and the flag stops meaning anything.
 
 import type Stripe from "stripe";
 import type { WorkerEnv } from "../env.ts";
@@ -31,6 +34,8 @@ export interface LicenseRow {
   remind_days_before: number;
   entitlement: string | null;
   install_id: string | null;
+  cancel_token: string | null;
+  declined_at: string | null;
   created_at: string;
   updated_at: string;
   revoked_at: string | null;
@@ -50,14 +55,78 @@ export async function insertLicense(
   rung: string,
   installId: string,
   remindDaysBefore = 1,
+  cancelToken: string | null = null,
 ): Promise<void> {
   const now = new Date().toISOString();
   await db
     .prepare(
-      "INSERT INTO licenses (id, status, rung, install_id, remind_days_before, created_at, updated_at) VALUES (?, 'pending', ?, ?, ?, ?, ?)",
+      "INSERT INTO licenses (id, status, rung, install_id, remind_days_before, cancel_token, created_at, updated_at) VALUES (?, 'pending', ?, ?, ?, ?, ?, ?)",
     )
-    .bind(id, rung, installId, remindDaysBefore, now, now)
+    .bind(id, rung, installId, remindDaysBefore, cancelToken, now, now)
     .run();
+}
+
+/** The back-out record: a cancel_url hit marks its pending license declined
+ *  and hands back the row's session id so the caller can EXPIRE that session
+ *  — the invariant the win-back rests on is "the checkout that armed the
+ *  discount is no longer payable", and this is where it becomes true.
+ *  First-write-wins and pending-only — a replay is a no-op, and a hit landing
+ *  after payment (webhook or activate got there first) changes nothing. The
+ *  token also dies with its session's 24h life: it rides a GET query string,
+ *  so platform request logs may carry it — time-bounding it caps what a
+ *  logged token could ever do (money review 2026-08-27 F8). */
+export async function markDeclined(
+  db: D1Database,
+  cancelToken: string,
+  now = new Date(),
+): Promise<{ id: string; session_id: string | null } | null> {
+  const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const row = await db
+    .prepare(
+      `UPDATE licenses SET declined_at = ?, updated_at = ?
+       WHERE cancel_token = ? AND status = 'pending' AND declined_at IS NULL AND created_at >= ?
+       RETURNING id, session_id`,
+    )
+    .bind(now.toISOString(), now.toISOString(), cancelToken, cutoff)
+    .first<{ id: string; session_id: string | null }>();
+  return row ?? null;
+}
+
+/** The mint-path guard against a second live purchase: an install that
+ *  already holds a token-bearing license must not be sold another one —
+ *  fulfillment is idempotent per LICENSE row, so nothing downstream would
+ *  converge two (money review 2026-08-27 F2). Lapsed/revoked stay
+ *  purchasable: a lapsed trial re-buying is the designed comeback path. */
+export async function installHasLiveLicense(db: D1Database, installId: string): Promise<boolean> {
+  const row = await db
+    .prepare(
+      "SELECT 1 AS one FROM licenses WHERE install_id = ? AND status IN ('trialing', 'lifetime') LIMIT 1",
+    )
+    .bind(installId)
+    .first();
+  return row !== null;
+}
+
+/** The install's prior still-payable checkouts (pending rows that recorded a
+ *  session at mint), newest first. Feeds expire-on-mint: one payable checkout
+ *  per install at a time, so an armed win-back can never complete behind a
+ *  stale full-price tab. Declined rows stay included — their Stripe session
+ *  is still open until it is expired. */
+export async function openCheckoutSessions(
+  db: D1Database,
+  installId: string,
+  since: Date,
+  limit = 3,
+): Promise<Array<{ id: string; session_id: string }>> {
+  const res = await db
+    .prepare(
+      `SELECT id, session_id FROM licenses
+       WHERE install_id = ? AND status = 'pending' AND session_id IS NOT NULL AND created_at >= ?
+       ORDER BY created_at DESC LIMIT ?`,
+    )
+    .bind(installId, since.toISOString(), limit)
+    .all<{ id: string; session_id: string }>();
+  return res.results ?? [];
 }
 
 export async function licenseBy(

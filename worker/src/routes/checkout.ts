@@ -7,7 +7,7 @@
 import type Stripe from "stripe";
 import type { WorkerEnv } from "../env.ts";
 import { getStripe } from "../lib/stripe.ts";
-import { insertLicense, newLicenseID } from "../lib/licenses.ts";
+import { attachCheckout, insertLicense, installHasLiveLicense, markDeclined, newLicenseID, openCheckoutSessions } from "../lib/licenses.ts";
 import { takeRateLimit } from "../lib/rate-limit.ts";
 import { validInstallID } from "../lib/seats.ts";
 import { currentTerms, effectiveTrialDays, resolvePriceID, type PriceTerms } from "../lib/terms.ts";
@@ -21,7 +21,20 @@ const CHECKOUT_WINDOW_MS = 60 * 60 * 1000;
 // navigation and calls /v1/activate with the session id. The page itself
 // (llmpilot.dev) is the browser-flow fallback.
 const SUCCESS_URL = "https://llmpilot.dev/pro/activated?session_id={CHECKOUT_SESSION_ID}";
+// Bare site fallback only. Hosted sessions get a per-checkout cancel URL on
+// the API origin instead ({CHECKOUT_SESSION_ID} is documented for success_url
+// ONLY, so the back-out signal rides our own token — as-of 2026-08-27).
 const CANCEL_URL = "https://llmpilot.dev/pro/declined";
+
+/** Opaque single-purpose back-out token (128-bit, hex) — its only power is
+ *  setting declined_at on its own pending license. Never logged. */
+export function newCancelToken(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let s = "";
+  for (const b of bytes) s += b.toString(16).padStart(2, "0");
+  return s;
+}
 
 export function sessionParams(
   env: WorkerEnv,
@@ -29,6 +42,7 @@ export function sessionParams(
   licenseId: string,
   ui: "hosted" | "embedded",
   now: Date = new Date(),
+  cancelURL: string = CANCEL_URL,
 ): Stripe.Checkout.SessionCreateParams {
   const price = resolvePriceID(env, rung, now);
   const trialDays = effectiveTrialDays(env);
@@ -48,7 +62,7 @@ export function sessionParams(
     ...(rung === "nocard_trial" ? { payment_method_collection: "if_required" } : {}),
     ...(ui === "embedded"
       ? { ui_mode: "embedded_page", redirect_on_completion: "never" }
-      : { success_url: SUCCESS_URL, cancel_url: CANCEL_URL }),
+      : { success_url: SUCCESS_URL, cancel_url: cancelURL }),
   };
   return params;
 }
@@ -138,6 +152,14 @@ export async function createCheckout(
   if (!await takeRateLimit(env.ENT_DB, "checkout-ip", clientIP, new Date(), CHECKOUT_LIMIT, CHECKOUT_WINDOW_MS)) {
     return { status: 429, body: { error: "rate_limited" } };
   }
+  // One live purchase per install: an install already holding a trialing or
+  // lifetime license is never sold a second one — fulfillment converges per
+  // LICENSE row, not per install, so a second session here could become a
+  // second charge (money review 2026-08-27 F2). The app pre-flights the same
+  // fact from its local store; this is the boundary that holds when it lags.
+  if (await installHasLiveLicense(env.ENT_DB, body.install_id)) {
+    return { status: 409, body: { error: "already_licensed" } };
+  }
 
   try {
     // Bind consent BEFORE any license row or Session exists: the shown terms
@@ -148,9 +170,27 @@ export async function createCheckout(
       return { status: 409, body: { error: "quote_stale" } };
     }
 
+    // One payable checkout per install (owner 2026-08-27): expire the
+    // install's prior open sessions BEFORE minting, so an armed win-back can
+    // never complete behind a stale full-price tab. A session that just
+    // completed refuses to expire — swallowed; fulfillment idempotency owns
+    // that race.
+    const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    for (const prior of await openCheckoutSessions(env.ENT_DB, body.install_id, dayAgo)) {
+      try {
+        await stripe.checkout.sessions.expire(prior.session_id);
+      } catch {
+        // not open anymore (completed or already expired) — nothing to close
+      }
+    }
+
     const licenseId = newLicenseID();
-    await insertLicense(env.ENT_DB, licenseId, rung, body.install_id, remindDays);
-    const params = sessionParams(env, rung, licenseId, ui, now);
+    const cancelToken = newCancelToken();
+    await insertLicense(env.ENT_DB, licenseId, rung, body.install_id, remindDays, cancelToken);
+    // The back-out URL lives on the WORKER origin (it must record before it
+    // forwards to the site page) and carries our token, not a Stripe template.
+    const cancelURL = `${origin ?? "https://api.llmpilot.dev"}/checkout/declined?t=${cancelToken}`;
+    const params = sessionParams(env, rung, licenseId, ui, now, ui === "hosted" ? cancelURL : CANCEL_URL);
     // Pin the Session to the CONSENTED currency. Without this, Checkout may
     // localize to the Price's other currency option and present an amount the
     // echo never showed — the same consent/charge divergence class as the
@@ -161,6 +201,9 @@ export async function createCheckout(
     const session = await stripe.checkout.sessions.create(params, {
       idempotencyKey: `checkout:${licenseId}`,
     });
+    // Record the session at MINT time (COALESCE keeps it on fulfillment
+    // replay): expire-on-mint above can only close sessions it can find.
+    await attachCheckout(env.ENT_DB, licenseId, { session: session.id });
     return {
       status: 200,
       body: {
@@ -180,6 +223,47 @@ export async function createCheckout(
     );
     return { status: 502, body: { error: "checkout_failed" } };
   }
+}
+
+const DECLINED_LIMIT = 60;
+const DECLINED_WINDOW_MS = 60 * 60 * 1000;
+
+/** GET /checkout/declined?t=<token> — the hosted session's cancel_url. Records
+ *  the back-out (first-write-wins, pending-only) and EXPIRES the session that
+ *  was declined, so the discount the app is about to arm can never sit behind
+ *  a still-payable full-price tab (money review 2026-08-27 F1 — a browser
+ *  Back-press would otherwise reach it for 24h). Then forwards to the site's
+ *  "Nothing was charged" page. The redirect is unconditional — unknown,
+ *  replayed, expired-token, malformed, and rate-limited hits all land on the
+ *  same page, so the endpoint is no oracle for token validity. Our code never
+ *  logs the token (it rides the URL, so platform request logs may carry it —
+ *  which is why markDeclined time-bounds it). */
+export async function declinedRoute(env: WorkerEnv, request: Request, stripeOverride?: Stripe): Promise<Response> {
+  const redirect = () => Response.redirect(`${env.PUBLIC_ORIGIN}/pro/declined`, 302);
+  const token = new URL(request.url).searchParams.get("t") ?? "";
+  if (!/^[0-9a-f]{32}$/.test(token)) return redirect();
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  try {
+    if (!await takeRateLimit(env.ENT_DB, "declined-ip", ip, new Date(), DECLINED_LIMIT, DECLINED_WINDOW_MS)) {
+      return redirect();
+    }
+    const declined = await markDeclined(env.ENT_DB, token);
+    const stripe = stripeOverride ?? getStripe(env);
+    if (declined?.session_id && stripe) {
+      try {
+        await stripe.checkout.sessions.expire(declined.session_id);
+      } catch {
+        // Not open anymore — a completing payment beat the back-out here;
+        // fulfillment idempotency owns that race, and declined_at on a row
+        // that then pays stops meaning anything (status leaves pending).
+      }
+    }
+  } catch (err) {
+    // The buyer-facing page never breaks on our write failing; the win-back
+    // then arms on the poll deadline instead of instantly.
+    console.error(`declined_record_failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return redirect();
 }
 
 function escapeHTML(value: string): string {

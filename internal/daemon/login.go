@@ -366,7 +366,7 @@ func (d *Daemon) serveLoginCallback(ctx context.Context, cancel context.CancelFu
 			// do next in ONE place (the app), and that the tab can go
 			// (fresh-user audit 2026-08-16, F8).
 			if errors.Is(err, ErrSignInRateLimited) {
-				loginCallbackPage(w, false, "The sign-in server is rate-limited right now. Wait a minute, then press Try again in llmpilot. You can close this tab.")
+				loginCallbackPage(w, false, "The sign-in server is rate-limited right now. Wait a minute, then press Try again in llmpilot — that starts a fresh sign-in; this tab's code is used and won't work again. You can close this tab.")
 			} else {
 				loginCallbackPage(w, false, "Sign-in couldn't be completed: "+err.Error()+". Try again from llmpilot. You can close this tab.")
 			}
@@ -397,11 +397,13 @@ func (d *Daemon) serveLoginCallback(ctx context.Context, cancel context.CancelFu
 }
 
 // ErrSignInRateLimited is the token endpoint rate-limiting the code
-// exchange (HTTP 429): transient, not a bad code. The daemon's login
-// wiring returns it so the browser page and the login result can say
-// "wait a minute, then try again" instead of a raw status. The text is what
-// the sign-in sheet shows verbatim — keep it a plain sentence.
-var ErrSignInRateLimited = errors.New("the sign-in server is rate-limited right now — wait a minute and try again")
+// exchange (HTTP 429): transient, not a bad code — but the code from THIS
+// attempt was consumed by the failed exchange, so the retry is a fresh
+// sign-in, never a replay (P2 copy fix, wave S12). The daemon's login
+// wiring returns it so the browser page and the login result can say so
+// instead of a raw status. The text is what the sign-in sheet shows
+// verbatim — keep it a plain sentence.
+var ErrSignInRateLimited = errors.New("the sign-in server is rate-limited right now — wait a minute, then start a fresh sign-in; this attempt's code is used and won't work again")
 
 // loginCallbackPage renders the minimal page the browser lands on after the
 // redirect. It carries no code or token — only a human status line.

@@ -15,26 +15,33 @@ final class ProFlowCoordinatorTests: XCTestCase {
         trialDays: 4, chargeDate: Date(timeIntervalSince1970: 1_784_707_200),
         pricesFull: ["gbp": 999], pricesDiscount: ["gbp": 599])
 
-    private func license(status: String, active: Bool = false, available: Bool = true) -> LicenseInfo {
-        try! DaemonDates.decoder().decode(
+    private func license(
+        status: String, active: Bool = false, available: Bool = true, outcome: String? = nil
+    ) -> LicenseInfo {
+        let outcomeField = outcome.map { #","checkout_outcome":"\#($0)""# } ?? ""
+        return try! DaemonDates.decoder().decode(
             LicenseInfo.self,
             from: Data(
-                #"{"available":\#(available),"active":\#(active),"status":"\#(status)","nocard_trial_used":false}"#
+                #"{"available":\#(available),"active":\#(active),"status":"\#(status)","nocard_trial_used":false\#(outcomeField)}"#
                     .utf8))
     }
 
-    /// A price-screen ask that has pressed checkout once (a real handoff —
-    /// the only way a sheet ever exists) and whose sheet has just closed:
-    /// returns the machine and the identity the composition root captured
-    /// when it presented that sheet, i.e. what its post-close decider must
-    /// carry into `PostCheckoutReload.run(closed:)`. The stub's pre-flight
-    /// license read is one `licenseRevealRequests` entry the caller counts.
-    private func closedCheckout(
-        winback: WinbackModel, api: StubCockpitAPI, quote: LadderQuote? = nil, url: String = "https://checkout.stripe.com/c/pay/x"
-    ) async -> (ask: AskMachine, closed: CheckoutIdentity) {
+    /// A price-screen ask that has pressed checkout once (a real hosted
+    /// handoff): returns the machine and the identity the composition root
+    /// captured at present time — what its `CheckoutDecider.watch` carries.
+    /// `browser` true reports the NSWorkspace launch landed (the 1.3.4
+    /// default flow); false leaves the fallback-sheet shape, where the
+    /// caller may `checkoutSheetClosed()` to model the close. The stub's
+    /// pre-flight license read is one `licenseRevealRequests` entry the
+    /// caller counts.
+    private func handedOffCheckout(
+        winback: WinbackModel, api: StubCockpitAPI, quote: LadderQuote? = nil,
+        url: String = "https://checkout.stripe.com/c/pay/x", browser: Bool = true,
+        onDismiss: @escaping () -> Void = {}
+    ) async -> (ask: AskMachine, presented: CheckoutIdentity) {
         let ask = AskMachine(
             license: license(status: "none"), quote: quote ?? winbackableQuote, guided: true, locale: "en-GB",
-            winback: winback, api: api, onDismiss: {})
+            winback: winback, api: api, onDismiss: onDismiss)
         ask.askReminder()
         ask.remindDays = 2
         ask.remindContinue()
@@ -43,9 +50,9 @@ final class ProFlowCoordinatorTests: XCTestCase {
                 CheckoutHandoff.self, from: Data(#"{"url":"\#(url)","session_id":"sess_x"}"#.utf8)))
         await ask.pressCheckout()
         XCTAssertEqual(ask.handoffURL, url)
-        let closed = ask.liveCheckout!
-        ask.checkoutSheetClosed()
-        return (ask, closed)
+        let presented = ask.liveCheckout!
+        if browser { ask.browserDidOpen(for: presented) }
+        return (ask, presented)
     }
 
     // MARK: - ProFlowLogic.firstRun — App.tsx:268
@@ -151,19 +158,20 @@ final class ProFlowCoordinatorTests: XCTestCase {
         XCTAssertTrue(model.failed) // still true, no crash/race either way
     }
 
-    // MARK: - PostCheckoutReload — the native-only post-checkout-sheet reload
+    // MARK: - CheckoutDecider — the browser-handoff decider (1.3.4, retiring
+    // PostCheckoutReload's sheet-close reread heuristic)
 
-    func testPostCheckoutReloadProductionWindowSpansTheActivationPoll() {
-        // The F1 (P0) fix IS these constants: every behavior test passes
-        // fast overrides, so this is the one gate on the production
-        // timing. >= 9s spans three ticks of the daemon's 3s activation
-        // poll (license.go pollEvery) — below that, a buyer who just paid
-        // through the embedded sheet is called an abandoner again.
-        XCTAssertGreaterThanOrEqual(
-            Double(PostCheckoutReload.defaultRereads) * PostCheckoutReload.defaultRereadDelay, 9)
+    func testDeciderTimingRidesTheDaemonsOwnVerdictWindow() {
+        // The daemon DELIVERS a verdict by its 10-minute activation-poll
+        // deadline (license.go pollFor lapsing is the "abandoned" signal) —
+        // a watch ceiling below that would end before the silent-abandon
+        // verdict exists to read. The poll cadence rides the daemon's 3s
+        // worker poll the way the retired 2.5s rereads did.
+        XCTAssertGreaterThanOrEqual(CheckoutDecider.defaultDeadline, 10 * 60 + 30)
+        XCTAssertLessThanOrEqual(CheckoutDecider.defaultPollDelay, 3)
     }
 
-    func testPostCheckoutReloadPullsLicenseStateAndQuoteThenRoutesAnActivatedAsk() async {
+    func testDeciderRoutesAnActivatedAskAndRefreshesTheSurfaces() async {
         let api = StubCockpitAPI()
         api.licenseResult = .success(license(status: "trialing", active: true))
         api.stateResult = .success(Fixtures.twoAccounts())
@@ -180,12 +188,11 @@ final class ProFlowCoordinatorTests: XCTestCase {
             winback: winback, api: api, onDismiss: {})
         XCTAssertNotEqual(ask.screen, .active)
 
-        // Activation routes with or without a close identity — it is not
+        // Activation routes with or without a handoff identity — it is not
         // an abandon verdict.
-        await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: ask, closed: nil)
+        await CheckoutDecider.watch(
+            api: api, fleet: fleet, quote: quote, ask: ask, presented: nil, pollDelay: 0)
 
-        // license → state → quote, in that order, each hit exactly once.
-        XCTAssertEqual(api.licenseRevealRequests, [false])
         XCTAssertNotNil(fleet.state)
         XCTAssertEqual(fleet.state?.accounts.count, 2)
         for _ in 0..<50 where quote.quote == nil { try? await Task.sleep(nanoseconds: 10_000_000) }
@@ -196,206 +203,162 @@ final class ProFlowCoordinatorTests: XCTestCase {
         XCTAssertEqual(winback.state, .spent)
     }
 
-    func testPostCheckoutReloadLeavesAnUnactivatedAskUnrouted() async {
-        // The buyer closed the sheet without completing payment — the
-        // reload must not force the ask onto a screen it never earned, and
-        // the still-inactive reload IS the abandoned-checkout
-        // trigger: it arms the win-back rung.
+    func testDeclinedOutcomeArmsInstantlyAndEndsTheBrowserHandoffLine() async {
+        // The buyer clicked the hosted page's back arrow: the worker
+        // recorded the cancel-token hit, the daemon's poll surfaced
+        // checkout_outcome=declined, and the watch arms the win-back while
+        // the buyer is still looking — no 10s heuristic, no sheet-close.
         let api = StubCockpitAPI()
-        api.licenseResult = .success(license(status: "none", active: false))
+        api.licenseResult = .success(license(status: "none"))
         api.stateResult = .success(Fixtures.twoAccounts())
         let fleet = FleetViewModel(api: api, autostart: false)
         let quote = ProQuoteModel(api: api)
         let winback = freshWinback()
-        let (ask, closed) = await closedCheckout(winback: winback, api: api)
+        let (ask, presented) = await handedOffCheckout(winback: winback, api: api)
+        XCTAssertTrue(ask.browserOpen)
+        api.licenseResult = .success(license(status: "none", outcome: "declined"))
 
-        await PostCheckoutReload.run(
-            api: api, fleet: fleet, quote: quote, ask: ask, closed: closed, rereads: 2, rereadDelay: 0)
+        await CheckoutDecider.watch(
+            api: api, fleet: fleet, quote: quote, ask: ask, presented: presented, pollDelay: 0.01)
 
-        XCTAssertNotEqual(ask.screen, .active)
-        XCTAssertEqual(winback.state, .armed, "an abandoned checkout is the win-back's second trigger")
-        // The decision waited out the re-read window: the press's pre-flight
-        // read + 1 initial + 2 re-reads.
-        XCTAssertEqual(api.licenseRevealRequests.count, 4)
+        XCTAssertEqual(winback.state, .armed)
+        XCTAssertEqual(ask.offerRung, .discountTrial)
+        // The verdict ended the handoff: "finish in your browser" must not
+        // outlive a tab that sits on the "Nothing was charged" page.
+        XCTAssertNil(ask.handoffURL)
+        XCTAssertFalse(ask.browserOpen)
+        XCTAssertEqual(winback.decisionsPending, 0)
     }
 
-    func testPostCheckoutReloadNeverArmsWhenANewerCheckoutOpensInsideItsWindow() async {
-        // The decider runs detached for ~10s after a sheet closes. A buyer
-        // who cancels and presses the money button again INSIDE that window
-        // has a live full-price sheet up when decider #1 reaches its final
-        // read — that read is still inactive (nobody paid yet), and before
-        // 1.3.3 it armed the win-back behind the live sheet. The decision
-        // belongs to the checkout that closed, and a newer checkout voids
-        // it.
+    func testAbandonedOutcomeArmsWhenTheDaemonsDeadlineLapses() async {
+        // Tab closed in silence: no cancel hit ever comes, the daemon's
+        // 10-minute poll deadline delivers "abandoned", and the watch arms
+        // for the next open (owner decision 2026-08-27).
         let api = StubCockpitAPI()
-        api.licenseResult = .success(license(status: "none", active: false))
+        api.licenseResult = .success(license(status: "none"))
         api.stateResult = .success(Fixtures.twoAccounts())
         let fleet = FleetViewModel(api: api, autostart: false)
         let quote = ProQuoteModel(api: api)
         let winback = freshWinback()
-        let (ask, closed) = await closedCheckout(winback: winback, api: api) // sheet 1 opened, then cancelled
+        let (ask, presented) = await handedOffCheckout(winback: winback, api: api)
+        api.licenseResult = .success(license(status: "none", outcome: "abandoned"))
 
-        // Decider #1 starts its (shortened, 150ms) window...
-        let decider = Task {
-            await PostCheckoutReload.run(
-                api: api, fleet: fleet, quote: quote, ask: ask, closed: closed, rereads: 3, rereadDelay: 0.05)
+        await CheckoutDecider.watch(
+            api: api, fleet: fleet, quote: quote, ask: ask, presented: presented, pollDelay: 0.01)
+
+        XCTAssertEqual(winback.state, .armed)
+    }
+
+    func testNoOutcomeByTheWatchCeilingDecidesNothing() async {
+        // The ceiling exists for a daemon that restarted mid-window (its
+        // poll — and with it any verdict — died with it): a watch that ends
+        // there proves nothing and must not arm.
+        let api = StubCockpitAPI()
+        api.licenseResult = .success(license(status: "none"))
+        api.stateResult = .success(Fixtures.twoAccounts())
+        let fleet = FleetViewModel(api: api, autostart: false)
+        let quote = ProQuoteModel(api: api)
+        let winback = freshWinback()
+        let (ask, presented) = await handedOffCheckout(winback: winback, api: api)
+
+        await CheckoutDecider.watch(
+            api: api, fleet: fleet, quote: quote, ask: ask, presented: presented,
+            pollDelay: 0.01, deadline: 0.1)
+
+        XCTAssertEqual(winback.state, .intact, "no verdict, no arm")
+        XCTAssertEqual(winback.decisionsPending, 0)
+    }
+
+    func testDeciderNeverArmsWhenANewerCheckoutOpensInsideItsWatch() async {
+        // The watch runs for up to ~11 minutes. A buyer who presses the
+        // money button again INSIDE that window has a newer session live
+        // when the OLD watch's verdict finally lands — the identity guards
+        // discard it instead of arming behind the new checkout.
+        let api = StubCockpitAPI()
+        api.licenseResult = .success(license(status: "none"))
+        api.stateResult = .success(Fixtures.twoAccounts())
+        let fleet = FleetViewModel(api: api, autostart: false)
+        let quote = ProQuoteModel(api: api)
+        let winback = freshWinback()
+        let (ask, presentedOne) = await handedOffCheckout(winback: winback, api: api)
+
+        let watchOne = Task {
+            await CheckoutDecider.watch(
+                api: api, fleet: fleet, quote: quote, ask: ask, presented: presentedOne,
+                pollDelay: 0.02, deadline: 5)
         }
-        try? await Task.sleep(nanoseconds: 20_000_000)
-        // ...and mid-window the buyer opens sheet 2 at full price.
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        // Mid-watch, the buyer starts checkout #2 (its mint expires session
+        // #1 server-side; here it just makes identity #1 stale)...
         await ask.pressCheckout()
-        XCTAssertNotNil(ask.handoffURL, "sheet 2 must be live when decider #1 decides")
+        XCTAssertNotNil(ask.handoffURL, "checkout 2 is live when watch 1 decides")
         XCTAssertEqual(api.licenseCheckoutRequests.count, 2)
-        await decider.value
+        // ...and only then does session #1's declined verdict surface.
+        api.licenseResult = .success(license(status: "none", outcome: "declined"))
+        await watchOne.value
 
-        XCTAssertEqual(winback.state, .intact, "decider #1 must not arm behind the live newer checkout")
+        XCTAssertEqual(winback.state, .intact, "watch 1 must not arm behind the newer checkout")
         XCTAssertEqual(ask.offerRung, .full)
     }
 
-    func testCloseInsideTheDecidersWindowDismissesAndLeavesTheVerdictToTheDecider() async {
-        // The ✕ pressed inside the post-close window, both ways the window
-        // can end. Abandoned: the ✕ dismisses without arming, and the
-        // decider arms at the end of its window — the offer is there on the
-        // next open. Paid: the ✕ dismisses without arming, the activation
-        // lands mid-window, the decider routes it and the ladder is spent —
+    func testCloseDuringTheWatchDismissesAndLeavesTheVerdictToTheDaemon() async {
+        // The ✕ once the browser owns the surface, both ways the watch can
+        // end. Declined/abandoned: the ✕ dismisses without arming, and the
+        // daemon's verdict arms through the watch — the offer is there on
+        // the next open. Paid: the ✕ dismisses without arming, activation
+        // lands mid-watch, the watch routes it and the ladder is spent —
         // the buyer who just paid £9.99 was never shown £5.99.
         let api = StubCockpitAPI()
-        api.licenseResult = .success(license(status: "none", active: false))
+        api.licenseResult = .success(license(status: "none"))
         api.stateResult = .success(Fixtures.twoAccounts())
         let fleet = FleetViewModel(api: api, autostart: false)
         let quote = ProQuoteModel(api: api)
 
-        // Abandoned.
+        // Declined-after-dismiss.
         let winbackA = freshWinback()
-        let (askA, closedA) = await closedCheckout(winback: winbackA, api: api, url: "https://checkout.stripe.com/c/pay/a")
-        let deciderA = Task {
-            await PostCheckoutReload.run(
-                api: api, fleet: fleet, quote: quote, ask: askA, closed: closedA, rereads: 3, rereadDelay: 0.05)
+        var dismissed = 0
+        let (askA, presentedA) = await handedOffCheckout(
+            winback: winbackA, api: api, url: "https://checkout.stripe.com/c/pay/a",
+            onDismiss: { dismissed += 1 })
+        let watchA = Task {
+            await CheckoutDecider.watch(
+                api: api, fleet: fleet, quote: quote, ask: askA, presented: presentedA,
+                pollDelay: 0.02, deadline: 5)
         }
-        try? await Task.sleep(nanoseconds: 20_000_000)
+        try? await Task.sleep(nanoseconds: 30_000_000)
         XCTAssertEqual(winbackA.decisionsPending, 1)
+        XCTAssertTrue(askA.closeEnabled, "the browser owns the surface — the paywall may dismiss again")
         askA.close()
-        XCTAssertEqual(winbackA.state, .intact, "the ✕ inside the window must not arm ahead of the decider")
-        await deciderA.value
+        XCTAssertEqual(dismissed, 1, "the ✕ dismisses")
+        XCTAssertEqual(winbackA.state, .intact, "…without arming ahead of the daemon's verdict")
+        api.licenseResult = .success(license(status: "none", outcome: "declined"))
+        await watchA.value
         XCTAssertEqual(winbackA.decisionsPending, 0)
-        XCTAssertEqual(winbackA.state, .armed, "the decider arms the abandoned checkout once its window ends")
+        XCTAssertEqual(winbackA.state, .armed, "the daemon's verdict arms once it lands")
 
         // Paid.
         let winbackP = freshWinback()
-        api.licenseResult = .success(license(status: "none", active: false))
-        let (askP, closedP) = await closedCheckout(winback: winbackP, api: api, url: "https://checkout.stripe.com/c/pay/p")
-        let deciderP = Task {
-            await PostCheckoutReload.run(
-                api: api, fleet: fleet, quote: quote, ask: askP, closed: closedP, rereads: 8, rereadDelay: 0.05)
+        api.licenseResult = .success(license(status: "none"))
+        let (askP, presentedP) = await handedOffCheckout(
+            winback: winbackP, api: api, url: "https://checkout.stripe.com/c/pay/p")
+        let watchP = Task {
+            await CheckoutDecider.watch(
+                api: api, fleet: fleet, quote: quote, ask: askP, presented: presentedP,
+                pollDelay: 0.02, deadline: 5)
         }
-        try? await Task.sleep(nanoseconds: 20_000_000)
+        try? await Task.sleep(nanoseconds: 30_000_000)
         askP.close()
         XCTAssertEqual(winbackP.state, .intact, "a buyer who just paid must never be shown the lower offer")
         api.licenseResult = .success(license(status: "trialing", active: true))
-        await deciderP.value
+        await watchP.value
         XCTAssertEqual(askP.screen, .active)
         XCTAssertEqual(winbackP.state, .spent)
     }
 
-    func testPostCheckoutReloadOlderDeciderNeverPreEmptsANewerOnesWindow() async {
-        // The money-harm shape of the same defect, with NO sheet live and
-        // no press in flight at either verdict: sheet 1 cancelled (decider
-        // #1 running), sheet 2 opened, PAID in-page, closed (decider #2
-        // running). Decider #1 reports first, still inactive — arming there
-        // would strike a "lower price" over the amount just paid, and a
-        // press in that gap would open a discount session and cancel the
-        // daemon poll about to activate the paid one. Only decider #2 may
-        // decide, and its window sees the activation land.
-        let api = StubCockpitAPI()
-        api.licenseResult = .success(license(status: "none", active: false))
-        api.stateResult = .success(Fixtures.twoAccounts())
-        let fleet = FleetViewModel(api: api, autostart: false)
-        let quote = ProQuoteModel(api: api)
-        let winback = freshWinback()
-        let (ask, closedOne) = await closedCheckout(winback: winback, api: api, url: "https://checkout.stripe.com/c/pay/one")
-        let deciderOne = Task {
-            await PostCheckoutReload.run(
-                api: api, fleet: fleet, quote: quote, ask: ask, closed: closedOne, rereads: 2, rereadDelay: 0.05)
-        }
-        try? await Task.sleep(nanoseconds: 20_000_000)
-        // sheet 2: pressed, opened, paid, closed — inside decider #1's window.
-        await ask.pressCheckout()
-        let closedTwo = ask.liveCheckout!
-        ask.checkoutSheetClosed()
-        XCTAssertNil(ask.handoffURL)
-        let deciderTwo = Task {
-            await PostCheckoutReload.run(
-                api: api, fleet: fleet, quote: quote, ask: ask, closed: closedTwo, rereads: 8, rereadDelay: 0.05)
-        }
-
-        await deciderOne.value
-        XCTAssertEqual(winback.state, .intact, "decider #1 reported inside decider #2's window and must not arm")
-        XCTAssertEqual(ask.offerRung, .full)
-
-        // The activation for sheet 2 lands mid-window: decider #2 routes
-        // and spends, never having been pre-empted.
-        api.licenseResult = .success(license(status: "trialing", active: true))
-        await deciderTwo.value
-        XCTAssertEqual(ask.screen, .active)
-        XCTAssertEqual(winback.state, .spent)
-    }
-
-    func testPostCheckoutReloadWaitsOutTheActivationPollBeforeCallingItAbandoned() async {
-        // Adversarial review F1 (P0): production checkout completes INSIDE
-        // the sheet (embedded, no /pro/activated navigation), so a buyer
-        // who just PAID leaves through the same Cancel an abandoner uses —
-        // and GET /v1/license lags behind the daemon's ~3s activation
-        // poll. A first read of "inactive" must NOT arm the win-back; a
-        // re-read that turns active routes to "Pro is on" and spends the
-        // ladder instead.
-        let api = StubCockpitAPI()
-        api.licenseResult = .success(license(status: "none", active: false))
-        api.stateResult = .success(Fixtures.twoAccounts())
-        let fleet = FleetViewModel(api: api, autostart: false)
-        let quote = ProQuoteModel(api: api)
-        let winback = freshWinback()
-        let (ask, closed) = await closedCheckout(winback: winback, api: api)
-        // Queued AFTER the press so its pre-flight read does not eat the
-        // first entry: initial read inactive, the re-read activates.
-        api.licenseResultQueue = [
-            .success(license(status: "none", active: false)),
-            .success(license(status: "trialing", active: true)),
-        ]
-        api.licenseResult = .success(license(status: "trialing", active: true))
-
-        await PostCheckoutReload.run(
-            api: api, fleet: fleet, quote: quote, ask: ask, closed: closed, rereads: 4, rereadDelay: 0)
-
-        XCTAssertEqual(ask.screen, .active, "activation landing mid-window must route the ask, not arm the rung")
-        XCTAssertEqual(winback.state, .spent)
-        // Exited the window early, on the activating re-read: the press's
-        // pre-flight read + initial + one re-read.
-        XCTAssertEqual(api.licenseRevealRequests.count, 3)
-    }
-
-    func testPostCheckoutReloadDiscardsAStaleInactiveReadWhenRereadsFail() async {
-        // Found in review: a successful inactive FIRST read followed
-        // by failing re-reads must not decide "abandoned" — the deciding
-        // read is the final one, and a failed final read proves nothing.
-        let api = StubCockpitAPI()
-        api.licenseResult = .success(license(status: "none", active: false))
-        api.stateResult = .success(Fixtures.twoAccounts())
-        let fleet = FleetViewModel(api: api, autostart: false)
-        let quote = ProQuoteModel(api: api)
-        let winback = freshWinback()
-        let (ask, closed) = await closedCheckout(winback: winback, api: api)
-        api.licenseResultQueue = [.success(license(status: "none", active: false))]
-        api.licenseResult = .failure(DaemonError.down)
-
-        await PostCheckoutReload.run(
-            api: api, fleet: fleet, quote: quote, ask: ask, closed: closed, rereads: 2, rereadDelay: 0)
-
-        XCTAssertEqual(winback.state, .intact, "stale evidence must not arm the rung")
-    }
-
-    func testPostCheckoutReloadFailedLicenseReadTriggersNothing() async {
-        // Fail case: a reload that cannot READ the license proves
-        // neither activation nor abandonment — the ladder must not arm on
-        // the absence of evidence.
+    func testFailedLicenseReadsTriggerNothing() async {
+        // Fail case: a watch that cannot READ the license proves neither
+        // activation nor a verdict — the ladder must not arm on the absence
+        // of evidence.
         let api = StubCockpitAPI()
         api.licenseResult = .failure(DaemonError.down)
         api.stateResult = .success(Fixtures.twoAccounts())
@@ -403,21 +366,22 @@ final class ProFlowCoordinatorTests: XCTestCase {
         let quote = ProQuoteModel(api: api)
         let winback = freshWinback()
         // (The press's own pre-flight read fails too — a failed read never
-        // blocks a purchase — so the checkout still opens and closes.)
-        let (ask, closed) = await closedCheckout(winback: winback, api: api)
+        // blocks a purchase — so the handoff still lands.)
+        let (ask, presented) = await handedOffCheckout(winback: winback, api: api)
 
-        await PostCheckoutReload.run(
-            api: api, fleet: fleet, quote: quote, ask: ask, closed: closed, rereads: 2, rereadDelay: 0)
+        await CheckoutDecider.watch(
+            api: api, fleet: fleet, quote: quote, ask: ask, presented: presented,
+            pollDelay: 0.01, deadline: 0.1)
 
         XCTAssertEqual(winback.state, .intact)
     }
 
-    func testPostCheckoutReloadWithoutACloseIdentityNeverArms() async {
-        // Fail-closed: a reload handed an ask but no close identity has
-        // nothing to bind an abandon verdict to — it must still pull the
-        // surfaces and still route an activation, but never arm.
+    func testWatchWithoutAHandoffIdentityNeverArms() async {
+        // Fail-closed: a watch handed an ask but no identity has nothing to
+        // bind a verdict to — it must never arm, while an activation still
+        // routes without one.
         let api = StubCockpitAPI()
-        api.licenseResult = .success(license(status: "none", active: false))
+        api.licenseResult = .success(license(status: "none", outcome: "declined"))
         api.stateResult = .success(Fixtures.twoAccounts())
         let fleet = FleetViewModel(api: api, autostart: false)
         let quote = ProQuoteModel(api: api)
@@ -426,33 +390,169 @@ final class ProFlowCoordinatorTests: XCTestCase {
             license: license(status: "none"), quote: winbackableQuote, guided: true, locale: "en-GB",
             winback: winback, api: api, onDismiss: {})
 
-        await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: ask, closed: nil, rereads: 1, rereadDelay: 0)
+        await CheckoutDecider.watch(
+            api: api, fleet: fleet, quote: quote, ask: ask, presented: nil, pollDelay: 0)
 
-        XCTAssertEqual(api.licenseRevealRequests.count, 2)
-        XCTAssertNotNil(fleet.state)
         XCTAssertEqual(winback.state, .intact, "no identity, no verdict")
 
-        // ...while an activation still routes without one.
         api.licenseResult = .success(license(status: "trialing", active: true))
-        await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: ask, closed: nil, rereads: 0)
+        await CheckoutDecider.watch(
+            api: api, fleet: fleet, quote: quote, ask: ask, presented: nil, pollDelay: 0)
         XCTAssertEqual(ask.screen, .active)
         XCTAssertEqual(winback.state, .spent)
     }
 
-    func testPostCheckoutReloadToleratesANilAskMachine() async {
-        // The reopened paywall may have already been dismissed by the time
-        // the sheet closes — the reload must still pull license/state/quote
-        // without crashing on a nil ask.
+    func testWatchToleratesANilAskMachine() async {
+        // The reopened paywall may have been dismissed long before the
+        // verdict lands — the watch must finish without crashing on a nil
+        // ask, and an activation still refreshes the surfaces.
+        let api = StubCockpitAPI()
+        api.licenseResult = .success(license(status: "trialing", active: true))
+        api.stateResult = .success(Fixtures.twoAccounts())
+        let fleet = FleetViewModel(api: api, autostart: false)
+        let quote = ProQuoteModel(api: api)
+
+        await CheckoutDecider.watch(
+            api: api, fleet: fleet, quote: quote, ask: nil, presented: nil, pollDelay: 0)
+
+        XCTAssertNotNil(fleet.state)
+    }
+
+    func testASupersededWatchStopsPollingPromptly() async {
+        // The root cancels the old watch when a newer handoff starts its
+        // own. Cancellation must actually stop the loop: a cancelled
+        // Task.sleep throws instantly, and without the isCancelled guard
+        // the loop would spin hot until the 11-minute ceiling.
         let api = StubCockpitAPI()
         api.licenseResult = .success(license(status: "none"))
         api.stateResult = .success(Fixtures.twoAccounts())
         let fleet = FleetViewModel(api: api, autostart: false)
         let quote = ProQuoteModel(api: api)
+        let winback = freshWinback()
+        let (ask, presented) = await handedOffCheckout(winback: winback, api: api)
 
-        await PostCheckoutReload.run(api: api, fleet: fleet, quote: quote, ask: nil, closed: nil, rereads: 0)
+        let watch = Task {
+            await CheckoutDecider.watch(
+                api: api, fleet: fleet, quote: quote, ask: ask, presented: presented,
+                pollDelay: 0.01, deadline: 60)
+        }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        watch.cancel()
+        let before = Date()
+        await watch.value
+        XCTAssertLessThan(Date().timeIntervalSince(before), 1, "a cancelled watch returns promptly")
+        XCTAssertEqual(winback.decisionsPending, 0)
+        XCTAssertEqual(winback.state, .intact)
+    }
 
-        XCTAssertEqual(api.licenseRevealRequests, [false])
-        XCTAssertNotNil(fleet.state)
+    // MARK: - the ✕-inert span (press→browser-open, owner decision 2026-08-27)
+
+    func testCloseIsInertFromPressUntilTheBrowserOpensThenEnabledAgain() async {
+        let api = StubCockpitAPI()
+        api.licenseResult = .success(license(status: "none"))
+        let winback = freshWinback()
+        // browser:false = the handoff landed but the launch has not — the
+        // exact gap the span covers.
+        let (ask, presented) = await handedOffCheckout(winback: winback, api: api, browser: false)
+        XCTAssertFalse(ask.closeEnabled, "handoff landed, browser still opening — ✕ inert")
+        ask.browserDidOpen(for: presented)
+        XCTAssertTrue(ask.closeEnabled, "the browser owns the surface — ✕ enabled (dismiss-only)")
+        // Start-again: a FRESH handoff goes inert again until ITS launch lands.
+        await ask.pressCheckout()
+        XCTAssertFalse(ask.browserOpen)
+        XCTAssertFalse(ask.closeEnabled)
+    }
+
+    func testAStaleLaunchCompletionNeverFlipsTheNewerHandoffsState() async {
+        // NSWorkspace completions can land out of order (money review F4):
+        // press 1's completion arriving AFTER press 2 must not report press
+        // 2's still-launching browser as open.
+        let api = StubCockpitAPI()
+        api.licenseResult = .success(license(status: "none"))
+        let winback = freshWinback()
+        let (ask, identityOne) = await handedOffCheckout(winback: winback, api: api, browser: false)
+        await ask.pressCheckout() // press 2 — a newer identity owns the handoff
+        let identityTwo = ask.liveCheckout!
+        XCTAssertNotEqual(identityOne, identityTwo)
+
+        ask.browserDidOpen(for: identityOne) // press 1's late completion
+        XCTAssertFalse(ask.browserOpen, "a superseded launch must not end the newer press's inert span")
+        ask.browserDidOpen(for: identityTwo)
+        XCTAssertTrue(ask.browserOpen)
+
+        // And after the surface closed entirely, even the right identity is
+        // a no-op — there is no handoff left to report on.
+        ask.checkoutSheetClosed()
+        ask.browserDidOpen(for: identityTwo)
+        XCTAssertFalse(ask.browserOpen)
+    }
+
+    func testAVerdictWaitsOutALiveFallbackSheetAndDeliversOnClose() async {
+        // The machine refuses a verdict behind a live sheet (guard fail
+        // case), and the WATCH must therefore hold it rather than consume
+        // it (money review F6) — delivering the tick after the sheet closes.
+        let api = StubCockpitAPI()
+        api.licenseResult = .success(license(status: "none", outcome: "declined"))
+        api.stateResult = .success(Fixtures.twoAccounts())
+        let fleet = FleetViewModel(api: api, autostart: false)
+        let quote = ProQuoteModel(api: api)
+        let winback = freshWinback()
+        let (ask, presented) = await handedOffCheckout(winback: winback, api: api, browser: false)
+        XCTAssertTrue(ask.sheetLive)
+
+        // Machine level: the verdict is refused while the sheet owns the
+        // surface — nothing arms behind it.
+        ask.checkoutAbandoned(presented)
+        XCTAssertEqual(winback.state, .intact, "no verdict may arm behind a live sheet")
+
+        let watch = Task {
+            await CheckoutDecider.watch(
+                api: api, fleet: fleet, quote: quote, ask: ask, presented: presented,
+                pollDelay: 0.02, deadline: 5)
+        }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(winback.state, .intact, "the watch holds the verdict while the sheet is up")
+        ask.checkoutSheetClosed()
+        await watch.value
+        XCTAssertEqual(winback.state, .armed, "the held verdict delivers once the sheet closes")
+    }
+
+    func testCloseWhileTheBrowserOwnsTheSurfaceNeverArms() async {
+        // The belt under `decisionsPending`: even with no watch running, a ✕
+        // while the checkout is open in the browser dismisses without arming
+        // — the lower offer must never paint behind a live payable tab.
+        let api = StubCockpitAPI()
+        api.licenseResult = .success(license(status: "none"))
+        let winback = freshWinback()
+        var dismissed = 0
+        let (ask, _) = await handedOffCheckout(winback: winback, api: api, onDismiss: { dismissed += 1 })
+        XCTAssertEqual(winback.decisionsPending, 0)
+        ask.close()
+        XCTAssertEqual(dismissed, 1)
+        XCTAssertEqual(winback.state, .intact)
+    }
+
+    func testBrowserDidOpenAfterTheHandoffEndedIsANoOp() async {
+        let api = StubCockpitAPI()
+        api.licenseResult = .success(license(status: "none"))
+        let winback = freshWinback()
+        let (ask, presented) = await handedOffCheckout(winback: winback, api: api, browser: false)
+        ask.checkoutSheetClosed() // the handoff surface is gone
+        ask.browserDidOpen(for: presented)
+        XCTAssertFalse(ask.browserOpen, "no handoff, nothing opened")
+        XCTAssertTrue(ask.closeEnabled)
+    }
+
+    func testTheClientMintsHostedCheckouts() throws {
+        // Money review F5: nothing asserted the 1.3.4 client actually asks
+        // for the browser flow — the whole wave rides this one field.
+        let body = CheckoutRequestBody(
+            rung: "full", quote: QuoteEcho(trialDays: 4, currency: "gbp", amountMinor: 999),
+            remindDaysBefore: 1)
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(body)) as! [String: Any]
+        XCTAssertEqual(json["ui"] as? String, "hosted")
+        XCTAssertEqual(json["rung"] as? String, "full")
+        XCTAssertEqual(json["remind_days_before"] as? Int, 1)
     }
 
     // MARK: - live ask stats (review 2026-08-08 P1-4; App.tsx:289,544,577 +

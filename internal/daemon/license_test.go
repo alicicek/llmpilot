@@ -104,7 +104,10 @@ func licenseDaemon(t *testing.T, workerURL string, store pilot.LicenseStore, pub
 		Available: available,
 		PollEvery: 5 * time.Millisecond,
 		PollFor:   2 * time.Second,
-		Now:       func() time.Time { return now },
+		// Bounded so no test leaves a day-long reconcile goroutine behind.
+		ReconcileEvery: 10 * time.Millisecond,
+		ReconcileFor:   3 * time.Second,
+		Now:            func() time.Time { return now },
 	}
 	d := &Daemon{Store: testStore(t), License: gate}
 	if logw != nil {

@@ -116,6 +116,10 @@ struct NativeCockpitRootView: View {
     /// `navigationDelegate` is weak; this is the only strong owner).
     /// Released the moment `onClosed` fires.
     @State private var checkoutController: CheckoutSheetController?
+    /// The one live checkout decider (`CheckoutDecider.watch`), started at
+    /// handoff time — browser opened or fallback sheet presented — and
+    /// superseded whenever a newer handoff starts its own.
+    @State private var checkoutWatch: Task<Void, Never>?
 
     init(
         fleet: FleetViewModel, cockpit: CockpitViewModel, api: CockpitDaemonAPI & DaemonAPI,
@@ -776,16 +780,57 @@ struct NativeCockpitRootView: View {
         paywallOpen = true
     }
 
-    /// PaywallView's `onCheckoutHandoff` — presents `CheckoutSheet` on the
-    /// window this root view is hosted in, HOLDS the returned controller,
-    /// and on close runs the post-checkout reload (deliverable 4).
+    /// PaywallView's `onCheckoutHandoff` — the browser handoff (1.3.4).
+    /// Opens the hosted session in the default browser; only a FAILED
+    /// launch falls back to the in-app sheet, on the SAME session (no
+    /// second mint — the worker expires priors on every mint, so a second
+    /// session here would kill the one just opened). Either way exactly one
+    /// decider (`CheckoutDecider.watch`) runs from handoff time; UI-close
+    /// events no longer decide anything.
     private func presentCheckout(_ url: URL, ask: AskMachine) {
-        guard let window = NativeCockpitWindowController.shared.window else { return }
-        // Bind the post-close decider to THIS handoff now, at present time:
-        // the sheet's onClosed may fire long after (or, for a superseded
-        // sheet, out of order with) the machine's own state, so nothing is
-        // read back from the machine at close.
+        // Bind the decider to THIS handoff now, at present time: the
+        // verdict may land long after (or, for a superseded handoff, out of
+        // order with) the machine's own state, so nothing is read back from
+        // the machine at verdict time.
         let presented = ask.liveCheckout
+        NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            Task { @MainActor in
+                // A completion for a SUPERSEDED handoff decides nothing: it
+                // must not flip browser state, present a dead session's
+                // sheet, or replace the live handoff's watch with one bound
+                // to a stale identity (money review 2026-08-27 F4 —
+                // completions can land out of order across rapid re-presses).
+                guard ask.liveCheckout == presented else { return }
+                if error == nil {
+                    // The ✕-inert span ends here: the browser owns the
+                    // payment surface now (press→browser-open, owner
+                    // decision 2026-08-27).
+                    if let presented { ask.browserDidOpen(for: presented) }
+                } else {
+                    presentCheckoutSheet(url, ask: ask)
+                }
+                startCheckoutWatch(ask: ask, presented: presented)
+            }
+        }
+    }
+
+    /// One watch per handoff: a newer handoff supersedes the old watch (its
+    /// stale verdict would be discarded by the identity guards anyway — this
+    /// just stops the dead loop from polling on).
+    private func startCheckoutWatch(ask: AskMachine, presented: CheckoutIdentity?) {
+        checkoutWatch?.cancel()
+        checkoutWatch = Task {
+            await CheckoutDecider.watch(
+                api: api, fleet: fleet, quote: quoteModel, ask: ask, presented: presented)
+        }
+    }
+
+    /// The fallback surface — presents `CheckoutSheet` on the window this
+    /// root view is hosted in and HOLDS the returned controller. Deciding
+    /// moved to `CheckoutDecider.watch` (started by the caller): the sheet's
+    /// close is just a close.
+    private func presentCheckoutSheet(_ url: URL, ask: AskMachine) {
+        guard let window = NativeCockpitWindowController.shared.window else { return }
         // "Start again here": end any sheet already up before presenting the
         // new one. Its onClosed runs from beginSheet's completion — AFTER the
         // new assignment below — so the release is identity-guarded: only the
@@ -799,21 +844,16 @@ struct NativeCockpitRootView: View {
             // EVERY side effect is identity-guarded, not just the slot
             // release: a predecessor's deferred onClosed (endSheet's
             // completion runs async) must not clear the SUCCESSOR's live
-            // handoff or fire a reload under its open sheet (delta
-            // re-review P2).
+            // handoff (delta re-review P2).
             guard checkoutController === controller else { return }
             checkoutController = nil
             // The sheet is gone — the machine's "Checkout is open in the
-            // payment window" line must not outlive it (P1-5).
+            // payment window" line must not outlive it (P1-5). The verdict
+            // stays with the running watch: a buyer who paid activates
+            // within a poll tick; one who backed out via the sheet's back
+            // arrow already recorded the cancel hit; silence is the
+            // daemon's deadline to call.
             ask.checkoutSheetClosed()
-            // The decider carries the identity captured above: a checkout
-            // pressed after it — on this ask or a fresh one — is a newer
-            // checkout event, and this sheet's stale "abandoned" verdict
-            // must not arm behind the new sheet or inside its decider's
-            // window.
-            Task {
-                await PostCheckoutReload.run(api: api, fleet: fleet, quote: quoteModel, ask: ask, closed: presented)
-            }
         }
         checkoutController = controller
     }

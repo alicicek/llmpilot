@@ -333,6 +333,12 @@ enum LadderLogic {
             // terms the worker no longer sells (the consent echo refused to
             // bind).
             return "This version shows outdated terms. Update llmpilot from the menu bar, then try again."
+        case "already_licensed":
+            // The worker's one-live-purchase-per-install guard (1.3.4): the
+            // local store lagged a purchase that already fulfilled — point
+            // at the recovery that re-serves the existing grant, never at a
+            // second checkout.
+            return "This Mac's license already has Pro. If it isn't showing, open Settings → License → Restore by email."
         default:
             return nil
         }

@@ -19,6 +19,13 @@ enum CheckoutSheetDecision: Equatable {
     case allow
     case cancelAndOpenBrowser(URL)
     case cancelAndClose
+    /// The hosted session's cancel_url chain ended on /pro/declined (1.3.4
+    /// fallback sheet): the back-out is already recorded — the recording hop
+    /// (api.llmpilot.dev/checkout/declined, a payment host) was ALLOWED
+    /// through so the worker write happened before this redirect — and the
+    /// sheet just closes. The decider (`CheckoutDecider.watch`) reads the
+    /// verdict from the daemon; nothing is decided here.
+    case cancelAndCloseDeclined
     /// Blocked without a hand-off: non-web schemes never reach
     /// NSWorkspace.open from payment content (mirrors the retired
     /// web-cockpit delegate's http/https gate on its own system-open path).
@@ -53,6 +60,13 @@ enum CheckoutSheetPolicy {
             // dismiss the sheet early — same guard as the retired controller.
             return .cancelAndClose
         }
+        // Same path-segment discipline for the declined landing (1.3.4): the
+        // recording hop before it (/checkout/declined on the API host) falls
+        // through to the payment-host allow below — cancelling THAT request
+        // would eat the back-out signal.
+        if onPaymentHost, path == "/pro/declined" || path.hasPrefix("/pro/declined/") {
+            return .cancelAndCloseDeclined
+        }
         if onPaymentHost {
             return .allow
         }
@@ -80,6 +94,9 @@ final class CheckoutSheetDelegate: NSObject, WKNavigationDelegate {
     /// background poll (internal/daemon/license.go activationPoll) completes
     /// the actual activation; this only closes the sheet.
     var onActivated: () -> Void = {}
+    /// Fires when the cancel_url chain lands on /pro/declined — the back-out
+    /// is recorded by then; this only closes the sheet.
+    var onDeclined: () -> Void = {}
 
     func handle(url: URL?, isMainFrame: Bool, decisionHandler: (WKNavigationActionPolicy) -> Void) {
         switch CheckoutSheetPolicy.decide(url: url, isMainFrame: isMainFrame) {
@@ -91,6 +108,9 @@ final class CheckoutSheetDelegate: NSObject, WKNavigationDelegate {
         case .cancelAndClose:
             decisionHandler(.cancel)
             onActivated()
+        case .cancelAndCloseDeclined:
+            decisionHandler(.cancel)
+            onDeclined()
         case .cancelQuietly:
             decisionHandler(.cancel)
         }
@@ -214,6 +234,7 @@ final class CheckoutSheetController: NSObject {
 
         delegate.onOpenBrowser = { NSWorkspace.shared.open($0) }
         delegate.onActivated = { [weak self] in self?.dismiss() }
+        delegate.onDeclined = { [weak self] in self?.dismiss() }
 
         web.load(URLRequest(url: url))
         parent.beginSheet(sheet) { [weak self] _ in

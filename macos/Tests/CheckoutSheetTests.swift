@@ -70,6 +70,66 @@ final class CheckoutSheetTests: XCTestCase {
             .cancelAndClose)
     }
 
+    // MARK: - /pro/declined path-match rule (1.3.4 — the fallback sheet on a
+    // HOSTED session; the cancel_url chain ends here after the recording hop)
+
+    func testDeclinedOnPaymentHostClosesSheetQuietly() {
+        XCTAssertEqual(
+            CheckoutSheetPolicy.decide(url: URL(string: "https://llmpilot.dev/pro/declined")!, isMainFrame: true),
+            .cancelAndCloseDeclined)
+        XCTAssertEqual(
+            CheckoutSheetPolicy.decide(url: URL(string: "https://llmpilot.dev/pro/declined/")!, isMainFrame: true),
+            .cancelAndCloseDeclined)
+    }
+
+    func testDeclinedPathOnForeignHostDoesNotClose() {
+        let url = URL(string: "https://evil.example/pro/declined")!
+        XCTAssertEqual(CheckoutSheetPolicy.decide(url: url, isMainFrame: true), .cancelAndOpenBrowser(url))
+    }
+
+    func testDeclinedIsAPathSegmentMatchNotAPrefix() {
+        XCTAssertEqual(
+            CheckoutSheetPolicy.decide(url: URL(string: "https://llmpilot.dev/pro/declinedxyz")!, isMainFrame: true),
+            .allow)
+    }
+
+    func testIframeCannotDismissTheSheetViaDeclinedPath() {
+        XCTAssertEqual(
+            CheckoutSheetPolicy.decide(url: URL(string: "https://llmpilot.dev/pro/declined")!, isMainFrame: false),
+            .allow)
+    }
+
+    func testTheCancelRecordingHopIsAllowedThrough() {
+        // Money-critical: the back-out signal IS the request to
+        // api.llmpilot.dev/checkout/declined — cancelling that navigation
+        // would eat the token before the worker records it. It must flow
+        // (payment host, not a /pro/* landing), and only the RESULTING
+        // /pro/declined redirect closes the sheet.
+        XCTAssertEqual(
+            CheckoutSheetPolicy.decide(
+                url: URL(string: "https://api.llmpilot.dev/checkout/declined?t=0123456789abcdef0123456789abcdef")!,
+                isMainFrame: true),
+            .allow)
+    }
+
+    func testDelegateCancelsAndClosesSilentlyWhenDeclined() {
+        let delegate = CheckoutSheetDelegate()
+        var openedBrowser: URL?
+        var activated = false
+        var declined = false
+        delegate.onOpenBrowser = { openedBrowser = $0 }
+        delegate.onActivated = { activated = true }
+        delegate.onDeclined = { declined = true }
+
+        var policy: WKNavigationActionPolicy?
+        delegate.handle(url: URL(string: "https://llmpilot.dev/pro/declined")!, isMainFrame: true) { policy = $0 }
+
+        XCTAssertEqual(policy, .cancel)
+        XCTAssertTrue(declined)
+        XCTAssertFalse(activated)
+        XCTAssertNil(openedBrowser)
+    }
+
     // MARK: - sub-frame (iframe) navigations — owner-hit 2026-08-08: Stripe
     // embedded checkout composes from hosts OUTSIDE the payment list
     // (b.stripecdn.com captcha, m.stripe.network card fields); bouncing

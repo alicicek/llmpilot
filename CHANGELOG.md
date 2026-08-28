@@ -4,6 +4,45 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-08-28
+
+Checkout moves to your browser. No price, trial length, or offer changes:
+£9.99 / $12.99 after the 4-day free trial, and the one lower offer at
+£5.99 / $7.99, are exactly what 1.3.1 through 1.3.3 sold. Nothing about
+accounts, schedules, or settings data changes.
+
+### Changed
+
+- **The trial button opens checkout in your browser.** Pressing it now
+  opens the payment page in your default browser instead of a window
+  inside the app — which means Apple Pay (Safari), Google Pay (Chrome),
+  your browser's saved cards, and one-click checkout appear where your
+  browser supports them. The in-app window remains only as a fallback for
+  the rare case the browser cannot be opened. The ✕ on the price screen
+  is dimmed from the press until the browser has the page; once it does,
+  the ✕ closes the screen and the purchase carries on in the browser.
+- **Backing out is understood immediately.** Leaving the checkout page via
+  its back arrow tells the app right away: the page you left can no
+  longer charge you, and the price screen offers its one lower price
+  within seconds instead of after a timeout. Closing the tab without
+  backing out is answered more slowly (about ten minutes), and a payment
+  made later in a still-open tab is always honored — the app keeps
+  checking for it for as long as the page stays payable, so a late
+  payment turns Pro on rather than disappearing.
+- **One payable checkout at a time.** Starting a new checkout closes any
+  earlier still-open payment page for this Mac, and a Mac whose license
+  is already active is never sold a second one.
+
+### Fixed
+
+- **The sign-in retry says what it does.** When the sign-in server is
+  rate-limited, the message now says that trying again starts a fresh
+  sign-in and that the interrupted attempt's code is used and will not
+  work again — instead of implying the same sign-in resumes.
+- **The checkout web pages read like answers.** The page after paying
+  confirms and points back to the app; the page after backing out says
+  plainly that nothing was charged.
+
 ## [1.3.3] - 2026-08-19
 
 Two fixes to the Pro price screen's lower offer, on the Mac app only. No

@@ -60,6 +60,13 @@ type LicenseView struct {
 	TrialEnd    *time.Time
 	Entitlement string
 	Pending     bool
+	// Declined marks a pending answer whose buyer backed out of the hosted
+	// checkout (the worker recorded the cancel_url hit). It rides pending —
+	// a later payment supersedes it and arrives as a plain non-pending view.
+	Declined bool
+	// SessionExpired marks a pending answer whose Stripe session can never
+	// pay again — the poll has nothing left to watch or reconcile.
+	SessionExpired bool
 }
 
 // validRungs are the decline-ladder rungs the worker accepts.
@@ -87,6 +94,13 @@ type LicenseGate struct {
 	// PollEvery/PollFor tune the background activation poller (defaults 3s/10m).
 	PollEvery time.Duration
 	PollFor   time.Duration
+	// ReconcileEvery/ReconcileFor tune the slow phase AFTER the abandoned
+	// verdict (defaults 60s/24h): the Stripe session stays payable for its
+	// full 24h life (owner: come-back-later buyers keep their tab), so a
+	// late payment must still find its way to a local grant instead of
+	// stranding a paid buyer (money review 2026-08-27 F3).
+	ReconcileEvery time.Duration
+	ReconcileFor   time.Duration
 
 	mu         sync.Mutex
 	marker     bool               // native no-card-trial marker reported at launch
@@ -112,6 +126,20 @@ func (g *LicenseGate) pollFor() time.Duration {
 		return g.PollFor
 	}
 	return 10 * time.Minute
+}
+
+func (g *LicenseGate) reconcileEvery() time.Duration {
+	if g.ReconcileEvery > 0 {
+		return g.ReconcileEvery
+	}
+	return 60 * time.Second
+}
+
+func (g *LicenseGate) reconcileFor() time.Duration {
+	if g.ReconcileFor > 0 {
+		return g.ReconcileFor
+	}
+	return 24 * time.Hour
 }
 
 func (g *LicenseGate) markerPresent() bool {
@@ -155,6 +183,9 @@ type licenseInfo struct {
 	Active          bool       `json:"active"`
 	Status          string     `json:"status"` // none|trialing|lifetime|lapsed|revoked|unavailable
 	Kind            string     `json:"kind,omitempty"`
+	// CheckoutOutcome is the live checkout's back-out verdict ("declined" |
+	// "abandoned") — the ONLY signal the app's win-back decider arms on.
+	CheckoutOutcome string     `json:"checkout_outcome,omitempty"`
 	Features        []string   `json:"features,omitempty"`
 	Seats           int        `json:"seats,omitempty"`
 	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
@@ -190,6 +221,7 @@ func (d *Daemon) handleLicenseGet(w http.ResponseWriter, r *http.Request) {
 	info := licenseInfo{Available: g.Available, Status: "none", NocardTrialUsed: g.markerPresent()}
 	d.mu.Lock()
 	info.ErrorCode = d.licenseError
+	info.CheckoutOutcome = d.checkoutOutcome
 	d.mu.Unlock()
 	if !g.Available {
 		info.Status = "unavailable"
@@ -305,39 +337,102 @@ func (d *Daemon) handleLicenseCheckout(w http.ResponseWriter, r *http.Request) {
 }
 
 // startActivationPoll runs one activation poll at a time. A fresh checkout
-// supersedes any prior poll so a re-attempt never leaves two loops racing.
+// supersedes any prior poll so a re-attempt never leaves two loops racing,
+// and bumps the generation so the superseded loop can never write a verdict.
 func (d *Daemon) startActivationPoll(sessionID string) {
 	g := d.License
 	g.mu.Lock()
 	if g.pollCancel != nil {
 		g.pollCancel()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), g.pollFor())
+	// Cancel-only (no timeout): the poll owns its own fast/slow deadlines —
+	// the ctx dying means SUPERSEDED, nothing else.
+	ctx, cancel := context.WithCancel(context.Background())
 	g.pollCancel = cancel
 	g.mu.Unlock()
-	// A fresh attempt clears the previous refusal so stale copy never lingers.
+	gen := d.beginCheckoutPoll(context.Background())
+	// A fresh attempt clears the previous refusal so stale copy never
+	// lingers behind a live checkout.
 	d.setLicenseError(context.Background(), "")
-	go d.activationPoll(ctx, sessionID)
+	go d.activationPoll(ctx, gen, sessionID)
 }
 
-// activationPoll confirms the checkout every few seconds until it succeeds or
-// the deadline passes. A pending or transient-error response keeps polling; a
-// typed worker refusal (seat_limit_reached, trial_email_used, ...) is
-// terminal — it stops the poll and surfaces the code so the cockpit can say
-// what happened; a non-pending success persists the grant and pushes state.
+// beginCheckoutPoll opens a new verdict generation and clears the previous
+// verdict, atomically under d.mu — the same lock every verdict write takes,
+// so a superseded poll's late write can never land after this clear
+// (money review 2026-08-27 F7: the two-lock check-then-write had a window).
+func (d *Daemon) beginCheckoutPoll(ctx context.Context) int {
+	d.mu.Lock()
+	d.checkoutPollGen++
+	gen := d.checkoutPollGen
+	changed := d.checkoutOutcome != ""
+	d.checkoutOutcome = ""
+	d.mu.Unlock()
+	if changed {
+		d.notify(ctx)
+	}
+	return gen
+}
+
+// setCheckoutOutcome records the live checkout's back-out verdict and pushes
+// state. The generation check and the write share one d.mu critical section:
+// only the CURRENT poll may write — a superseded loop's late verdict belongs
+// to a checkout that no longer exists.
+func (d *Daemon) setCheckoutOutcome(ctx context.Context, gen int, v string) {
+	d.mu.Lock()
+	if d.checkoutPollGen != gen {
+		d.mu.Unlock()
+		return
+	}
+	changed := d.checkoutOutcome != v
+	d.checkoutOutcome = v
+	d.mu.Unlock()
+	if changed {
+		d.notify(ctx)
+	}
+}
+
+// activationPoll confirms the checkout every few seconds. A pending or
+// transient-error response keeps polling; a pending answer carrying declined
+// records the back-out verdict; a pending answer carrying session_expired
+// ends the poll — nothing can pay an expired session, and that answer (not
+// any assumption about the back-out's best-effort expire) is what a verdict
+// path is allowed to rest on. A typed worker refusal (seat_limit_reached,
+// trial_email_used, ...) is terminal — it stops the poll and surfaces the
+// code; a non-pending success persists the grant and pushes state. The FAST
+// deadline (pollFor) lapsing writes the abandoned verdict (unless declined
+// already stands) — and since the session may remain payable for its 24h
+// life whichever verdict was written, the poll then drops to a SLOW
+// reconcile cadence (reconcileEvery/reconcileFor) that still activates a
+// come-back-later payment instead of stranding a paid buyer (money review
+// 2026-08-27 F3+F11). Being superseded (ctx cancelled) writes nothing.
 // Never logs tokens.
-func (d *Daemon) activationPoll(ctx context.Context, sessionID string) {
+func (d *Daemon) activationPoll(ctx context.Context, gen int, sessionID string) {
 	g := d.License
+	fastUntil := time.Now().Add(g.pollFor())
+	slowUntil := time.Now().Add(g.reconcileFor())
 	tick := time.NewTicker(g.pollEvery())
 	defer tick.Stop()
+	declined, slow := false, false
 	for {
 		view, err := g.Client.Activate(ctx, sessionID)
 		if err == nil && !view.Pending && view.Entitlement != "" {
 			if serr := d.persistLicense(context.Background(), view); serr != nil {
 				d.Log.Warn("activation persist failed", "err", serr)
 			} else {
+				d.setCheckoutOutcome(context.Background(), gen, "")
 				d.Log.Info("license activated", "status", view.Status)
 			}
+			return
+		}
+		if err == nil && view.Pending && view.Declined && !declined {
+			declined = true
+			d.setCheckoutOutcome(context.Background(), gen, "declined")
+		}
+		if err == nil && view.Pending && view.SessionExpired {
+			// Nothing can pay this session anymore — the worker saw it
+			// expired (the back-out's expire landed, or the 24h life ended).
+			// The verdict already written stands; the poll is done.
 			return
 		}
 		var refusal *WorkerError
@@ -345,6 +440,25 @@ func (d *Daemon) activationPoll(ctx context.Context, sessionID string) {
 			d.setLicenseError(context.Background(), refusal.Code)
 			d.Log.Warn("activation refused", "code", refusal.Code)
 			return
+		}
+		now := time.Now()
+		if now.After(slowUntil) {
+			return
+		}
+		if !slow && now.After(fastUntil) {
+			slow = true
+			// The reconcile phase covers DECLINED checkouts too: the
+			// back-out's expire is best-effort (a transient Stripe failure
+			// is swallowed), so no branch of the money path may assume it
+			// landed — a session that survived it can still be paid at
+			// minute 12, and that buyer must get their grant (money review
+			// 2026-08-27 F11). The expired answer above is what actually
+			// ends the watch. "abandoned" never overwrites the more
+			// specific declined verdict.
+			if !declined {
+				d.setCheckoutOutcome(context.Background(), gen, "abandoned")
+			}
+			tick.Reset(g.reconcileEvery())
 		}
 		select {
 		case <-ctx.Done():
@@ -698,19 +812,21 @@ func (c httpEntitlementClient) Checkout(ctx context.Context, rung, ui string, qu
 
 func (c httpEntitlementClient) Activate(ctx context.Context, sessionID string) (LicenseView, error) {
 	var r struct {
-		Pending     bool   `json:"pending"`
-		License     string `json:"license"`
-		Status      string `json:"status"`
-		TrialEnd    string `json:"trial_end"`
-		Entitlement string `json:"entitlement"`
-		Error       string `json:"error"`
+		Pending        bool   `json:"pending"`
+		Declined       bool   `json:"declined"`
+		SessionExpired bool   `json:"session_expired"`
+		License        string `json:"license"`
+		Status         string `json:"status"`
+		TrialEnd       string `json:"trial_end"`
+		Entitlement    string `json:"entitlement"`
+		Error          string `json:"error"`
 	}
 	code, err := c.post(ctx, "/v1/activate", map[string]string{"session_id": sessionID, "install_id": c.InstallID}, &r)
 	if err != nil {
 		return LicenseView{}, err
 	}
 	if r.Pending {
-		return LicenseView{Pending: true, Status: r.Status}, nil
+		return LicenseView{Pending: true, Status: r.Status, Declined: r.Declined, SessionExpired: r.SessionExpired}, nil
 	}
 	if code != http.StatusOK || r.Error != "" {
 		return LicenseView{}, fmt.Errorf("activate: %w", &WorkerError{Code: r.Error, HTTPStatus: code})

@@ -50,10 +50,21 @@ export async function activateRoute(
     return Response.json({ error: "invalid_input" }, { status: 400 });
   }
   try {
-    const { lic, state } = await fulfillSession(env, stripe, sessionId);
+    const { lic, state, sessionStatus } = await fulfillSession(env, stripe, sessionId);
     if (!lic) return Response.json({ error: "unknown_session" }, { status: 404 });
     if (state === "trial_email_used") return Response.json({ error: "trial_email_used" }, { status: 409 });
-    if (state === "not_paid") return Response.json({ pending: true, status: lic.status });
+    // declined rides the pending answer: the daemon's activation poll arms
+    // the win-back on it and keeps polling (a history-back payment can still
+    // land and supersedes the back-out). session_expired ends that polling —
+    // an expired session can never pay.
+    if (state === "not_paid") {
+      return Response.json({
+        pending: true,
+        status: lic.status,
+        ...(lic.declined_at ? { declined: true } : {}),
+        ...(sessionStatus === "expired" ? { session_expired: true } : {}),
+      });
+    }
     const install = body.install_id ?? lic.install_id;
     if (!tokenBearing(lic) || !install || install === lic.install_id) {
       return Response.json(licenseView(lic));

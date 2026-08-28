@@ -320,6 +320,8 @@ type Daemon struct {
 	lastWatchOnly       map[string]time.Time // last watch-only headroom nudge per account — 24h dedupe (LAYER 2)
 	licenseStatus       string               // last online status projection; no token/id/PII
 	licenseError        string               // last terminal licensing refusal code, "" when none
+	checkoutOutcome     string               // live checkout's back-out verdict: "" | declined | abandoned
+	checkoutPollGen     int                  // verdict generation — writes and the new-press clear share d.mu
 	cooldown            map[string]coolState // per-account 429 gate (usage+refresh share Anthropic's limit)
 
 	// history is the in-memory burn-rate ring per (account, bucket kind+
@@ -421,6 +423,11 @@ type State struct {
 	// LicenseError is the last terminal licensing refusal code
 	// (seat_limit_reached, trial_email_used, ...) — a machine code only.
 	LicenseError string `json:"license_error,omitempty"`
+	// CheckoutOutcome is the live checkout's back-out verdict ("declined" the
+	// instant the worker records the browser back-arrow, "abandoned" when the
+	// activation poll's deadline lapses in silence). The app arms the win-back
+	// from this — never from a UI-close heuristic.
+	CheckoutOutcome string `json:"checkout_outcome,omitempty"`
 	// Version is the build of the daemon PROCESS answering this request.
 	Version string    `json:"version,omitempty"`
 	AsOf    time.Time `json:"as_of"`
@@ -440,6 +447,7 @@ func (d *Daemon) State(ctx context.Context) (State, error) {
 	d.mu.Lock()
 	st.License = d.licenseStatus
 	st.LicenseError = d.licenseError
+	st.CheckoutOutcome = d.checkoutOutcome
 	d.mu.Unlock()
 	for _, a := range accs {
 		// A bad cache file degrades ONE account's display, never the whole
