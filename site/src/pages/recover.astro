@@ -5,26 +5,43 @@ import CtaButton from "../components/CtaButton.astro";
 
 // Recovery-email link target (?token=…). A browser can't reach the local
 // daemon, and /v1/recover/claim requires the daemon-supplied install_id — so
-// this page never calls the worker. It surfaces the one-time code for the
-// user to paste into the app: Settings → License → Restore with code.
+// this page never calls the worker. Primary path (owner 2026-08-29): the
+// "Open llmpilot" button hands the token to the app via llmpilot://recover
+// and the app finishes the claim itself. The visible code stays as the
+// fallback for a link opened on a phone or a Mac without the app.
 ---
 
 <Layout
   title="llmpilot — restore Pro"
-  description="Paste this one-time code into llmpilot to restore Pro on this Mac."
+  description="Open llmpilot from this link to restore Pro on this Mac, or use the one-time code."
   noindex
 >
   <header class="hdr">
     <Brandmark />
   </header>
   <main class="wrap">
-    <p class="eyebrow">recovery — one-time code</p>
+    <p class="eyebrow">recovery — restore Pro</p>
 
     <div id="has-token" hidden>
-      <h1>Your restore code.</h1>
+      <h1>One step left.</h1>
       <p class="sub">
-        This page can't reach the llmpilot app on your Mac, so the last step
-        happens in the app — copy the code, then paste it there.
+        On the Mac you're restoring, this button finishes it — llmpilot opens
+        and Pro turns on.
+      </p>
+      <div class="cta">
+        <!-- CtaButton's primary/lg grammar verbatim — a plain anchor so the
+             script can set the deep-link href from the token. -->
+        <a
+          id="open-app"
+          href="#"
+          class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md font-semibold transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 select-none bg-primary text-primary-foreground hover:brightness-110 active:brightness-95 h-12 px-6 text-[15px]"
+          >Open llmpilot</a
+        >
+      </div>
+      <p class="sub fallback-lead">
+        Reading this somewhere else — a phone, or a Mac without llmpilot? Use
+        the code instead: copy it, then paste it into llmpilot under
+        Settings → License → Restore with code.
       </p>
       <div class="code-box">
         <code id="token"></code>
@@ -32,15 +49,10 @@ import CtaButton from "../components/CtaButton.astro";
           Copy code
         </button>
       </div>
-      <ol class="steps">
-        <li>Open llmpilot and go to Settings → License.</li>
-        <li>Paste the code into the recovery code field.</li>
-        <li>Choose Restore with code.</li>
-      </ol>
       <p class="fine">
-        The code works once and expires 15 minutes after the email was sent.
-        If it has expired, request a fresh one from Restore by email in the
-        app.
+        Button or code, it works once and expires 15 minutes after the email
+        was sent. If it has expired, request a fresh one from Restore by
+        email in the app.
       </p>
     </div>
 
@@ -67,15 +79,25 @@ import CtaButton from "../components/CtaButton.astro";
   </main>
 
   <script>
-    const token = (
+    const raw = (
       new URLSearchParams(window.location.search).get("token") ?? ""
     ).trim();
+    // Only render a token that IS one (32-byte hex): the value is
+    // attacker-suppliable via the URL, so an arbitrary string must never be
+    // shown as "your restore code" on the real domain.
+    const token = /^[0-9a-f]{64}$/i.test(raw) ? raw.toLowerCase() : "";
     const hasToken = document.getElementById("has-token");
     const noToken = document.getElementById("no-token");
     const code = document.getElementById("token");
     if (token && hasToken && code) {
       code.textContent = token;
       hasToken.hidden = false;
+      // The app's deep link — the URL scheme carries the token verbatim;
+      // the app re-validates its shape before anything reaches the wire.
+      const open = document.getElementById("open-app");
+      if (open instanceof HTMLAnchorElement) {
+        open.href = `llmpilot://recover?token=${encodeURIComponent(token)}`;
+      }
     } else if (noToken) {
       noToken.hidden = false;
     }
@@ -118,6 +140,13 @@ import CtaButton from "../components/CtaButton.astro";
       max-width: 44ch;
       font-size: var(--fs-sub);
       color: var(--sec);
+    }
+    .cta {
+      margin: 26px 0 0;
+    }
+    .fallback-lead {
+      margin-top: 34px;
+      font-size: 14px;
     }
     .code-box {
       display: flex;

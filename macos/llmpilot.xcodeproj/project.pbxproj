@@ -70,12 +70,14 @@
 		77641BA27D51919E6734303F /* BoardVectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5325CCCBEF1FB57BD9736A69 /* BoardVectorTests.swift */; };
 		78C56314A9E6D6D7A2FC85C4 /* TrackDragModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BFE4E7464924221863F60BC /* TrackDragModelTests.swift */; };
 		7DE5A4A5F7726D7B0E5E717D /* NoticeNotifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001F0C6F133D6293E439C988 /* NoticeNotifierTests.swift */; };
+		7F189930BB25AA0BCB733F64 /* RecoveryLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DEF9C7C8A8CC4A76BD4EBAE /* RecoveryLink.swift */; };
 		802C1B8FD707260D25453612 /* CockpitViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EAC145925FE4DA57DD0C550 /* CockpitViewModel.swift */; };
 		80D6E72FB5A5EB8E7CAB2414 /* FreshWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16E6F15C68FC1D775F5A984A /* FreshWindowTests.swift */; };
 		821D4A4BD98F5F1599EE92C6 /* NoticeStreamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 949A6E6127B02C579A8DCF83 /* NoticeStreamTests.swift */; };
 		82B39826BEA612540EA61F2D /* BoardTrackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBCD3870F0650C4285213D06 /* BoardTrackView.swift */; };
 		85CBFBC63FFF2EDBBF0BB345 /* DoctorPanelModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F424C49C4937F3A18BCAA22 /* DoctorPanelModelTests.swift */; };
 		8C398F33BB3F8875A8803D16 /* TrackDragModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D992B528463D09EB8232CA1C /* TrackDragModel.swift */; };
+		8E3A94A393F452C4462AD1EF /* RecoveryLinkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3276176CB5A0F97E400E817 /* RecoveryLinkTests.swift */; };
 		903B04E0BEEF2DA51492707F /* AnsiVectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26CEE21F87AE723D873D3986 /* AnsiVectorTests.swift */; };
 		91AD7D9518932ED1DCC34C05 /* NativeToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 716DDA47580E554331DEFD67 /* NativeToolbar.swift */; };
 		949073F9ADB1BCFCE4F8B32C /* DaemonClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68868CA442D6B4783E52574B /* DaemonClient.swift */; };
@@ -224,6 +226,7 @@
 		685A5E53015895F077A25BD4 /* ProAskMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProAskMachineTests.swift; sourceTree = "<group>"; };
 		68868CA442D6B4783E52574B /* DaemonClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonClient.swift; sourceTree = "<group>"; };
 		6CBA71E5453077CA24E5152C /* OnboardingModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingModel.swift; sourceTree = "<group>"; };
+		6DEF9C7C8A8CC4A76BD4EBAE /* RecoveryLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryLink.swift; sourceTree = "<group>"; };
 		6E68F1001016E16C4871D885 /* WindowsScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowsScreenView.swift; sourceTree = "<group>"; };
 		716DDA47580E554331DEFD67 /* NativeToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeToolbar.swift; sourceTree = "<group>"; };
 		71DE83494C533364C78AC294 /* OnboardingFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFlowView.swift; sourceTree = "<group>"; };
@@ -257,6 +260,7 @@
 		AD38D37D98A58A8AEFFDC446 /* EnsureRunningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnsureRunningTests.swift; sourceTree = "<group>"; };
 		ADF86155DF3FA1B7C1A35F7A /* StatuslineEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatuslineEditor.swift; sourceTree = "<group>"; };
 		B138765F7CF90E93C81FCDDB /* FreshWindowMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreshWindowMenu.swift; sourceTree = "<group>"; };
+		B3276176CB5A0F97E400E817 /* RecoveryLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryLinkTests.swift; sourceTree = "<group>"; };
 		B345C198F387C9D9C7E1B588 /* CockpitAPIHeaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CockpitAPIHeaderTests.swift; sourceTree = "<group>"; };
 		B4E76A290A46A57D809193AA /* StashLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StashLogicTests.swift; sourceTree = "<group>"; };
 		B4E8321375111477DA55AAC8 /* HistoryCardsMore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryCardsMore.swift; sourceTree = "<group>"; };
@@ -327,6 +331,7 @@
 				83EB5985CA63239D661C9293 /* AppIcon.icon */,
 				D50EBC3C5DB39F3EE971ECF5 /* Assets.xcassets */,
 				DAB37742EE077E02EFE176E1 /* LLMPilotApp.swift */,
+				6DEF9C7C8A8CC4A76BD4EBAE /* RecoveryLink.swift */,
 				A3FA72AB88310E327DE10142 /* API */,
 				F5ADC59FCCB6F72E0A85D075 /* Support */,
 				A593BD489DD2E56BCEE6E2B1 /* ViewModels */,
@@ -506,6 +511,7 @@
 				9364C93F0D53C975B11BE595 /* ProLadderLogicTests.swift */,
 				39CB6C47FB5E6DBF26FA50AB /* ProOnboardingModelTests.swift */,
 				AABC8AE57BECC016EAFB4D15 /* ProSwitchDemoTests.swift */,
+				B3276176CB5A0F97E400E817 /* RecoveryLinkTests.swift */,
 				7909A947954C010DA65F7699 /* ScheduleActionsTests.swift */,
 				D914906DF7EA26AB61113D52 /* SettingsModelTests.swift */,
 				B4E76A290A46A57D809193AA /* StashLogicTests.swift */,
@@ -718,6 +724,7 @@
 				12755174C635E47A95F874A5 /* PaywallViews.swift in Sources */,
 				7648F4C5CF4F82381F04702A /* ProFlowCoordinator.swift in Sources */,
 				737518F783B3AC6FD0401562 /* ProOfferCard.swift in Sources */,
+				7F189930BB25AA0BCB733F64 /* RecoveryLink.swift in Sources */,
 				3EB8D3B163E377DF36FCD179 /* RunwayBar.swift in Sources */,
 				EF9CBCAD5275F7C69EA707B0 /* ScheduleActions.swift in Sources */,
 				B3534EFA962FA1F9490B58F4 /* SettingsSheet.swift in Sources */,
@@ -786,6 +793,7 @@
 				333FC87C94D4EAC84EE38EEE /* ProLadderLogicTests.swift in Sources */,
 				C3F57708204CFD7AD8795C61 /* ProOnboardingModelTests.swift in Sources */,
 				150271845660A330E3EA834A /* ProSwitchDemoTests.swift in Sources */,
+				8E3A94A393F452C4462AD1EF /* RecoveryLinkTests.swift in Sources */,
 				BD3FF2A95D95D71DB6E1A8F2 /* ScheduleActionsTests.swift in Sources */,
 				764A4A182F1646BFF47A9492 /* SettingsModelTests.swift in Sources */,
 				038A8F84BCC33AEF187AA146 /* StashLogicTests.swift in Sources */,

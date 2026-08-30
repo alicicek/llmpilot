@@ -31,6 +31,11 @@ struct LLMPilotApp: App {
         if !testing {
             noticeClient.start()
         }
+        // The recovery deep link needs the fleet to open the cockpit on a
+        // successful claim (RecoveryLink.swift); hosted tests never wire it.
+        if !testing {
+            RecoveryLinkHandler.shared.fleet = model
+        }
         // e2e seam: redundant by default since the chunk 6A cutover (the
         // native window is now what FleetViewModel's own first-launch
         // auto-open opens), but still useful for e2e determinism — it opens
@@ -61,6 +66,15 @@ struct LLMPilotApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppMainMenu.install()
+    }
+
+    /// llmpilot://recover?token=… from the /recover page's "Open llmpilot"
+    /// button. Everything about the URL is untrusted; RecoveryLink refuses
+    /// anything that isn't exactly the recovery shape.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            RecoveryLinkHandler.shared.handle(url)
+        }
     }
 }
 

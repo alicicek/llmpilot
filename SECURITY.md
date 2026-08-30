@@ -32,7 +32,13 @@
   statusline, and the CLI. Routes that reveal or mutate a license require an
   install-scoped `Authorization: Bearer` token — the same token either
   cockpit form presents — so another local process cannot read or change
-  your entitlement.
+  your entitlement without going through the app. The one path any local
+  actor can *initiate* is the `llmpilot://recover` link (the recovery
+  email's one-click restore): it carries no authority of its own — it can
+  only attempt a restore with a token the initiator already holds, and the
+  app requires an explicit in-app confirmation ("Restore Pro on this Mac?")
+  before that restore runs, so an unrequested link changes nothing on a
+  decline.
 
 ## Network egress, in full
 

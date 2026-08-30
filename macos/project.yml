@@ -31,6 +31,12 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         LSUIElement: true
+        # llmpilot://recover?token=… — the recovery email's one-click path
+        # (owner 2026-08-29). Parsing and the claim stay in RecoveryLink.swift;
+        # the scheme grants nothing by itself.
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.llmpilot.menubar.recover
+            CFBundleURLSchemes: [llmpilot]
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         SUFeedURL: https://github.com/alicicek/llmpilot/releases/latest/download/appcast.xml

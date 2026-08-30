@@ -4,6 +4,28 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.5] - 2026-08-29
+
+One-click restore from the recovery email, on the Mac app only. No price,
+trial length, offer, or account-data changes.
+
+### Added
+
+- **The recovery email restores Pro in one click.** The page the email
+  links to now has an "Open llmpilot" button: on the Mac you're restoring,
+  it hands the one-time code to the app so you don't retype it. The app
+  asks you to confirm ("Restore Pro on this Mac?") before it turns Pro on —
+  so a link you didn't request changes nothing if you decline. The typed
+  code still works exactly as before, and remains the way to restore from
+  a phone or a Mac that doesn't have llmpilot yet.
+
+### Fixed
+
+- **Restoring right after installing waits for the app to be ready.**
+  Opening the link on a fresh Mac launches llmpilot; the restore now waits
+  for it to finish starting instead of failing, and says what to do if
+  something is off.
+
 ## [1.3.4] - 2026-08-28
 
 Checkout moves to your browser. No price, trial length, or offer changes:

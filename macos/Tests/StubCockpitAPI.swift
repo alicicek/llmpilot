@@ -179,6 +179,9 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
     var licenseCancelResult: Result<LicenseCancelResult, Error> = .failure(DaemonError.down)
     var licenseRecoverResult: Result<Void, Error> = .failure(DaemonError.down)
     var licenseClaimResult: Result<LicenseClaimResult, Error> = .failure(DaemonError.down)
+    /// Consumed front-to-back before falling back to licenseClaimResult —
+    /// lets a test script a cold-launch sequence (down, down, success).
+    var licenseClaimResultQueue: [Result<LicenseClaimResult, Error>] = []
 
     private(set) var licenseCheckoutRequests: [(rung: String, echo: QuoteEcho, remindDaysBefore: Int?)] = []
     private(set) var licenseCancelCalls = 0
@@ -210,6 +213,9 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
 
     func licenseClaim(token: String) async throws -> LicenseClaimResult {
         licenseClaimRequests.append(token)
+        if !licenseClaimResultQueue.isEmpty {
+            return try licenseClaimResultQueue.removeFirst().get()
+        }
         return try licenseClaimResult.get()
     }
 
