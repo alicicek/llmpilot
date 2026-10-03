@@ -261,9 +261,9 @@ func (c *Client) LoopbackURL(ctx context.Context) (string, error) {
 }
 
 // CockpitURL is LoopbackURL plus the install token as a URL fragment — the
-// cockpit needs it for license reveal/cancel, and a fragment never rides a
+// cockpit needs it for every change it makes, and a fragment never rides a
 // request or Referer. A missing token file degrades to the bare URL: the
-// cockpit still renders, license actions answer 401 with reopen copy.
+// cockpit still renders, its changes answer 401 with reopen copy.
 func (c *Client) CockpitURL(ctx context.Context) (string, error) {
 	base, err := c.LoopbackURL(ctx)
 	if err != nil {

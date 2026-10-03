@@ -1,4 +1,5 @@
 import { ApiError, normalizeState, type State } from "./api.ts";
+import { authHeaders } from "./auth.ts";
 
 // Mirror of store.Schedule (internal/store/schedule.go). Hour/Minute are the
 // TRIGGER (nudge) wall-clock time; the reset lands 5h later — the UI always
@@ -72,7 +73,7 @@ export async function fetchSchedules(): Promise<Schedule[]> {
 async function mutate(path: string, method: string, body?: unknown): Promise<Response> {
   const res = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {

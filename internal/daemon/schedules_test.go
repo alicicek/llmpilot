@@ -20,7 +20,7 @@ import (
 func TestStateCarriesSchedulesNeverNull(t *testing.T) {
 	st := testStore(t)
 	d := &Daemon{Store: st}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/v1/state")
@@ -62,7 +62,7 @@ func TestScheduleCRUD(t *testing.T) {
 			return nil
 		},
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	// GET on an empty registry: empty array, not null.
@@ -244,7 +244,7 @@ func TestScheduleMutationsSyncLaunchdBeforeSave(t *testing.T) {
 			return nil
 		},
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	post := func(body string) *http.Response {
@@ -315,7 +315,7 @@ func TestScheduleSameLabelAccountsCoexist(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := &Daemon{Store: st}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	create := func(acct string) (int, store.Schedule) {
@@ -360,7 +360,7 @@ func TestScheduleRefusesWithoutEntitlement(t *testing.T) {
 		},
 		EntitlementAllowed: func(string, time.Time) bool { return false },
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Post(srv.URL+"/v1/schedules", "application/json",
@@ -403,7 +403,7 @@ func TestScheduleSyncGateIsClassifiedNotAnError(t *testing.T) {
 		Store:       testStore(t),
 		TriggerSync: func(context.Context, []store.Schedule) error { return pilot.NotAvailable("scheduling") },
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Post(srv.URL+"/v1/schedules", "application/json",

@@ -71,7 +71,7 @@ func getJSON(t *testing.T, url string, into any) *http.Response {
 // same config + fixtures + clock — preview==production.
 func TestStatuslinePreviewParity(t *testing.T) {
 	d, st := slFixture(t)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	for _, preset := range statusline.Presets() {
@@ -109,7 +109,7 @@ func TestStatuslinePreviewParity(t *testing.T) {
 
 func TestStatuslinePreviewRejectsJunk(t *testing.T) {
 	d, _ := slFixture(t)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	if resp := getJSON(t, srv.URL+"/v1/statusline/preview?config="+url.QueryEscape(`{"segments":[{"id":"nope"}]}`), nil); resp.StatusCode != http.StatusBadRequest {
@@ -124,7 +124,7 @@ func TestStatuslinePreviewRejectsJunk(t *testing.T) {
 // config previews as a placeholder — a GET must not reach the shell.
 func TestStatuslinePreviewNeverExecutesCommands(t *testing.T) {
 	d, _ := slFixture(t)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	marker := t.TempDir() + "/pwned"
@@ -144,7 +144,7 @@ func TestStatuslinePreviewNeverExecutesCommands(t *testing.T) {
 
 func TestStatuslineConfigRoundTripOverAPI(t *testing.T) {
 	d, st := slFixture(t)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	body := `{"version":1,"preset":"dev","segments":[{"id":"dir"},{"id":"model"},{"id":"usage"}]}`
@@ -196,7 +196,7 @@ func TestStatuslineConfigRoundTripOverAPI(t *testing.T) {
 
 func TestStatuslineSegmentsServesRegistryAndPresets(t *testing.T) {
 	d, _ := slFixture(t)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	var doc struct {

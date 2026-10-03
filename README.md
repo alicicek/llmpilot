@@ -17,8 +17,9 @@ brew install --cask alicicek/tap/llmpilot # the menu bar app
 > with no Gatekeeper warning. **Zero telemetry. Your account tokens never leave
 > your Mac** — the cache holds only usage percentages and reset timestamps, and
 > account traffic goes only to Anthropic. Beyond that the app reaches the network
-> only for Sparkle updates (GitHub) and, on Pro, the licensing worker and
-> Stripe's hosted checkout. Open source, MIT.
+> only for Sparkle updates (GitHub) and, in official builds, the licensing
+> worker (prices and licence checks); buying Pro opens Stripe's hosted checkout
+> in your browser. Open source, MIT.
 
 One daemon watches every account's real usage, switches to the account with
 headroom before you hit a wall, and starts your 5-hour windows on schedule.
@@ -30,7 +31,7 @@ Built for people who run more than one Claude Max plan and are tired of the
 that never opened.
 
 Core is free forever, MIT-licensed. The autopilot is [Pro](#free-and-pro) —
-a one-time £9.99 / $12.99, not a subscription.
+a 4-day free trial, then one charge of £9.99 / $12.99, not a subscription.
 
 ![the cockpit — every account's runway and today's planned windows on one board](docs/media/cockpit.png)
 
@@ -56,7 +57,9 @@ a one-time £9.99 / $12.99, not a subscription.
 - **Diagnose it honestly.** `llmpilot doctor` checks the fleet — duplicate
   sign-ins, frozen logins, the refresh budget, unproven migrations, the
   install — and names what is wrong, what it could not check, and the one
-  thing that fixes each finding. It only looks; it never writes.
+  thing that fixes each finding. The check only looks; it never writes. (In
+  the app, its "Claude Code is not showing your runway" note carries an
+  Install statusline button — see below.)
 - **Keep a CI token.** `llmpilot token add/list/copy/remove` stores long-lived
   headless tokens (the `claude setup-token` kind) in your Keychain. The only
   way a token leaves it is an explicit `token copy` to the clipboard.
@@ -64,6 +67,14 @@ a one-time £9.99 / $12.99, not a subscription.
   native cockpit window, a Claude Code statusline, and `llmpilot status`. On a
   CLI-only install with no app, `llmpilot open` puts the same cockpit in your
   browser instead.
+- **Put your limits in the terminal.** Install the statusline from the app
+  (Settings → Terminal statusline → Install statusline) or with
+  `llmpilot statusline install`; arrange it by dragging segment chips in
+  Settings → Statusline → Customize statusline. If Claude Code already runs
+  another tool's statusline, nothing is written to Claude Code's settings
+  until you choose **Keep both** or **Replace it**, and a replaced line is
+  saved so it can be put back. See
+  [docs/statusline.md](docs/statusline.md).
 
 ![drag a reset time — llmpilot computes the start and refuses times that physically can't happen](docs/media/scheduler.gif)
 
@@ -101,8 +112,14 @@ Core is **free forever**, MIT-licensed, and does the whole read side: live usage
 for every account, manual switching, the cockpit, the statusline, and analytics.
 
 **Pro** adds the autopilot — automatic switching before the wall, window
-scheduling, and waking the Mac for scheduled starts. It is a one-time purchase
-(£9.99 / $12.99), not a subscription.
+scheduling, and waking the Mac for scheduled starts. It starts with a 4-day
+free trial; checkout takes a card up front and opens in your browser (Stripe's
+hosted page). When the trial ends you are charged once — £9.99 / $12.99 — and
+never again; it is not a subscription. Cancel the trial in the app's Settings
+before then and nothing is charged. Press ✕ on the price screen, or back out
+of checkout, and it switches to one lower offer — £5.99 / $7.99, same trial.
+That happens once per install, and the lower price then stays on offer until
+you buy.
 
 Official signed builds include Pro; builds you compile from source are the free
 app. The split is stated here on day one so nothing gets pulled out from under
@@ -149,6 +166,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the open-core layout and conventions.
 
 - [FAQ](docs/FAQ.md) — install, the Anthropic terms, wake limitations, the
   undocumented usage endpoint, and what happens if a plan changes.
+- [Statusline](docs/statusline.md) — installing it, the keep-or-replace
+  rule, segments, and presets.
 - [SECURITY.md](SECURITY.md) — security model and disclosure.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — build, test, and how the open-core split
   is laid out.

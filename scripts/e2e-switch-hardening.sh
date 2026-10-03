@@ -103,7 +103,7 @@ echo "== 2. switch away from the foreign login → stash + event + SSE =="
 curl -s -N --max-time 4 "$API/v1/events" > "$ROOT/sse.log" &
 SSE_PID=$!
 sleep 0.5
-curl -s -X POST -H 'Content-Type: application/json' -d '{"account_id":"acct-b"}' "$API/v1/switch" \
+curl -s -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d '{"account_id":"acct-b"}' "$API/v1/switch" \
   | python3 -c "import json,sys; print('  switch:', json.load(sys.stdin))"
 wait $SSE_PID 2>/dev/null || true
 STASH_JSON=$(curl -s "$API/v1/state")

@@ -43,7 +43,7 @@ func TestStateServesAccountsAndSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := &Daemon{Store: st, Active: func(context.Context) string { return "a" }}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/v1/state")
@@ -82,7 +82,7 @@ func TestSSEEventOnCacheChange(t *testing.T) {
 			return []store.Bucket{{Kind: "five_hour", Percent: percent}}, nil
 		},
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/v1/events")
@@ -171,7 +171,7 @@ func TestSwitchEndpoint(t *testing.T) {
 		Store:  st,
 		Switch: func(_ context.Context, id string) error { switchedTo = id; return nil },
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Post(srv.URL+"/v1/switch", "application/json", strings.NewReader(`{"account_id":"b"}`))
@@ -294,7 +294,7 @@ func TestServeSocketAndPortFile(t *testing.T) {
 // on first run (the menu bar's did).
 func TestStateEmptyFleetMarshalsArraysNotNull(t *testing.T) {
 	d := &Daemon{Store: store.At(t.TempDir())}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/v1/state")
 	if err != nil {

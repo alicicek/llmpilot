@@ -14,7 +14,7 @@ import (
 func TestConfigGetAppliesDefaultsVisibly(t *testing.T) {
 	st := testStore(t) // no config.json written — all defaults
 	d := &Daemon{Store: st}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/v1/config")
@@ -34,7 +34,7 @@ func TestConfigGetAppliesDefaultsVisibly(t *testing.T) {
 func TestConfigPutValidatesSavesAndNotifies(t *testing.T) {
 	st := testStore(t)
 	d := &Daemon{Store: st}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	put := func(body string, contentType string) *http.Response {

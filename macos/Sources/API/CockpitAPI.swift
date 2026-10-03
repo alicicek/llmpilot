@@ -50,14 +50,14 @@ struct ApiError: LocalizedError, Equatable {
 protocol CockpitDaemonAPI: DaemonAPI {
     // GET /v1/schedules — no auth (server.go:52,405-415).
     func schedules() async throws -> [ScheduleRecord]
-    // POST /v1/schedules — no auth; entitlement-gated 402 server-side
-    // (server.go:53,417-490).
+    // POST /v1/schedules — REQUIRES the Bearer install token (it rewrites
+    // launchd agents); entitlement-gated 402 server-side.
     func createSchedule(
         accountID: String, hour: Int, minute: Int, model: String?, effort: String?
     ) async throws -> ScheduleRecord
-    // PUT /v1/schedules/{id} — no auth (server.go:54,492-547).
+    // PUT /v1/schedules/{id} — REQUIRES the Bearer install token.
     func updateSchedule(id: String, hour: Int, minute: Int) async throws -> ScheduleRecord
-    // DELETE /v1/schedules/{id} — no auth (server.go:55,549-587).
+    // DELETE /v1/schedules/{id} — REQUIRES the Bearer install token.
     func deleteSchedule(id: String) async throws
 
     // GET /v1/history — no auth (server.go:68,851-864).
@@ -79,7 +79,9 @@ protocol CockpitDaemonAPI: DaemonAPI {
     func statuslineSegmentPreview(config: String) async throws -> StatuslinePreviewResponse
     // GET /v1/statusline/config — no auth (server.go:71; statusline.go:94-102).
     func statuslineConfig() async throws -> StatuslineConfigResponse
-    // PUT /v1/statusline/config — no auth (server.go:72; statusline.go:104-119).
+    // PUT /v1/statusline/config — REQUIRES the Bearer install token: a saved
+    // config can carry commands the statusline runs (statusline.go
+    // handleStatuslineConfigPut).
     func putStatuslineConfig(_ cfg: StatuslineConfig) async throws -> StatuslineConfigResponse
     // GET /v1/statusline/segments — no auth (server.go:73; statusline.go:121-128).
     func statuslineSegments() async throws -> StatuslineSegmentsResponse
@@ -125,8 +127,7 @@ protocol CockpitDaemonAPI: DaemonAPI {
     func stashDiscard(fingerprint: String) async throws
 
     // POST /v1/adopt/move — requires the Bearer install token; destructive
-    // (retires the source config dir) unlike the open POST /v1/adopt
-    // (server.go:59,748-819, requireAuth at 749).
+    // (retires the source config dir) (server.go handleAdoptMove).
     func adoptMove(configDir: String, label: String?) async throws -> AdoptMoveResult
 
     // GET /v1/config — no auth (server.go:66; handleConfigGet at
@@ -134,8 +135,8 @@ protocol CockpitDaemonAPI: DaemonAPI {
     // defaults applied visibly). The read path Value.tsx's plan-cost
     // comparison needs.
     func cockpitConfig() async throws -> CockpitConfig
-    // PUT /v1/config — no auth (server.go:67,833-849; handleConfigPut never
-    // calls requireAuth).
+    // PUT /v1/config — REQUIRES the Bearer install token (server.go
+    // handleConfigPut; the autopilot settings decide unattended switches).
     func putConfig(_ cfg: CockpitConfig) async throws -> CockpitConfig
 
     // POST /v1/login/browser — requires the Bearer install token

@@ -2,9 +2,18 @@
 
 `llmpilot statusline` prints one line for Claude Code's `statusLine` hook.
 Zero config renders the classic runway line; `$LLMPILOT_HOME/statusline.json`
-(or the cockpit editor: Settings → Statusline) makes it yours.
+(or the app's editor: Settings → Statusline → Customize statusline, where you
+drag segment chips between your line and a tray of the rest) makes it yours.
 
 ## Install
+
+From the app: Settings → Terminal statusline → **Install statusline**. The
+doctor's "Claude Code is not showing your runway" note carries the same button. It uses
+the same writer as the command below, under the same rule: on a Mac where
+Claude Code already runs another tool's statusline, the first press writes
+nothing and asks you to choose **Keep both** or **Replace it**.
+
+From a terminal:
 
 ```
 llmpilot statusline install
@@ -21,9 +30,10 @@ llmpilot statusline uninstall           # restores it, exactly as it was
 ```
 
 Uninstall splices the previous statusLine value back without touching any
-setting you changed since. Writes touch only the `statusLine` key — other
-values pass through verbatim, though the file's key order and indentation
-are normalized (the `.orig` backup keeps your original bytes).
+setting you changed since. Writes change only the `statusLine` key — other
+values keep their meaning, though the file is re-serialized: key order and
+indentation are normalized, and `&`, `<`, `>` inside strings become
+`&`-style escapes (the `.orig` backup keeps your original bytes).
 
 ### Keep yours AND add ours (coexist)
 

@@ -25,7 +25,7 @@ func fakeDetected(configDir, email string) detect.Detected {
 // same "not wired" discipline as handleSwitch.
 func TestDetectNotWired(t *testing.T) {
 	d := &Daemon{Store: testStore(t)}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/v1/detect")
@@ -54,7 +54,7 @@ func TestDetectMarksRegistered(t *testing.T) {
 			}, nil
 		},
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/v1/detect")
@@ -87,7 +87,7 @@ func TestDetectMarksRegistered(t *testing.T) {
 
 func TestAdoptNotWired(t *testing.T) {
 	d := &Daemon{Store: testStore(t)}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Post(srv.URL+"/v1/adopt", "application/json", strings.NewReader(`{"config_dir":"/x"}`))
@@ -124,7 +124,7 @@ func TestAdoptFlow(t *testing.T) {
 			return acct, nil
 		},
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	// wrong content-type → 415
@@ -191,7 +191,7 @@ func TestDetectReportsSignedOutDirs(t *testing.T) {
 	}
 	read := func(t *testing.T, d *Daemon) map[string]bool {
 		t.Helper()
-		srv := httptest.NewServer(d.Handler())
+		srv := httptest.NewServer(withToken(d))
 		defer srv.Close()
 		resp, err := http.Get(srv.URL + "/v1/detect")
 		if err != nil {

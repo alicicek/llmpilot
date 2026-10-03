@@ -136,6 +136,44 @@ final class CockpitAPIHeaderTests: XCTestCase {
         XCTAssertEqual(Self.recorder.last()?.value(forHTTPHeaderField: "Authorization"), "Bearer test-install-token")
     }
 
+    // The daemon 401s these without the token (internal/daemon/auth_test.go
+    // TestStateMutationsRequireInstallToken). Only the request is under test,
+    // so a response the canned "{}" cannot decode into is ignored (`try?`);
+    // the path check stops a call that never sent from passing on an
+    // earlier request's header.
+    private func assertLastSentToken(_ method: String, _ pathSuffix: String, line: UInt = #line) {
+        let req = Self.recorder.last()
+        XCTAssertEqual(req?.httpMethod, method, line: line)
+        XCTAssertTrue(req?.url?.path.hasSuffix(pathSuffix) ?? false, "last request: \(String(describing: req?.url))", line: line)
+        XCTAssertEqual(req?.value(forHTTPHeaderField: "Authorization"), "Bearer test-install-token", line: line)
+    }
+
+    func testPutStatuslineConfigSendsAuthorization() async throws {
+        _ = try? await client.putStatuslineConfig(StatuslineConfig(version: 1, segments: []))
+        assertLastSentToken("PUT", "/v1/statusline/config")
+    }
+
+    func testPutConfigSendsAuthorization() async throws {
+        _ = try? await client.putConfig(CockpitConfig())
+        assertLastSentToken("PUT", "/v1/config")
+    }
+
+    func testScheduleMutationsSendAuthorization() async throws {
+        _ = try? await client.createSchedule(accountID: "a1", hour: 9, minute: 0, model: nil, effort: nil)
+        assertLastSentToken("POST", "/v1/schedules")
+        _ = try? await client.updateSchedule(id: "s1", hour: 10, minute: 0)
+        assertLastSentToken("PUT", "/v1/schedules/s1")
+        try? await client.deleteSchedule(id: "s1")
+        assertLastSentToken("DELETE", "/v1/schedules/s1")
+    }
+
+    func testSwitchAndAdoptSendAuthorization() async throws {
+        try await client.switchAccount(to: "a1")
+        assertLastSentToken("POST", "/v1/switch")
+        try await client.adopt(configDir: "/tmp/a1")
+        assertLastSentToken("POST", "/v1/adopt")
+    }
+
     // MARK: - Authorization: absent (unguarded GETs, bearer defaults false)
 
     func testDoctorHasNoAuthorization() async throws {

@@ -101,7 +101,14 @@ func (d *Daemon) handleStatuslineConfigGet(w http.ResponseWriter, _ *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"config": cfg, "load_error": note})
 }
 
+// handleStatuslineConfigPut saves the editor's config. Install-token guarded:
+// a saved config can carry command segments and keep.command, which the
+// statusline runs through the shell on every Claude Code prompt — whoever
+// can write this file can run code as the user.
 func (d *Daemon) handleStatuslineConfigPut(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	if !requireJSON(w, r) {
 		return
 	}

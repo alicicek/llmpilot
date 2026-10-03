@@ -100,12 +100,22 @@ func (d Dir) WriteStatusLine(value json.RawMessage) (prev json.RawMessage, err e
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Dir(d.SettingsPath())
+	// Write through a symlink rather than over it: a settings.json kept as a
+	// link (a dotfiles repo) stays a link, so the rename lands on its target.
+	// A dangling link has no target and is replaced, as before.
+	target := d.SettingsPath()
+	if resolved, err := filepath.EvalSymlinks(target); err == nil {
+		target = resolved
+	}
+	dir := filepath.Dir(target)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 	tmp, err := os.CreateTemp(dir, ".settings-*")
 	if err != nil {
+		if target != d.SettingsPath() {
+			return nil, fmt.Errorf("%s links to %s, which llmpilot cannot write — add the statusLine there yourself: %w", d.SettingsPath(), target, err)
+		}
 		return nil, err
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
@@ -120,7 +130,7 @@ func (d Dir) WriteStatusLine(value json.RawMessage) (prev json.RawMessage, err e
 	if err := tmp.Close(); err != nil {
 		return nil, err
 	}
-	return prev, os.Rename(tmp.Name(), d.SettingsPath())
+	return prev, os.Rename(tmp.Name(), target)
 }
 
 // BackupSettingsOnce copies settings.json to .orig if no backup exists yet —

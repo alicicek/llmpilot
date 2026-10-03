@@ -76,7 +76,7 @@ func TestAdoptIdentity(t *testing.T) {
 			return acct, st.SaveAccounts(append(cur, acct))
 		},
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	rows := getDetect(t, srv)
@@ -157,7 +157,7 @@ func TestAdoptIdentityRendersMovedDirs(t *testing.T) {
 			return []detect.Detected{fakeDetected("/fake/dir-moved", "a@example.dev")}, nil
 		},
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 	rows := getDetect(t, srv)
 	if len(rows) != 1 || !rows[0].Moved || !rows[0].Registered {
@@ -181,7 +181,7 @@ func TestSwitchRefusesPinnedBeforeFreshen(t *testing.T) {
 		Pinned: func(a store.Account) bool { return a.ConfigDir == "/fake/pinned-dir" },
 		Switch: func(context.Context, string) error { switched++; return nil },
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Post(srv.URL+"/v1/switch", "application/json",
@@ -284,7 +284,7 @@ func TestMovePartialRetirementEvent(t *testing.T) {
 		},
 	}
 	d.init()
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/adopt/move",
@@ -416,7 +416,7 @@ func TestAdoptIdentityFallsBackToDirForIdentitylessRows(t *testing.T) {
 			}, nil
 		},
 	}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 	for _, r := range getDetect(t, srv) {
 		want := r.ConfigDir == "/fake/legacy-dir"
@@ -463,7 +463,7 @@ func TestMoveRefusalIsAConflictNotAFault(t *testing.T) {
 				},
 			}
 			d.init()
-			srv := httptest.NewServer(d.Handler())
+			srv := httptest.NewServer(withToken(d))
 			defer srv.Close()
 			req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/adopt/move", strings.NewReader(`{"config_dir":"/fake/src"}`))
 			if err != nil {

@@ -1,9 +1,9 @@
-// The daemon guards license reveal/mutation behind a per-run install token
+// The daemon guards every mutation and the license reveal behind a per-run install token
 // (internal/daemon/auth.go). Trusted launchers — `llmpilot open` and the menu
 // bar — append it as a URL fragment, which never rides a request or Referer;
 // initAuth moves it into sessionStorage and strips it from the address bar on
 // boot. Opened without a token, the cockpit still renders read-only views;
-// license actions answer 401 with copy pointing at the trusted launchers.
+// every change answers 401 with copy pointing at the trusted launchers.
 // Lazy + window-guarded: api.ts is imported by Node-side specs too.
 
 const KEY = "llmpilot.installToken";

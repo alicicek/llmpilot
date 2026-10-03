@@ -4,6 +4,75 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.6] - 2026-10-03
+
+The statusline becomes something you install and arrange from the app, and
+the board, History, the doctor card, setup, and Settings get fixes. No price,
+trial length, offer, or account-data changes.
+
+### Added
+
+- **Install the statusline from the app.** Settings has a new Terminal
+  statusline row with an Install statusline button, and the doctor's
+  "Claude Code is not showing your runway" note carries the same button — no
+  terminal needed. It changes only the `statusLine` value in Claude Code's
+  `~/.claude/settings.json` (the file is rewritten, so key order and
+  indentation are normalized; before llmpilot first adds its line, the
+  original is saved as `settings.json.orig`). If Claude Code already runs another tool's
+  statusline, the first press writes nothing to settings.json and asks you
+  to choose: Keep both (yours renders above the llmpilot line) or Replace it
+  (the old line is saved to `~/.llmpilot/statusline-replaced.json`). Claude
+  Code shows the line on its next prompt in terminals that use `~/.claude`.
+  There is no in-app uninstall yet — the app's own binary does it:
+  `CLAUDE_CONFIG_DIR= /Applications/llmpilot.app/Contents/Resources/llmpilot statusline uninstall`
+  (the empty `CLAUDE_CONFIG_DIR=` keeps it on `~/.claude`, where the button
+  wrote).
+
+### Changed
+
+- **The statusline editor is rebuilt around chips you drag.** Settings →
+  Statusline → Customize statusline shows your line as chips, each showing
+  its own real output, above a dashed tray of the segments not in your line.
+  Drag a chip between the two, or along the line to reorder it. Click a chip,
+  or press Space on it, for its options, including Move left and Move right;
+  VoiceOver can add, remove, and move chips too. Picking a preset fills the
+  line; editing the line switches the picker to Custom. The full preview
+  underneath is still the exact line llmpilot will print.
+- **A clean doctor report takes one line.** When nothing is wrong and only
+  notes remain, the doctor card folds to "No problems found — all 14 checks
+  ran." with the notes one click away, so the board starts near the top of
+  the window.
+- **Auto-switch never shows on while nothing would switch.** The Settings
+  toggle appears only while the autopilot is active. Otherwise the row says
+  "Needs the autopilot — nothing switches until it is on." with a button to
+  turn it on, or that it is not included, on a build compiled from source.
+- **Adding accounts during setup shows one state per account.** Each row
+  says for itself whether that account was added; a failed one reads "Could
+  not add" with Sign in again on the same row. The separate count banner is
+  gone.
+- **The menu bar's empty state points at Add account.** With no accounts,
+  the popover now names the Add account button instead of sending you to a
+  terminal, and the popover and the cockpit describe a watched account in
+  the same words.
+
+### Fixed
+
+- **Other user accounts on the same Mac can no longer change your llmpilot
+  setup.** Switching accounts, adding one, editing schedules, changing
+  settings, and saving the statusline now need the session token in
+  `~/.llmpilot` that only your user can read, as signing in and Pro actions
+  already did. The app and `llmpilot open` send it for you; nothing to do.
+- **A `~/.claude/settings.json` that links to another file stays a link.**
+  Installing or removing the statusline now writes into the file the link
+  points to instead of replacing the link with a plain file.
+- **The board keeps its full 24-hour axis with the Inspector open.** The
+  timeline leaves room for the Inspector before laying out its hours, and
+  drops an hour label that would run into the "24h · local" caption instead
+  of overlapping it.
+- **History's Rhythm heatmap is empty when there is no usage.** An hour with
+  no usage draws an empty cell instead of a shaded one, and the hour and day
+  labels line up with the cells — day labels no longer cut off to "…".
+
 ## [1.3.5] - 2026-08-29
 
 One-click restore from the recovery email, on the Mac app only. No price,
@@ -534,6 +603,9 @@ Initial public release: live usage for every account, lock-first switching,
 window scheduling, the cockpit, the menu bar app, the statusline, and the
 one-time Pro autopilot.
 
+[1.3.6]: https://github.com/alicicek/llmpilot/compare/v1.3.5...v1.3.6
+[1.3.5]: https://github.com/alicicek/llmpilot/compare/v1.3.4...v1.3.5
+[1.3.4]: https://github.com/alicicek/llmpilot/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/alicicek/llmpilot/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/alicicek/llmpilot/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/alicicek/llmpilot/compare/v1.3.0...v1.3.1

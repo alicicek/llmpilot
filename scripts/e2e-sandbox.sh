@@ -96,6 +96,7 @@ for i in $(seq 1 50); do
   sleep 0.1
 done
 PORT=$(cat "$LLMPILOT_HOME/daemon.port")
+TOKEN=$(cat "$LLMPILOT_HOME/daemon.token")
 echo "-- GET /v1/state (127.0.0.1:$PORT) --"
 curl -s "http://127.0.0.1:$PORT/v1/state" | python3 -m json.tool | head -30
 echo "-- GET /v1/state (unix socket) --"
@@ -108,11 +109,15 @@ SSE_PID=$!
 sleep 0.5
 # poke the cache the way a poll would: write a snapshot and switch via API
 # wrong content type must be refused (CSRF hardening) …
-CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{"account_id":"acct-b"}' "http://127.0.0.1:$PORT/v1/switch")
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" -d '{"account_id":"acct-b"}' "http://127.0.0.1:$PORT/v1/switch")
 echo "  POST without application/json: HTTP $CODE (expect 415)"
 [ "$CODE" = "415" ] || { echo "content-type guard missing"; exit 1; }
+# … without the install token it is refused before anything runs …
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"account_id":"acct-b"}' "http://127.0.0.1:$PORT/v1/switch")
+echo "  POST without the install token: HTTP $CODE (expect 401)"
+[ "$CODE" = "401" ] || { echo "auth guard missing on /v1/switch"; exit 1; }
 # … and the real call goes through
-curl -s -X POST -H 'Content-Type: application/json' -d '{"account_id":"acct-b"}' "http://127.0.0.1:$PORT/v1/switch" \
+curl -s -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d '{"account_id":"acct-b"}' "http://127.0.0.1:$PORT/v1/switch" \
   | python3 -c "import json,sys; print('  POST /v1/switch:', json.load(sys.stdin))"
 wait $SSE_PID 2>/dev/null || true
 EVENTS=$(grep -c '^event: state' "$ROOT/sse.log" || true)

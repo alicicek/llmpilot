@@ -90,7 +90,7 @@ struct HTTPDaemonClient: DaemonAPI {
     }
 
     /// This run's install token from $LLMPILOT_HOME/daemon.token — the
-    /// daemon's license reveal/mutation routes require it as a Bearer header
+    /// daemon's mutation and license-reveal routes require it as a Bearer header
     /// (internal/daemon/auth.go).
     static func installToken() -> String? {
         let tokenFile = Self.home().appendingPathComponent("daemon.token")

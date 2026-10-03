@@ -109,7 +109,7 @@ export async function fetchConfig(): Promise<Config> {
 export async function saveConfig(cfg: Config): Promise<void> {
   const res = await fetch("/v1/config", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(cfg),
   });
   if (!res.ok) {
@@ -127,7 +127,7 @@ export async function fetchDetected(): Promise<DetectedDir[]> {
 export async function adoptAccount(configDir: string): Promise<void> {
   const res = await fetch("/v1/adopt", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ config_dir: configDir }),
   });
   if (!res.ok) {
@@ -410,7 +410,7 @@ export async function fetchStatuslineConfig(): Promise<{
 export async function saveStatuslineConfig(cfg: SLConfig): Promise<void> {
   const res = await fetch("/v1/statusline/config", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(cfg),
   });
   if (!res.ok) {
@@ -442,7 +442,7 @@ export async function previewStatusline(
 export async function switchAccount(accountId: string): Promise<void> {
   const res = await fetch("/v1/switch", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ account_id: accountId }),
   });
   if (!res.ok) {

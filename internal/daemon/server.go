@@ -240,7 +240,12 @@ func writeNoticeSSE(w http.ResponseWriter, n Notice) error {
 	return err
 }
 
+// handleSwitch swaps the live credential. Install-token guarded: it writes
+// Claude Code's Keychain item and ~/.claude.json.
 func (d *Daemon) handleSwitch(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	if d.Switch == nil {
 		httpError(w, http.StatusNotImplemented, errors.New("switching not wired"))
 		return
@@ -480,7 +485,13 @@ func (d *Daemon) handleSchedulesList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, scheds)
 }
 
+// The three schedule mutations are install-token guarded: each one rewrites
+// the launchd agents in ~/Library/LaunchAgents that later run this binary
+// against a signed-in account.
 func (d *Daemon) handleScheduleCreate(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	if !requireJSON(w, r) {
 		return
 	}
@@ -556,6 +567,9 @@ func (d *Daemon) handleScheduleCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleScheduleUpdate(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	if !requireJSON(w, r) {
 		return
 	}
@@ -613,6 +627,9 @@ func (d *Daemon) handleScheduleUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleScheduleDelete(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	if !requireJSON(w, r) {
 		return
 	}
@@ -759,7 +776,14 @@ func (d *Daemon) handleDetect(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// handleAdopt registers a signed-in config dir as a fleet account.
+// Install-token guarded: it copies that dir's credential into the fleet's
+// Keychain backup. Both apps send the token on every mutation, so the
+// first-run adopt path is unaffected.
 func (d *Daemon) handleAdopt(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	if !requireJSON(w, r) {
 		return
 	}
@@ -812,11 +836,8 @@ func (d *Daemon) handleAdopt(w http.ResponseWriter, r *http.Request) {
 // handleAdoptMove migrates a sign-in out of its own config dir into the
 // swappable fleet and RETIRES the source copy.
 //
-// Auth-guarded, unlike POST /v1/adopt: registration is additive, deletion is
-// not. Adopt stays open because it is the shipped first-run funnel and a
-// cockpit opened without a token must still be able to run it; this endpoint
-// deletes a sign-in from a folder outside the fleet, so it takes the session
-// token like every other P2 mutation.
+// Auth-guarded like every mutation: it deletes a sign-in from a folder
+// outside the fleet.
 func (d *Daemon) handleAdoptMove(w http.ResponseWriter, r *http.Request) {
 	if !d.requireAuth(w, r) {
 		return
@@ -902,7 +923,12 @@ func (d *Daemon) handleConfigGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cfg)
 }
 
+// handleConfigPut is install-token guarded: the autopilot settings it saves
+// decide when the daemon switches the live credential on its own.
 func (d *Daemon) handleConfigPut(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	if !requireJSON(w, r) {
 		return
 	}

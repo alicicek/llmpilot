@@ -1,11 +1,13 @@
 package daemon
 
-// Install-scoped auth for the sensitive license routes. The loopback port is
-// reachable by any local process, so reachability is not authority: revealing
-// or mutating license state requires the per-run token the daemon writes
-// beside the port file (0600). Presenting it proves same-user filesystem
-// access to the llmpilot home — the same trust boundary as install.id and
-// the Keychain item.
+// Install-scoped auth for every route that changes state, plus the license
+// reveal, the notices stream, and the browser sign-in status poll (GET
+// /v1/state and /v1/events stay open). The loopback port is reachable by any
+// local process — including other users' — so reachability is not
+// authority: these routes require the per-run token the daemon writes beside
+// the port file (0600). Presenting it proves same-user filesystem access to
+// the llmpilot home — the same trust boundary as install.id and the Keychain
+// item.
 
 import (
 	"crypto/rand"

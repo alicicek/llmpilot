@@ -42,9 +42,23 @@ times only.
 ## What's free and what's Pro?
 
 Free forever: live usage for every account, manual switching, the cockpit, the
-statusline, and analytics. Pro (a one-time £9.99 / $12.99, not a subscription):
-automatic switching, window scheduling, and waking the Mac for scheduled starts.
-Official signed builds include Pro; a build you compile yourself is the free app.
+statusline, and analytics. Pro: automatic switching, window scheduling, and
+waking the Mac for scheduled starts. Official signed builds include Pro; a
+build you compile yourself is the free app.
+
+## How do the trial and the price work?
+
+Pro starts with a 4-day free trial. Checkout is Stripe's hosted page, opened in
+your browser, and takes a card up front. When the trial ends you are charged
+once — £9.99 / $12.99 — and never again; it is not a subscription. A reminder
+email arrives before the charge, and **Cancel trial** in the app's Settings
+stops it: the autopilot pauses and nothing is charged.
+
+Press ✕ on the price screen and it switches straight to one lower offer —
+£5.99 / $7.99, with the same 4-day trial; back out of checkout without paying
+and the price screen shows that offer from then on. It happens once per
+install, and the lower price stays on offer until you buy — there is no
+deadline on it.
 
 ## Will scheduled window starts work while my Mac is asleep?
 
@@ -102,7 +116,8 @@ quiet at once. Work through it in this order:
 2. `llmpilot daemon status` to see whether launchd has the job at all.
 3. If it is not installed: `llmpilot daemon install`, then load it with the
    `launchctl bootstrap` line that command prints. If you use the menu bar
-   app instead, its **Start daemon** button does the same thing.
+   app instead, opening it starts the daemon for you; if that fails, its
+   menu bar popover says why and offers **Try again**.
 4. To watch it fail in the foreground, run `llmpilot daemon run` — errors go
    to the terminal instead of the log.
 5. If macOS is holding the login item for approval, the app says so and links
@@ -156,11 +171,27 @@ rather than that file, so there is nothing to delete — but after removing the
 app, check **Settings → General → Login Items & Extensions** and remove any
 llmpilot entry still listed there.
 
-If you wired up the statusline, revert it **while the binary still exists**:
+If you installed the statusline — from the app's **Install statusline**
+button or with `llmpilot statusline install` — revert it **while the binary
+still exists**:
 
 ```
 llmpilot statusline uninstall
 ```
+
+Installed only the app, so there is no `llmpilot` command? The same binary is
+inside it:
+
+```
+CLAUDE_CONFIG_DIR= /Applications/llmpilot.app/Contents/Resources/llmpilot statusline uninstall
+```
+
+The empty `CLAUDE_CONFIG_DIR=` matters: the app's Install button writes
+`~/.claude/settings.json` (the background daemon does the writing, and macOS
+starts it without your shell's variables), but a terminal command follows
+`CLAUDE_CONFIG_DIR` when your shell sets it, and would look in the wrong
+folder. Use the same prefix with `llmpilot statusline uninstall` if you
+installed from the app.
 
 It removes only llmpilot's own line from `~/.claude/settings.json` — a
 statusline it replaced is put back, and one it didn't write is left alone.
@@ -169,7 +200,10 @@ Already deleted the binary? Open `~/.claude/settings.json` and delete the
 a command that no longer exists.
 
 Then uninstall: `brew uninstall llmpilot` (and `brew uninstall --cask
-llmpilot` for the app), and remove local state with `rm -rf ~/.llmpilot`.
+llmpilot` for the app — or, if you installed it from the DMG, choose Quit
+llmpilot in its menu bar popover and drag `llmpilot.app` from Applications
+to the Trash), and remove local state with
+`rm -rf ~/.llmpilot`.
 
 Three things live in your login keychain and outlast an uninstall. Credential
 backups and kept sign-ins are under `llmpilot-backups`, setup tokens under
