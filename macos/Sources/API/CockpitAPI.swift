@@ -72,12 +72,22 @@ protocol CockpitDaemonAPI: DaemonAPI {
     // GET /v1/statusline/preview — no auth (server.go:70; statusline.go:52-92).
     // `config` previews a DRAFT config JSON string; nil previews the saved one.
     func statuslinePreview(width: Int, tier: String, config: String?) async throws -> StatuslinePreviewResponse
+    // GET /v1/statusline/preview for ONE segment at width 0 (no collapse) —
+    // the editor's chips carry the renderer's own bytes for each segment
+    // (U1). Same endpoint as statuslinePreview; a separate call so the
+    // full-line preview's debounce accounting stays its own.
+    func statuslineSegmentPreview(config: String) async throws -> StatuslinePreviewResponse
     // GET /v1/statusline/config — no auth (server.go:71; statusline.go:94-102).
     func statuslineConfig() async throws -> StatuslineConfigResponse
     // PUT /v1/statusline/config — no auth (server.go:72; statusline.go:104-119).
     func putStatuslineConfig(_ cfg: StatuslineConfig) async throws -> StatuslineConfigResponse
     // GET /v1/statusline/segments — no auth (server.go:73; statusline.go:121-128).
     func statuslineSegments() async throws -> StatuslineSegmentsResponse
+    // POST /v1/statusline/install — REQUIRES the Bearer install token
+    // (daemon/statusline.go handleStatuslineInstall). mode nil/"" probes:
+    // a foreign statusline answers `.foreign` with NOTHING written; "keep"
+    // or "replace" is the user's explicit answer to that.
+    func installStatusline(mode: StatuslineInstallMode?) async throws -> StatuslineInstallOutcome
 
     // GET /v1/license — no auth UNLESS reveal=1, which requires the Bearer
     // install token to reveal the full license id (server.go:74;
@@ -319,6 +329,10 @@ extension HTTPDaemonClient: CockpitDaemonAPI {
             from: try await cGet("v1/statusline/preview", query: query))
     }
 
+    func statuslineSegmentPreview(config: String) async throws -> StatuslinePreviewResponse {
+        try await statuslinePreview(width: 0, tier: "truecolor", config: config)
+    }
+
     func statuslineConfig() async throws -> StatuslineConfigResponse {
         try DaemonDates.decoder().decode(StatuslineConfigResponse.self, from: try await cGet("v1/statusline/config"))
     }
@@ -330,6 +344,20 @@ extension HTTPDaemonClient: CockpitDaemonAPI {
 
     func statuslineSegments() async throws -> StatuslineSegmentsResponse {
         try DaemonDates.decoder().decode(StatuslineSegmentsResponse.self, from: try await cGet("v1/statusline/segments"))
+    }
+
+    func installStatusline(mode: StatuslineInstallMode?) async throws -> StatuslineInstallOutcome {
+        struct Body: Encodable { let mode: String }
+        do {
+            let data = try await cPost("v1/statusline/install", body: Body(mode: mode?.rawValue ?? ""))
+            struct Wire: Decodable { let outcome: String }
+            let wire = try JSONDecoder().decode(Wire.self, from: data)
+            return StatuslineInstallOutcome(rawValue: wire.outcome) ?? .installed
+        } catch let e as ApiError where e.status == 409 {
+            // The daemon's one 409 on this route: a foreign line it refused
+            // to touch without a mode. Not an error — a question.
+            return .foreign
+        }
     }
 
     // MARK: licensing (reads/quote only — Phase 4 owns checkout/cancel/recover)

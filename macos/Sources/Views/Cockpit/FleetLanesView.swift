@@ -346,8 +346,7 @@ struct FleetLaneRow: View {
                 }
 
                 if !active, account.pinned {
-                    Text("Watched — signs in from its own folder, usage only. Move it into the fleet " +
-                        "from Add account to make it switchable.")
+                    Text(FleetCopy.watchedLane)
                         .font(.system(size: 10))
                         .foregroundColor(CockpitTheme.ter)
                         .fixedSize(horizontal: false, vertical: true)

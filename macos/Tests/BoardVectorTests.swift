@@ -441,6 +441,35 @@ final class BoardVectorTests: XCTestCase {
     /// floors to `minTrackPx`; `ppm(forTrackPx:)`/`toPx` fall back to 0
     /// (not NaN/negative) for any non-finite or non-positive width that
     /// reaches them directly.
+    /// U3 (audit 2026-10-02): with the Inspector open the board must size
+    /// its track to the width LEFT OF the panel, at both the default 1180
+    /// and the 1000 minimum — the 24h axis then fits what is visible
+    /// instead of running on under the panel.
+    func testBoardGeometryReservesTheInspectorWidth() {
+        for available in [1180.0 - 48, 1000.0 - 48] {
+            let open = BoardGeometry.trackWidth(forAvailable: available, reservedTrailing: BoardInspector.panelWidth)
+            let closed = BoardGeometry.trackWidth(forAvailable: available)
+            XCTAssertEqual(open, closed - BoardInspector.panelWidth, accuracy: 0.001,
+                           "at \(available)pt the open-inspector track must give back exactly the panel's width")
+            XCTAssertGreaterThan(open, BoardGeometry.minTrackPx, "the reserved track must still be a real track, not the floor")
+            // The last hour label (20 at the 4h stride) lands inside the track.
+            XCTAssertLessThan(BoardGeometry.toPx(20 * 60, trackPx: open), open)
+        }
+        // No reservation (or a nonsense one) is the plain F16 rule.
+        XCTAssertEqual(BoardGeometry.trackWidth(forAvailable: 900, reservedTrailing: 0), BoardGeometry.trackWidth(forAvailable: 900))
+        XCTAssertEqual(BoardGeometry.trackWidth(forAvailable: 900, reservedTrailing: .nan), BoardGeometry.trackWidth(forAvailable: 900))
+    }
+
+    /// U3 follow-up: the last hour label never runs into the "24h · local"
+    /// cap. At the Inspector-open minimum (~354pt of track) "20" must go;
+    /// at the default width every stride label still prints.
+    func testBoardAxisDropsLabelsThatWouldHitTheCap() {
+        let narrow = BoardGeometry.trackWidth(forAvailable: 1000 - 48, reservedTrailing: BoardInspector.panelWidth)
+        XCTAssertEqual(BoardAxis.labelHours(trackPx: narrow, strideHours: 4), [0, 4, 8, 12, 16])
+        let wide = BoardGeometry.trackWidth(forAvailable: 1180 - 48)
+        XCTAssertEqual(BoardAxis.labelHours(trackPx: wide, strideHours: 2), Array(stride(from: 0, to: 24, by: 2)), "0..22 all print at the default width")
+    }
+
     func testBoardGeometryTrackNarrowerThanHeaderStaysSane() {
         let trackPx = BoardGeometry.trackWidth(forAvailable: 50, headerPx: BoardGeometry.headerPx)
         XCTAssertTrue(trackPx.isFinite, "trackWidth(forAvailable: 50) must be finite")

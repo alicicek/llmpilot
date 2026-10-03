@@ -76,6 +76,19 @@ enum BoardGeometry {
         guard available.isFinite else { return minTrackPx }
         return max(minTrackPx, available - headerPx)
     }
+
+    /// U3 (audit 2026-10-02): the Inspector is a 302pt panel laid OVER the
+    /// board's trailing edge, so the width the board measures still
+    /// includes the space under it. The board hands that space back here
+    /// BEFORE deriving its track, so the whole 24h axis rescales into
+    /// what is actually visible instead of running on under the panel —
+    /// which cut the axis at ~15:00 and clipped the band text.
+    static func trackWidth(forAvailable available: Double, reservedTrailing: Double, headerPx: Double = BoardGeometry.headerPx) -> Double {
+        guard reservedTrailing.isFinite, reservedTrailing > 0 else {
+            return trackWidth(forAvailable: available, headerPx: headerPx)
+        }
+        return trackWidth(forAvailable: available - reservedTrailing, headerPx: headerPx)
+    }
 }
 
 // MARK: - live track width, threaded via the environment

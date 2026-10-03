@@ -243,6 +243,15 @@ type Daemon struct {
 	// than passing; the daemon itself never scans a config dir or a Keychain.
 	DoctorReaders DoctorLocal
 
+	// StatuslineInstaller performs `llmpilot statusline install` for POST
+	// /v1/statusline/install — the cockpit's "Install statusline" button,
+	// so an app-only install (no binary on PATH) can wire Claude Code
+	// without a terminal. mode is "" (refuse a foreign line), "keep" or
+	// "replace"; the outcome vocabulary is cli.InstallOutcome. nil = 501.
+	// Injected like every other settings.json-touching path so daemon
+	// tests never write the real machine's Claude Code settings.
+	StatuslineInstaller func(mode string) (outcome string, err error)
+
 	// Detect lists config dirs with a logged-in account for GET /v1/detect
 	// (nil = 501, detect not wired). Adopt registers one of those dirs for
 	// POST /v1/adopt (nil = 501). Both injected — like every other

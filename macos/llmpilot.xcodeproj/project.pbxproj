@@ -11,6 +11,7 @@
 		02784BC2467503525DA197F4 /* AddAccountModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A810711A076E28D1A4679B07 /* AddAccountModelTests.swift */; };
 		038A8F84BCC33AEF187AA146 /* StashLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4E76A290A46A57D809193AA /* StashLogicTests.swift */; };
 		06E8C2AD5E143FEE6BBDF4F9 /* NoticeNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CB20D706D159D55B0AD18E3 /* NoticeNotifier.swift */; };
+		083C0A4783FB016185758DFA /* StatuslineInstallModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AE8A7C863EAA31C18AEA9A5 /* StatuslineInstallModelTests.swift */; };
 		0E776A15345CF043D9700A72 /* NoticeStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5EA6968A6194D6AEC8FBDF2 /* NoticeStream.swift */; };
 		0FEFABECD697C9803D784D87 /* CockpitThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBB293DB8CE4227695E708AA /* CockpitThemeTests.swift */; };
 		10DAF40D6EA6F489CC0443B9 /* DoctorPanelHostingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA092E89323B2C7A1C9F15CE /* DoctorPanelHostingTests.swift */; };
@@ -29,8 +30,11 @@
 		2937D35339A95F674F31AF38 /* HistoryVectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAE7772D2F69A9D95BCA1367 /* HistoryVectorTests.swift */; };
 		2BB97AB6BDE98B6DB7A888AD /* MainMenuTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AED60361CFF5AE69440B52E /* MainMenuTests.swift */; };
 		2DF93BE50F1AC7FBDE9A77CE /* AXTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09483B64E0DA178D5E14B627 /* AXTestSupport.swift */; };
+		2E2750B4FBD95E093B4D92AF /* FleetCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 103459205F384A71C653CBF4 /* FleetCopy.swift */; };
 		2F255662B55DE7EE3C584B83 /* CockpitTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EA4EA2F330A61E6ECBD6FA9 /* CockpitTheme.swift */; };
 		333FC87C94D4EAC84EE38EEE /* ProLadderLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9364C93F0D53C975B11BE595 /* ProLadderLogicTests.swift */; };
+		3343DFE80DF1CD89D75BBA15 /* SettingsAutopilotGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06FDA28FD673C56C855A70FF /* SettingsAutopilotGateTests.swift */; };
+		33BFCCAF9DC51FCF75BB373A /* StatuslineInstallModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BBAC3E8FF9E3DBEA30CD3A5 /* StatuslineInstallModel.swift */; };
 		34814931BCF34910DE1F925D /* HistorySectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31482334F5C7B5FBD387F33A /* HistorySectionView.swift */; };
 		34B7CA01E762F3D52450D702 /* PaywallViewsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230F0534E42EFFD2A662997F /* PaywallViewsTests.swift */; };
 		373D6BF3C4A83AC36D278A1A /* FleetViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F145734CB66F81A06F5E9A62 /* FleetViewModelTests.swift */; };
@@ -47,6 +51,8 @@
 		4520C8CFEA4477F650DBD06E /* OnboardingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CBA71E5453077CA24E5152C /* OnboardingModel.swift */; };
 		4B50BF9E04BEE069C9E6146F /* LoginFlowModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1C0822722B47B44C3B1D97E /* LoginFlowModel.swift */; };
 		4D88776A9B845029071DFAB2 /* FreshWindowMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = B138765F7CF90E93C81FCDDB /* FreshWindowMenu.swift */; };
+		5052CC1A4126E90E14B79001 /* StatuslineInstallControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACE7393FBC2E8FBB3E514372 /* StatuslineInstallControl.swift */; };
+		51C7DD85CD8DE242925F319B /* StatuslineEditorChipsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2AC50CE49E834A01350FE4F /* StatuslineEditorChipsTests.swift */; };
 		5287671BF9D0488DA83E215E /* BoardAudioTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08F7CD4A9AA3330E2C77E974 /* BoardAudioTests.swift */; };
 		5491A718B01CD0E3A00A8C96 /* DaemonLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91EBE1758BF5088559041005 /* DaemonLauncher.swift */; };
 		54C54D4D60E7FE61A3EC63B4 /* dev.llmpilot.daemon.plist in CopyFiles */ = {isa = PBXBuildFile; fileRef = 9E409B850E1909A108F0BE86 /* dev.llmpilot.daemon.plist */; };
@@ -55,6 +61,7 @@
 		5DAE90D9654039D9AF79A510 /* ConnectivityViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 639EB6DD6A77A5E4A25766CB /* ConnectivityViews.swift */; };
 		61ACC28A93CD5C41AEE46564 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 83EB5985CA63239D661C9293 /* AppIcon.icon */; };
 		62690073E71D294803477D5E /* EnsureRunningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD38D37D98A58A8AEFFDC446 /* EnsureRunningTests.swift */; };
+		63DFAA1A6425780C9AA8D734 /* RhythmCardHostingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 426407E2B2068A1E2A457E44 /* RhythmCardHostingTests.swift */; };
 		654BA05CDE6846B7FF406768 /* AddAccountSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E75749246BAB525C8D67054D /* AddAccountSheet.swift */; };
 		669E375BEE2BDAE187954F96 /* StatuslineEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 280163B785A99D614A011DAE /* StatuslineEditorTests.swift */; };
 		685E9512FE985776B5E4FFF2 /* BoardClassify.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD91D5233D0CA20364435FFD /* BoardClassify.swift */; };
@@ -75,6 +82,7 @@
 		80D6E72FB5A5EB8E7CAB2414 /* FreshWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16E6F15C68FC1D775F5A984A /* FreshWindowTests.swift */; };
 		821D4A4BD98F5F1599EE92C6 /* NoticeStreamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 949A6E6127B02C579A8DCF83 /* NoticeStreamTests.swift */; };
 		82B39826BEA612540EA61F2D /* BoardTrackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBCD3870F0650C4285213D06 /* BoardTrackView.swift */; };
+		8532CAD572EF43AAE080DC79 /* FleetCopyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01E7AA51E7FC4592BC963229 /* FleetCopyTests.swift */; };
 		85CBFBC63FFF2EDBBF0BB345 /* DoctorPanelModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F424C49C4937F3A18BCAA22 /* DoctorPanelModelTests.swift */; };
 		8C398F33BB3F8875A8803D16 /* TrackDragModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D992B528463D09EB8232CA1C /* TrackDragModel.swift */; };
 		8E3A94A393F452C4462AD1EF /* RecoveryLinkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3276176CB5A0F97E400E817 /* RecoveryLinkTests.swift */; };
@@ -96,6 +104,7 @@
 		ACDDFF8EDDE5A4E85681C84A /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 298F79108B7529E8A2B51599 /* Models.swift */; };
 		AD1DB51D3C542381F9A78BF1 /* NoticeClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8EA3D38ED2FC2AE0A3A332D /* NoticeClientTests.swift */; };
 		AECA280B6E86DE70381FA53B /* EducationClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00FFCC2CC5F1A8B8DC081070 /* EducationClock.swift */; };
+		B1151F7E8FE0BDC19C0BF4C7 /* DoctorNotesCollapseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A92429BCF69F8826655587E /* DoctorNotesCollapseTests.swift */; };
 		B3534EFA962FA1F9490B58F4 /* SettingsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC7962BB2994118E6CDBDB2E /* SettingsSheet.swift */; };
 		B3BF8F1D2582362A133FB921 /* ProAskMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 685A5E53015895F077A25BD4 /* ProAskMachineTests.swift */; };
 		B5F18CC55794511E228CDCB8 /* InspectorDerivationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 003C87DA0D7B8ACC8ECB4319 /* InspectorDerivationTests.swift */; };
@@ -119,6 +128,7 @@
 		E0242316D4CB8BF7C55EC1F8 /* LaneLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02FCD93BE5380AA3D4C6817 /* LaneLogicTests.swift */; };
 		E1E93DFED475926FD1BDC905 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D50EBC3C5DB39F3EE971ECF5 /* Assets.xcassets */; };
 		E395058C29EE2E191E24DAF3 /* HistoryCardsMore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4E8321375111477DA55AAC8 /* HistoryCardsMore.swift */; };
+		E56598722B74A833BE3CF4BF /* RhythmCardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EC516AD8D0BECC0A916D963 /* RhythmCardTests.swift */; };
 		E672526E7DEE476318E2C55A /* EventsFeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39B5DC1426F813C0960BE912 /* EventsFeedView.swift */; };
 		E9D8FDE21D4834E34D3EC48E /* BoardPieces.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5E63229C9EBF6EB7AEA64FF /* BoardPieces.swift */; };
 		EC44940579BDB28B1B5A1AE9 /* GoldenVectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1225C6416643D37F3FDC0DF /* GoldenVectorTests.swift */; };
@@ -172,14 +182,17 @@
 		001F0C6F133D6293E439C988 /* NoticeNotifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoticeNotifierTests.swift; sourceTree = "<group>"; };
 		003C87DA0D7B8ACC8ECB4319 /* InspectorDerivationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorDerivationTests.swift; sourceTree = "<group>"; };
 		00FFCC2CC5F1A8B8DC081070 /* EducationClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EducationClock.swift; sourceTree = "<group>"; };
+		01E7AA51E7FC4592BC963229 /* FleetCopyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetCopyTests.swift; sourceTree = "<group>"; };
 		064B214DFA2F3CF859D25132 /* CheckoutSheetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckoutSheetTests.swift; sourceTree = "<group>"; };
 		0698356440AF4E9B99421E48 /* CockpitDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CockpitDecodingTests.swift; sourceTree = "<group>"; };
+		06FDA28FD673C56C855A70FF /* SettingsAutopilotGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsAutopilotGateTests.swift; sourceTree = "<group>"; };
 		08837C38A931F867D09A8BA7 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
 		08F7CD4A9AA3330E2C77E974 /* BoardAudioTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardAudioTests.swift; sourceTree = "<group>"; };
 		09483B64E0DA178D5E14B627 /* AXTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXTestSupport.swift; sourceTree = "<group>"; };
 		0B070A1CBD84AD69CFB17F2C /* llmpilot.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = llmpilot.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0BFE4E7464924221863F60BC /* TrackDragModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackDragModelTests.swift; sourceTree = "<group>"; };
 		0F453E040D72E724CB01C13C /* HistoryCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryCards.swift; sourceTree = "<group>"; };
+		103459205F384A71C653CBF4 /* FleetCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetCopy.swift; sourceTree = "<group>"; };
 		109CE6394902AF4D2464EBB8 /* Format.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Format.swift; sourceTree = "<group>"; };
 		16E6F15C68FC1D775F5A984A /* FreshWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreshWindowTests.swift; sourceTree = "<group>"; };
 		1A659592EBB95E55ED0EBF31 /* OnboardingSecondaryButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingSecondaryButtonStyle.swift; sourceTree = "<group>"; };
@@ -196,7 +209,9 @@
 		280163B785A99D614A011DAE /* StatuslineEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatuslineEditorTests.swift; sourceTree = "<group>"; };
 		298F79108B7529E8A2B51599 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		2A041E08BF1A389043926032 /* ScheduleActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleActions.swift; sourceTree = "<group>"; };
+		2AE8A7C863EAA31C18AEA9A5 /* StatuslineInstallModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatuslineInstallModelTests.swift; sourceTree = "<group>"; };
 		2EAC145925FE4DA57DD0C550 /* CockpitViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CockpitViewModel.swift; sourceTree = "<group>"; };
+		2EC516AD8D0BECC0A916D963 /* RhythmCardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RhythmCardTests.swift; sourceTree = "<group>"; };
 		2F424C49C4937F3A18BCAA22 /* DoctorPanelModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoctorPanelModelTests.swift; sourceTree = "<group>"; };
 		30E8B23AF387346C89AC0939 /* TourModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TourModel.swift; sourceTree = "<group>"; };
 		31482334F5C7B5FBD387F33A /* HistorySectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistorySectionView.swift; sourceTree = "<group>"; };
@@ -206,8 +221,10 @@
 		39CB6C47FB5E6DBF26FA50AB /* ProOnboardingModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProOnboardingModelTests.swift; sourceTree = "<group>"; };
 		3AED60361CFF5AE69440B52E /* MainMenuTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainMenuTests.swift; sourceTree = "<group>"; };
 		3B81115F0B226730BA627C0A /* HistoryColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryColors.swift; sourceTree = "<group>"; };
+		3BBAC3E8FF9E3DBEA30CD3A5 /* StatuslineInstallModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatuslineInstallModel.swift; sourceTree = "<group>"; };
 		3EF1F55CE3AA0698D7DA5A06 /* EditableWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditableWindowTests.swift; sourceTree = "<group>"; };
 		415362A748546CA1E32B1CD1 /* StubCockpitAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubCockpitAPI.swift; sourceTree = "<group>"; };
+		426407E2B2068A1E2A457E44 /* RhythmCardHostingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RhythmCardHostingTests.swift; sourceTree = "<group>"; };
 		49CDDE0CFC61BF84EE5F7061 /* NativeCockpitWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCockpitWindow.swift; sourceTree = "<group>"; };
 		4EA4EA2F330A61E6ECBD6FA9 /* CockpitTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CockpitTheme.swift; sourceTree = "<group>"; };
 		50072230D8B4CDF3F15F104E /* LoginFlowModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginFlowModelTests.swift; sourceTree = "<group>"; };
@@ -243,6 +260,7 @@
 		83EB5985CA63239D661C9293 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		86A5B6B2EE7D43D98F151930 /* BoardAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardAudio.swift; sourceTree = "<group>"; };
 		880986A11F1C418BA8B33167 /* OnboardingPreviews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingPreviews.swift; sourceTree = "<group>"; };
+		8A92429BCF69F8826655587E /* DoctorNotesCollapseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoctorNotesCollapseTests.swift; sourceTree = "<group>"; };
 		8C6932EE921CBFAABE29BB9F /* BoardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardView.swift; sourceTree = "<group>"; };
 		8FC0983B969C421DC9EAA1B2 /* HistoryDerivationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryDerivationTests.swift; sourceTree = "<group>"; };
 		91A92599E52DF40F6D82DC68 /* DecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecodingTests.swift; sourceTree = "<group>"; };
@@ -252,11 +270,13 @@
 		97129C7374D4F2AEE791E01D /* StashPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StashPanelView.swift; sourceTree = "<group>"; };
 		9A40C5ECB2F28AE9F1269505 /* BoardInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardInspector.swift; sourceTree = "<group>"; };
 		9E409B850E1909A108F0BE86 /* dev.llmpilot.daemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = dev.llmpilot.daemon.plist; sourceTree = "<group>"; };
+		A2AC50CE49E834A01350FE4F /* StatuslineEditorChipsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatuslineEditorChipsTests.swift; sourceTree = "<group>"; };
 		A5E63229C9EBF6EB7AEA64FF /* BoardPieces.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardPieces.swift; sourceTree = "<group>"; };
 		A810711A076E28D1A4679B07 /* AddAccountModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddAccountModelTests.swift; sourceTree = "<group>"; };
 		AABC8AE57BECC016EAFB4D15 /* ProSwitchDemoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProSwitchDemoTests.swift; sourceTree = "<group>"; };
 		AAE7772D2F69A9D95BCA1367 /* HistoryVectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryVectorTests.swift; sourceTree = "<group>"; };
 		ABE67CEE602CDDF5A28702C5 /* SwitchDemoModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitchDemoModel.swift; sourceTree = "<group>"; };
+		ACE7393FBC2E8FBB3E514372 /* StatuslineInstallControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatuslineInstallControl.swift; sourceTree = "<group>"; };
 		AD38D37D98A58A8AEFFDC446 /* EnsureRunningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnsureRunningTests.swift; sourceTree = "<group>"; };
 		ADF86155DF3FA1B7C1A35F7A /* StatuslineEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatuslineEditor.swift; sourceTree = "<group>"; };
 		B138765F7CF90E93C81FCDDB /* FreshWindowMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreshWindowMenu.swift; sourceTree = "<group>"; };
@@ -368,6 +388,8 @@
 				97129C7374D4F2AEE791E01D /* StashPanelView.swift */,
 				ADF86155DF3FA1B7C1A35F7A /* StatuslineEditor.swift */,
 				7AE5AB0535A449B41C370644 /* StatuslineEditorModel.swift */,
+				ACE7393FBC2E8FBB3E514372 /* StatuslineInstallControl.swift */,
+				3BBAC3E8FF9E3DBEA30CD3A5 /* StatuslineInstallModel.swift */,
 				BD6410A43DC1756769EE72BC /* TourOverlayView.swift */,
 				8046592CF54E3571EEF1C7AA /* Board */,
 				5C8F15C500C0D710F90AD894 /* Pro */,
@@ -483,12 +505,14 @@
 				0698356440AF4E9B99421E48 /* CockpitDecodingTests.swift */,
 				BBB293DB8CE4227695E708AA /* CockpitThemeTests.swift */,
 				91A92599E52DF40F6D82DC68 /* DecodingTests.swift */,
+				8A92429BCF69F8826655587E /* DoctorNotesCollapseTests.swift */,
 				FA092E89323B2C7A1C9F15CE /* DoctorPanelHostingTests.swift */,
 				2F424C49C4937F3A18BCAA22 /* DoctorPanelModelTests.swift */,
 				3EF1F55CE3AA0698D7DA5A06 /* EditableWindowTests.swift */,
 				1F8F900A9DF4FB97E0EA174E /* EduFakeClock.swift */,
 				AD38D37D98A58A8AEFFDC446 /* EnsureRunningTests.swift */,
 				EF2EF66A2300F4F69C6F187B /* EventsDecodingTests.swift */,
+				01E7AA51E7FC4592BC963229 /* FleetCopyTests.swift */,
 				F145734CB66F81A06F5E9A62 /* FleetViewModelTests.swift */,
 				60DD5B8F2791EEAD33662102 /* FormatTests.swift */,
 				16E6F15C68FC1D775F5A984A /* FreshWindowTests.swift */,
@@ -512,10 +536,15 @@
 				39CB6C47FB5E6DBF26FA50AB /* ProOnboardingModelTests.swift */,
 				AABC8AE57BECC016EAFB4D15 /* ProSwitchDemoTests.swift */,
 				B3276176CB5A0F97E400E817 /* RecoveryLinkTests.swift */,
+				426407E2B2068A1E2A457E44 /* RhythmCardHostingTests.swift */,
+				2EC516AD8D0BECC0A916D963 /* RhythmCardTests.swift */,
 				7909A947954C010DA65F7699 /* ScheduleActionsTests.swift */,
+				06FDA28FD673C56C855A70FF /* SettingsAutopilotGateTests.swift */,
 				D914906DF7EA26AB61113D52 /* SettingsModelTests.swift */,
 				B4E76A290A46A57D809193AA /* StashLogicTests.swift */,
+				A2AC50CE49E834A01350FE4F /* StatuslineEditorChipsTests.swift */,
 				280163B785A99D614A011DAE /* StatuslineEditorTests.swift */,
+				2AE8A7C863EAA31C18AEA9A5 /* StatuslineInstallModelTests.swift */,
 				24B54C26175A44616808D0D2 /* StubAPI.swift */,
 				415362A748546CA1E32B1CD1 /* StubCockpitAPI.swift */,
 				61DB1C958D183A68DC87E016 /* SwitchToolbarTests.swift */,
@@ -536,6 +565,7 @@
 				ED2F69C7EF8A11A3A92D7B3C /* BoardSchedule.swift */,
 				C4FE8AED3D43F5FEDF3B9980 /* BoardTime.swift */,
 				4EA4EA2F330A61E6ECBD6FA9 /* CockpitTheme.swift */,
+				103459205F384A71C653CBF4 /* FleetCopy.swift */,
 				109CE6394902AF4D2464EBB8 /* Format.swift */,
 				3B81115F0B226730BA627C0A /* HistoryColors.swift */,
 				D614ED27D39ED126ED2A33B0 /* HistoryMath.swift */,
@@ -693,6 +723,7 @@
 				CBEA33253EB379F84F952974 /* EducationTimingModels.swift in Sources */,
 				3D201CB2F152CE2255EE52F1 /* EducationViews.swift in Sources */,
 				E672526E7DEE476318E2C55A /* EventsFeedView.swift in Sources */,
+				2E2750B4FBD95E093B4D92AF /* FleetCopy.swift in Sources */,
 				C7BBDF930CF9CA73451AE236 /* FleetLanesView.swift in Sources */,
 				3D2A191FD2515A599781956F /* FleetViewModel.swift in Sources */,
 				CE0F3D2EBA34674E7A979B40 /* Format.swift in Sources */,
@@ -731,6 +762,8 @@
 				438AF216235A62F24EADCFFC /* StashPanelView.swift in Sources */,
 				3A0287534150F980A536EE53 /* StatuslineEditor.swift in Sources */,
 				FF7D58ADC0C7850A185EF892 /* StatuslineEditorModel.swift in Sources */,
+				5052CC1A4126E90E14B79001 /* StatuslineInstallControl.swift in Sources */,
+				33BFCCAF9DC51FCF75BB373A /* StatuslineInstallModel.swift in Sources */,
 				01F95554D45011BB271135A1 /* SwitchDemoModel.swift in Sources */,
 				54F5753508409E62061D62F1 /* SwitchDemoView.swift in Sources */,
 				A8FC211EB811F20EBC69887B /* Theme.swift in Sources */,
@@ -765,12 +798,14 @@
 				C55F368A490AD606DC7702F0 /* CockpitDecodingTests.swift in Sources */,
 				0FEFABECD697C9803D784D87 /* CockpitThemeTests.swift in Sources */,
 				A68C2EA86A5DBE72B45C0164 /* DecodingTests.swift in Sources */,
+				B1151F7E8FE0BDC19C0BF4C7 /* DoctorNotesCollapseTests.swift in Sources */,
 				10DAF40D6EA6F489CC0443B9 /* DoctorPanelHostingTests.swift in Sources */,
 				85CBFBC63FFF2EDBBF0BB345 /* DoctorPanelModelTests.swift in Sources */,
 				A95A508F8881EF65C1216B22 /* EditableWindowTests.swift in Sources */,
 				FF5205E4E19AD8E04FD21D03 /* EduFakeClock.swift in Sources */,
 				62690073E71D294803477D5E /* EnsureRunningTests.swift in Sources */,
 				38BF1C8F1CADBD159D01CB29 /* EventsDecodingTests.swift in Sources */,
+				8532CAD572EF43AAE080DC79 /* FleetCopyTests.swift in Sources */,
 				373D6BF3C4A83AC36D278A1A /* FleetViewModelTests.swift in Sources */,
 				252306E439AEC6401D5B2779 /* FormatTests.swift in Sources */,
 				80D6E72FB5A5EB8E7CAB2414 /* FreshWindowTests.swift in Sources */,
@@ -794,10 +829,15 @@
 				C3F57708204CFD7AD8795C61 /* ProOnboardingModelTests.swift in Sources */,
 				150271845660A330E3EA834A /* ProSwitchDemoTests.swift in Sources */,
 				8E3A94A393F452C4462AD1EF /* RecoveryLinkTests.swift in Sources */,
+				63DFAA1A6425780C9AA8D734 /* RhythmCardHostingTests.swift in Sources */,
+				E56598722B74A833BE3CF4BF /* RhythmCardTests.swift in Sources */,
 				BD3FF2A95D95D71DB6E1A8F2 /* ScheduleActionsTests.swift in Sources */,
+				3343DFE80DF1CD89D75BBA15 /* SettingsAutopilotGateTests.swift in Sources */,
 				764A4A182F1646BFF47A9492 /* SettingsModelTests.swift in Sources */,
 				038A8F84BCC33AEF187AA146 /* StashLogicTests.swift in Sources */,
+				51C7DD85CD8DE242925F319B /* StatuslineEditorChipsTests.swift in Sources */,
 				669E375BEE2BDAE187954F96 /* StatuslineEditorTests.swift in Sources */,
+				083C0A4783FB016185758DFA /* StatuslineInstallModelTests.swift in Sources */,
 				F18348926E13F630628A69CD /* StubAPI.swift in Sources */,
 				CC3B632D58303A0AABC292E0 /* StubCockpitAPI.swift in Sources */,
 				3C2EAC7EA97B56A6AF73F3EA /* SwitchToolbarTests.swift in Sources */,

@@ -126,3 +126,45 @@ func (d *Daemon) handleStatuslineSegments(w http.ResponseWriter, _ *http.Request
 		"presets":  statusline.Presets(),
 	})
 }
+
+// handleStatuslineInstall wires Claude Code's statusline to this binary on
+// the user's behalf. Install-token guarded: it writes ~/.claude/settings.json.
+// The consent rule is the CLI's, unchanged — a foreign statusline is NEVER
+// replaced or wrapped until the request names a mode, so the first press on
+// such a machine answers 409 {"outcome":"foreign"} having written nothing,
+// and the cockpit asks "keep both" or "replace" before calling again.
+func (d *Daemon) handleStatuslineInstall(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
+	if d.StatuslineInstaller == nil {
+		httpError(w, http.StatusNotImplemented, errors.New("statusline install is not wired in this daemon"))
+		return
+	}
+	if !requireJSON(w, r) {
+		return
+	}
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		httpError(w, http.StatusBadRequest, err)
+		return
+	}
+	switch req.Mode {
+	case "", "keep", "replace":
+	default:
+		httpError(w, http.StatusBadRequest, errors.New(`mode must be "", "keep" or "replace"`))
+		return
+	}
+	outcome, err := d.StatuslineInstaller(req.Mode)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	code := http.StatusOK
+	if outcome == "foreign" {
+		code = http.StatusConflict
+	}
+	writeJSON(w, code, map[string]string{"outcome": outcome})
+}

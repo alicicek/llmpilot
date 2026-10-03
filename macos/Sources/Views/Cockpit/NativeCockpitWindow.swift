@@ -129,17 +129,22 @@ struct NativeCockpitRootView: View {
         self.cockpit = cockpit
         self.api = api
         self.onFlowModeChange = onFlowModeChange
-        _doctorModel = StateObject(wrappedValue: DoctorPanelModel(
+        let doctor = DoctorPanelModel(
             api: api,
             onAddAccount: { LoginWindowController.shared.open() },
-            onReviewStash: {}))
+            onReviewStash: {})
+        _doctorModel = StateObject(wrappedValue: doctor)
         _stashModel = StateObject(wrappedValue: StashPanelModel(api: api))
         _historyModel = StateObject(wrappedValue: HistorySectionModel(
             cockpit: cockpit))
         let add = AddAccountModel(api: api)
         add.openLoginWindow = { LoginWindowController.shared.open() }
         _addModel = StateObject(wrappedValue: add)
-        _settingsModel = StateObject(wrappedValue: SettingsModel(api: api))
+        // An install from Settings re-runs the doctor too, so the "not
+        // showing your runway" note does not outlive the fix.
+        _settingsModel = StateObject(wrappedValue: SettingsModel(api: api, onStatuslineInstalled: {
+            Task { @MainActor in await doctor.load() }
+        }))
         _statuslineModel = StateObject(wrappedValue: StatuslineEditorModel(api: api))
         _scheduleActions = StateObject(wrappedValue: ScheduleActions(api: api))
         _quoteModel = StateObject(wrappedValue: ProQuoteModel(api: api))
@@ -437,9 +442,8 @@ struct NativeCockpitRootView: View {
                             // (review 2026-08-11 NEW-2): a dir registered
                             // later via the Add-account sheet drops out of
                             // dirsToAdopt, and the failure line with it.
-                            adoptFailedCount: failedAdoptDirs
-                                .intersection(OnboardingAccountsCopy.dirsToAdopt(fleet.detected))
-                                .count,
+                            adoptFailedDirs: failedAdoptDirs
+                                .intersection(OnboardingAccountsCopy.dirsToAdopt(fleet.detected)),
                             onExit: closeFlow,
                             onRecover: { settingsOpen = true },
                             quoteFailed: quoteModel.failed,

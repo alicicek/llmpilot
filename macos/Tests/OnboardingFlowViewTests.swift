@@ -210,16 +210,18 @@ final class OnboardingFlowViewTests: XCTestCase {
         XCTAssertEqual(shown.union(signedOut), Set(dirs.map(\.configDir)))
     }
 
-    // MARK: - the adopt-failure line (audit 2026-08-11): what happened,
-    // then the remedy — never the engine's raw Keychain-service message.
+    // MARK: - one state per row (U6, audit 2026-10-02): a failure lands
+    // on its own row; a later successful registration outranks it.
 
-    func testAdoptFailureLineCountsAndNamesTheRemedy() {
-        XCTAssertEqual(
-            OnboardingAccountsCopy.adoptFailureLine(1),
-            "1 account could not be added — open Add account to finish setting it up.")
-        XCTAssertEqual(
-            OnboardingAccountsCopy.adoptFailureLine(3),
-            "3 accounts could not be added — open Add account to finish setting them up.")
+    func testRowStateIsOneOfThreeAndTheMatchWins() {
+        XCTAssertEqual(OnboardingAccountsCopy.rowState(matched: true, failed: false), .added)
+        XCTAssertEqual(OnboardingAccountsCopy.rowState(matched: true, failed: true), .added,
+                       "registered later through Add account: the failure is history")
+        XCTAssertEqual(OnboardingAccountsCopy.rowState(matched: false, failed: true), .failed)
+        XCTAssertEqual(OnboardingAccountsCopy.rowState(matched: false, failed: false), .adding)
+        XCTAssertEqual(OnboardingAccountsCopy.rowFailed, "Could not add")
+        XCTAssertFalse(OnboardingAccountsCopy.rowFailedHint.lowercased().contains("keychain"),
+                       "the row never repeats the engine's raw refusal")
     }
 
     // MARK: - OnboardingAccountsCopy.continueLabel — FirstRun.tsx:78

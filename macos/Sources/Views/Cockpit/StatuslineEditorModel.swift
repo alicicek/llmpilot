@@ -28,9 +28,22 @@ enum StatuslineEditorCopy {
         "show sample values here."
     static let renderingPlaceholder = "rendering…"
 
-    static let emptyLine = "Empty line — add at least one segment below."
-    static let yourLineHeader = "Your line — drag to reorder"
-    static let addSegmentsHeader = "Add segments"
+    static let emptyLine = "Empty line — drag a segment up from the tray."
+    static let yourLineHeader = "Your line"
+    static let trayHeader = "Not in your line"
+    static let trayEmpty = "Every segment is on your line."
+    static let presetHeader = "Preset"
+    static let customPreset = "Custom"
+    static let legend = "Drag to reorder · drag a chip down to take it off the line · click a chip for its options."
+    static let quietSegment = "nothing to show right now"
+    static let takeOffLine = "Take off the line"
+    static let moveLeft = "Move left"
+    static let moveRight = "Move right"
+    static let addToLine = "Add to the line"
+    static let done = "Done"
+    static let daemonBadge = "daemon"
+    static let onLine = "on your line"
+    static let offLine = "not on your line"
 
     static let keptStatuslineTitle = "Kept statusline"
     static let keptStatuslineMid = " — runs above the llmpilot line: "
@@ -75,9 +88,28 @@ final class StatuslineEditorModel: ObservableObject {
     @Published private(set) var preview: String = ""
     @Published var err: String?
     @Published private(set) var applied = false
+    /// U1: each chip carries the renderer's own bytes for its segment,
+    /// keyed by `segmentPreviewKey` (id + options) so a Usage chip in
+    /// `bar` mode and one in `percent` mode are different entries.
+    @Published private(set) var segmentPreviews: [String: SegmentBytes] = [:]
+
+    /// One chip's render: the coloured bytes for the eye, the plain ones
+    /// for VoiceOver (review 2026-10-03: escape codes were being read out).
+    struct SegmentBytes: Equatable {
+        let line: String
+        let plain: String
+    }
 
     private let api: CockpitDaemonAPI & DaemonAPI
     private var previewTask: Task<Void, Never>?
+    private var segmentPreviewTask: Task<Void, Never>?
+    /// The last message `runPreview` wrote into `err`, so a good render can
+    /// clear ITS error without touching a load/save one.
+    private var lastPreviewError: String?
+
+    /// The sheet's "Install statusline" control — the same model the doctor
+    /// note and Settings mount, so the consent question has one wording.
+    private(set) lazy var install = StatuslineInstallModel(api: api)
 
     /// Live preview debounce (StatuslineDialog.tsx:145 `setTimeout(…, 200)`).
     /// Injectable so tests never wait out a real 200ms.
@@ -106,6 +138,74 @@ final class StatuslineEditorModel: ObservableObject {
         meta?.segments.first { $0.id == id }
     }
 
+    // MARK: - presets as a derived fact (U1)
+
+    /// The preset whose segment list the draft matches exactly, with no
+    /// option set anywhere — or nil. `draft.preset` records what the user
+    /// PICKED (and the detach rule clears it on any edit); this derives
+    /// what the line IS, so re-building a preset by hand re-lights its
+    /// chip and the picker can never show a preset the line is not.
+    static func presetMatching(_ cfg: StatuslineConfig, presets: [SLPreset]) -> String? {
+        guard cfg.segments.allSatisfy({ ($0.options ?? [:]).isEmpty }) else { return nil }
+        let ids = cfg.segments.map(\.id)
+        return presets.first { $0.config.segments.map(\.id) == ids }?.id
+    }
+
+    /// What the segmented control highlights: a preset id, or "" = Custom.
+    /// Derived ONLY from the line — a loaded file's `preset` field may
+    /// disagree with its hand-edited segments, and the control must never
+    /// light a preset the line is not.
+    var selectedPresetID: String {
+        guard let draft else { return "" }
+        return Self.presetMatching(draft, presets: meta?.presets ?? []) ?? ""
+    }
+
+    // MARK: - per-segment chip bytes (U1)
+
+    static func segmentPreviewKey(id: String, options: [String: JSONValue]?) -> String {
+        guard let options, !options.isEmpty else { return id }
+        let enc = JSONEncoder()
+        enc.outputFormatting = .sortedKeys
+        let data = (try? enc.encode(options)) ?? Data()
+        return id + "|" + (String(data: data, encoding: .utf8) ?? "")
+    }
+
+    /// The bytes a chip shows: the segment as the renderer prints it with
+    /// THESE options (the line's chips) or its defaults (the tray's). nil
+    /// until the daemon has answered for that key.
+    func segmentPreview(id: String, options: [String: JSONValue]?) -> SegmentBytes? {
+        segmentPreviews[Self.segmentPreviewKey(id: id, options: options)]
+    }
+
+    /// One request per key not yet cached: the line's segments with their
+    /// options plus every registry segment with defaults (the tray).
+    private func refreshSegmentPreviews() {
+        guard let meta else { return }
+        var wanted: [(key: String, cfg: StatuslineConfig)] = []
+        var seen = Set<String>()
+        func want(_ id: String, _ options: [String: JSONValue]?) {
+            let key = Self.segmentPreviewKey(id: id, options: options)
+            guard !seen.contains(key), segmentPreviews[key] == nil else { return }
+            seen.insert(key)
+            // The draft's colour mode rides along so a colour-off line gets
+            // colour-off chips; flex off so a chip never collapses itself.
+            wanted.append((key, StatuslineConfig(version: 1, preset: nil, separator: nil, flex: "off", color: draft?.color, keep: nil,
+                                                 segments: [SLSegmentConfig(id: id, options: options)])))
+        }
+        for sc in draft?.segments ?? [] { want(sc.id, sc.options) }
+        for spec in meta.segments { want(spec.id, nil) }
+        guard !wanted.isEmpty else { return }
+        segmentPreviewTask?.cancel()
+        segmentPreviewTask = Task { [weak self] in
+            for item in wanted {
+                guard !Task.isCancelled, let self else { return }
+                guard let json = try? Self.encode(item.cfg),
+                      let resp = try? await self.api.statuslineSegmentPreview(config: json) else { continue }
+                self.segmentPreviews[item.key] = SegmentBytes(line: resp.line, plain: resp.plain)
+            }
+        }
+    }
+
     func optionValue(segmentID: String, key: String) -> JSONValue? {
         draft?.segments.first { $0.id == segmentID }?.options?[key]
     }
@@ -119,6 +219,11 @@ final class StatuslineEditorModel: ObservableObject {
     /// never conflated.
     func load() async {
         applied = false
+        // Chip bytes are live data (percentages, countdowns); an editor
+        // reopened an hour later must not show last hour's numbers under a
+        // fresh full-line preview (review 2026-10-03 P1).
+        segmentPreviews = [:]
+        segmentPreviewTask?.cancel()
         do {
             async let metaResult = api.statuslineSegments()
             async let configResult = api.statuslineConfig()
@@ -161,12 +266,43 @@ final class StatuslineEditorModel: ObservableObject {
         }
     }
 
-    /// StatuslineDialog.tsx:376-382 `+ segment` chip.
-    func addSegment(_ id: String) {
+    /// StatuslineDialog.tsx:376-382 `+ segment` chip. `at` = drop index
+    /// (U1 drag from the tray); nil appends.
+    func addSegment(_ id: String, at index: Int? = nil) {
+        guard isKnownSegment(id) else { return }
         patch { c in
             var c = c
+            guard !c.segments.contains(where: { $0.id == id }) else { return c }
             c.preset = ""
-            c.segments.append(SLSegmentConfig(id: id, options: nil))
+            let at = min(max(index ?? c.segments.count, 0), c.segments.count)
+            c.segments.insert(SLSegmentConfig(id: id, options: nil), at: at)
+            return c
+        }
+    }
+
+    /// The line accepts plain-text drops, and plain text can come from
+    /// anywhere (a Safari selection, the popover's own text field). Only a
+    /// registry id is a segment; until the registry has loaded nothing is.
+    func isKnownSegment(_ id: String) -> Bool {
+        meta?.segments.contains { $0.id == id } == true
+    }
+
+    /// U1 drag within the line: move segment `id` so it lands BEFORE the
+    /// segment currently at `index` (index == count appends).
+    func moveSegment(_ id: String, before index: Int) {
+        patch { c in
+            guard let from = c.segments.firstIndex(where: { $0.id == id }) else { return c }
+            var c = c
+            var segs = c.segments
+            let row = segs.remove(at: from)
+            // `index` counts positions in the line BEFORE the removal, so
+            // everything past `from` has shifted down by one; adjust, then
+            // clamp into the shorter array.
+            let shifted = index > from ? index - 1 : index
+            segs.insert(row, at: min(max(shifted, 0), segs.count))
+            guard segs != c.segments else { return c }
+            c.segments = segs
+            c.preset = ""
             return c
         }
     }
@@ -187,6 +323,13 @@ final class StatuslineEditorModel: ObservableObject {
         patch { c in
             var c = c
             c.preset = ""
+            // A tray chip's option edit ADDS the segment carrying it — the
+            // picked design does the same; before, the control snapped
+            // back and the draft was marked dirty for a change nobody could
+            // see (review 2026-10-03 P1).
+            if !c.segments.contains(where: { $0.id == segmentID }), isKnownSegment(segmentID) {
+                c.segments.append(SLSegmentConfig(id: segmentID, options: nil))
+            }
             c.segments = c.segments.map { row in
                 guard row.id == segmentID else { return row }
                 var row = row
@@ -274,16 +417,33 @@ final class StatuslineEditorModel: ObservableObject {
     }
 
     private func runPreview(_ draft: StatuslineConfig) async {
+        // An empty line is a valid editing state the daemon refuses to
+        // render (400) — show it empty instead of the previous line.
+        guard !draft.segments.isEmpty else {
+            preview = ""
+            clearPreviewError()
+            refreshSegmentPreviews()
+            return
+        }
         do {
             let cfgJSON = try Self.encode(draft)
             let resp = try await api.statuslinePreview(width: 120, tier: "truecolor", config: cfgJSON)
             guard !Task.isCancelled else { return }
             preview = resp.line
+            clearPreviewError()
+            refreshSegmentPreviews()
         } catch is CancellationError {
             // teardown/superseded — never surfaces as an error
         } catch {
-            err = errorMessage(error, fallback: StatuslineEditorCopy.previewFailed)
+            let msg = errorMessage(error, fallback: StatuslineEditorCopy.previewFailed)
+            lastPreviewError = msg
+            err = msg
         }
+    }
+
+    private func clearPreviewError() {
+        if let last = lastPreviewError, err == last { err = nil }
+        lastPreviewError = nil
     }
 
     private func errorMessage(_ error: Error, fallback: String) -> String {

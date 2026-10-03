@@ -264,3 +264,73 @@ func UninstallStatusline(dir claudecfg.Dir, home string, out io.Writer) error {
 	}
 	return nil
 }
+
+// InstallOutcome names what InstallStatuslineOutcome did, for a caller that
+// renders a result instead of reading the CLI transcript (the cockpit's
+// "Install statusline" button).
+type InstallOutcome string
+
+const (
+	// OutcomeInstalled: no statusline before, ours now.
+	OutcomeInstalled InstallOutcome = "installed"
+	// OutcomeAlready: ours was already there, byte-for-byte.
+	OutcomeAlready InstallOutcome = "already"
+	// OutcomeUpdated: ours was there under another binary path, re-pointed.
+	OutcomeUpdated InstallOutcome = "updated"
+	// OutcomeKept: a foreign line stays and renders above ours.
+	OutcomeKept InstallOutcome = "kept"
+	// OutcomeReplaced: a foreign line was backed up and swapped out.
+	OutcomeReplaced InstallOutcome = "replaced"
+	// OutcomeForeign: a foreign line is present and no mode said what to do
+	// with it — NOTHING was written. The caller asks the user and calls
+	// again with InstallKeep or InstallReplace.
+	OutcomeForeign InstallOutcome = "foreign"
+)
+
+// ErrForeignNotRunnable: --keep on a statusLine value that is not a command
+// has nothing to run above ours; only replace resolves it.
+var ErrForeignNotRunnable = errors.New("the existing statusline is not a command — nothing runnable to keep; replace it instead")
+
+// InstallStatuslineOutcome is InstallStatusline for a GUI caller: the same
+// writes, the same consent rule (a foreign line is never touched without an
+// explicit mode), with the result as a value. The transcript goes nowhere —
+// it quotes the foreign command, which is user content the cockpit must not
+// be handed (the doctor shows only the program's name).
+func InstallStatuslineOutcome(dir claudecfg.Dir, home, binPath string, mode InstallMode) (InstallOutcome, error) {
+	raw, err := dir.StatusLine()
+	if err != nil {
+		return "", err
+	}
+	kind, existing := ClassifyStatusLine(raw)
+	if kind == StatusLineForeign {
+		switch mode {
+		case InstallRefuse:
+			return OutcomeForeign, nil
+		case InstallKeep:
+			if claudecfg.StatusLineCommand(raw) == "" {
+				return "", ErrForeignNotRunnable
+			}
+		}
+	}
+	_, command, err := claudecfg.CommandStatusLine(binPath)
+	if err != nil {
+		return "", err
+	}
+	if err := InstallStatusline(dir, home, binPath, mode, io.Discard); err != nil {
+		return "", err
+	}
+	switch kind {
+	case StatusLineOurs:
+		if existing == command {
+			return OutcomeAlready, nil
+		}
+		return OutcomeUpdated, nil
+	case StatusLineForeign:
+		if mode == InstallKeep {
+			return OutcomeKept, nil
+		}
+		return OutcomeReplaced, nil
+	default:
+		return OutcomeInstalled, nil
+	}
+}

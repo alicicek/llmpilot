@@ -429,6 +429,24 @@ func TestDoctorFindings(t *testing.T) {
 		t.Error("an unparseable statusline value was republished whole")
 	}
 
+	// The absent-statusline note reads from BOTH surfaces (terminal and
+	// cockpit): it names where the limits DO show, never "here" — the
+	// cockpit printed "only visible here and in the cockpit" (audit U5).
+	absentIn := f.inputs()
+	absentIn.Install = func() (doctor.InstallFacts, error) {
+		return doctor.InstallFacts{LaunchAgentInstalled: true, StatusLine: doctor.StatusLineNone}, nil
+	}
+	absent := findingsByID(doctor.Run(context.Background(), absentIn))["statusline_absent"]
+	if absent.Remedy.Verb != doctor.VerbInstallStatusline {
+		t.Fatalf("statusline_absent remedy = %q, want %q", absent.Remedy.Verb, doctor.VerbInstallStatusline)
+	}
+	if strings.Contains(absent.Detail, "here") || strings.Contains(absent.Detail, "cockpit") {
+		t.Errorf("statusline_absent detail is surface-relative: %q", absent.Detail)
+	}
+	if !strings.Contains(absent.Detail, "terminal") {
+		t.Errorf("statusline_absent detail does not say where the line is missing: %q", absent.Detail)
+	}
+
 	// A watched lane is a FEATURE: its copy never blames the user.
 	watched := got["watched_lane"]
 	for _, blame := range []string{"wrong", "mistake", "should have", "you failed", "error"} {

@@ -281,6 +281,18 @@ struct BoardAxis: View {
     /// TRACK itself (not header+track) is narrower than ~900pt.
     private var labelStrideHours: Int { trackPx < 900 ? 4 : 2 }
 
+    /// The right cap's centre sits 34pt in from the track's end and is
+    /// ~52pt wide at 9.5pt; an hour label is ~13pt wide. Any label whose
+    /// right edge would cross the cap's left edge is dropped — with the
+    /// Inspector open at the 1000pt minimum the track is ~350pt and "20"
+    /// printed straight into "24h · local" (seen in the U3 re-capture).
+    static func labelHours(trackPx: Double, strideHours: Int) -> [Int] {
+        let capLeft = trackPx - 34 - 26
+        return stride(from: 0, to: 24, by: strideHours).filter { h in
+            BoardGeometry.toPx(Double(h * 60), trackPx: trackPx) + 7 < capLeft
+        }
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             Rectangle()
@@ -294,7 +306,7 @@ struct BoardAxis: View {
                     .frame(width: 1, height: 5)
                     .position(x: BoardGeometry.headerPx + BoardGeometry.toPx(Double(h * 60), trackPx: trackPx), y: 27.5)
             }
-            ForEach(Array(stride(from: 0, to: 24, by: labelStrideHours)), id: \.self) { h in
+            ForEach(Self.labelHours(trackPx: trackPx, strideHours: labelStrideHours), id: \.self) { h in
                 Text(String(format: "%02d", h))
                     .font(.system(size: 9.5))
                     .foregroundColor(CockpitTheme.ter)

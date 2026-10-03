@@ -100,6 +100,8 @@ private struct PreviewStubAPI: CockpitDaemonAPI {
     func statuslineConfig() async throws -> StatuslineConfigResponse { try await fail() }
     func putStatuslineConfig(_ cfg: StatuslineConfig) async throws -> StatuslineConfigResponse { try await fail() }
     func statuslineSegments() async throws -> StatuslineSegmentsResponse { try await fail() }
+    func statuslineSegmentPreview(config: String) async throws -> StatuslinePreviewResponse { try await fail() }
+    func installStatusline(mode: StatuslineInstallMode?) async throws -> StatuslineInstallOutcome { try await fail() }
     func license(reveal: Bool) async throws -> LicenseInfo { try await fail() }
     func licenseQuote() async throws -> LicenseQuote { try await fail() }
     func licenseCheckout(rung: String, echo: QuoteEcho, remindDaysBefore: Int?) async throws -> CheckoutHandoff { try await fail() }

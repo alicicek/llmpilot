@@ -142,6 +142,20 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
         return try statuslinePreviewResult.get()
     }
 
+    /// Per-segment chip previews (U1): answers by the config's segment id
+    /// when scripted, else the shared preview result. Recorded apart from
+    /// the full-line requests so debounce counts stay exact.
+    var statuslineSegmentPreviewByID: [String: StatuslinePreviewResponse] = [:]
+    private(set) var statuslineSegmentPreviewRequests: [String] = []
+    func statuslineSegmentPreview(config: String) async throws -> StatuslinePreviewResponse {
+        statuslineSegmentPreviewRequests.append(config)
+        if let cfg = try? JSONDecoder().decode(StatuslineConfig.self, from: Data(config.utf8)),
+           let id = cfg.segments.first?.id, let r = statuslineSegmentPreviewByID[id] {
+            return r
+        }
+        return try statuslinePreviewResult.get()
+    }
+
     func statuslineConfig() async throws -> StatuslineConfigResponse { try statuslineConfigResult.get() }
 
     func putStatuslineConfig(_ cfg: StatuslineConfig) async throws -> StatuslineConfigResponse {
@@ -150,6 +164,20 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
     }
 
     func statuslineSegments() async throws -> StatuslineSegmentsResponse { try statuslineSegmentsResult.get() }
+
+    var installStatuslineResult: Result<StatuslineInstallOutcome, Error> = .failure(DaemonError.down)
+    /// Every mode the model sent, in order — nil is the consent probe.
+    private(set) var installStatuslineModes: [StatuslineInstallMode?] = []
+    /// Optional per-call script: answers by call index, falling back to
+    /// `installStatuslineResult` when exhausted.
+    var installStatuslineScript: [Result<StatuslineInstallOutcome, Error>] = []
+    func installStatusline(mode: StatuslineInstallMode?) async throws -> StatuslineInstallOutcome {
+        installStatuslineModes.append(mode)
+        if installStatuslineModes.count <= installStatuslineScript.count {
+            return try installStatuslineScript[installStatuslineModes.count - 1].get()
+        }
+        return try installStatuslineResult.get()
+    }
 
     // MARK: - licensing
 

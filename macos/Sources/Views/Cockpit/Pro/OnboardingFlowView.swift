@@ -146,13 +146,28 @@ enum OnboardingAccountsCopy {
         groups.filter { $0.email.lowercased() == email.lowercased() }.count > 1
     }
 
-    /// VOICE.md register — what happened, then what to do next; never the
-    /// engine's raw refusal (that message names Keychain services).
-    static func adoptFailureLine(_ count: Int) -> String {
-        count == 1
-            ? "1 account could not be added — open Add account to finish setting it up."
-            : "\(count) accounts could not be added — open Add account to finish setting them up."
+    /// U6 (audit 2026-10-02): ONE state per row. A row used to show
+    /// "Added" (its fleet match) and "Adding…" (no snapshot yet) at once,
+    /// a refused add stayed on "Adding…" forever, and the banner below
+    /// counted failures without naming them. The match wins — a dir that
+    /// failed once and was registered later through Add account reads as
+    /// added; a dir that is in neither place is still being added.
+    enum RowState: Equatable {
+        case added, adding, failed
     }
+
+    static func rowState(matched: Bool, failed: Bool) -> RowState {
+        if matched { return .added }
+        return failed ? .failed : .adding
+    }
+
+    /// VOICE.md register — what happened, then what to do next, on the row
+    /// it happened to; never the engine's raw refusal (that message names
+    /// Keychain services).
+    static let rowFailed = "Could not add"
+    static let rowFailedHint = "Sign in to this account again and llmpilot adds it."
+    static let rowAdding = "Adding…"
+    static let rowAddedWaiting = "Limits appear in a moment."
 
     // MARK: ③-empty content (owner 2026-08-13)
     // The deleted Terminal hint (owner 2026-08-12) left the corridor's
@@ -377,11 +392,12 @@ struct OnboardingAccountsStepView: View {
     /// detected could finish onboarding with none of them registered and
     /// nothing being watched. Adopting is what this step is FOR.
     var onAdoptDetected: () -> Void = {}
-    /// How many automatic adopts FAILED (audit 2026-08-11: the lede claims
-    /// "llmpilot is adding them" and failures used to surface nowhere until
-    /// the board's flash banner, raw engine message and all, after the
-    /// corridor was already gone). Zero renders nothing.
-    var adoptFailedCount = 0
+    /// The config dirs whose automatic adopt FAILED (audit 2026-08-11: the
+    /// lede claims "llmpilot is adding them" and failures used to surface
+    /// nowhere until the board's flash banner, raw engine message and all,
+    /// after the corridor was already gone). U6: dirs, not a count, so the
+    /// failure lands on the row it belongs to.
+    var adoptFailedDirs: Set<String> = []
 
     /// Fires the adopt exactly once, on whichever comes first: the step
     /// appearing with detection already answered, or detection answering
@@ -536,24 +552,6 @@ struct OnboardingAccountsStepView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("onboarding-accounts-list")
 
-            // Automatic adoption's failure surface (audit 2026-08-11): the
-            // lede above claims accounts are being added, so a refused add
-            // must say so HERE, in plain words with the remedy — not as a
-            // raw engine message on the board after the corridor is gone.
-            if adoptFailedCount > 0 {
-                Text(OnboardingAccountsCopy.adoptFailureLine(adoptFailedCount))
-                    .font(CockpitTheme.Onboarding.status)
-                    .lineSpacing(CockpitTheme.Onboarding.statusLineSpacing)
-                    .foregroundColor(CockpitTheme.sec)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(12)
-                    .background(CockpitTheme.panel)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(CockpitTheme.hair, lineWidth: 1))
-                    .frame(maxWidth: FlowLayout.copyColumnMaxWidth, alignment: .leading)
-                    .padding(.top, FlowLayout.visualToDisclosure)
-                    .accessibilityIdentifier("onboarding-adopt-failed")
-            }
-
             signedOutSection.padding(.top, FlowLayout.visualToDisclosure)
 
             // Secondary here — the footer's Continue is the one
@@ -648,6 +646,12 @@ struct OnboardingAccountsStepView: View {
         // same numbers).
         let acct = matchedAccount(g)
         let buckets = acct?.snapshot?.buckets ?? []
+        // U6: one state per row — the failure lands HERE, named, with its
+        // remedy (audit 2026-08-11 put it in a banner that counted rows
+        // without naming them).
+        let state = OnboardingAccountsCopy.rowState(
+            matched: acct != nil,
+            failed: g.dirs.contains { adoptFailedDirs.contains($0.configDir) })
         return HStack(alignment: .top, spacing: 10) {
             // Same avatar disc as the blind-spot inventory's lanes
             // (EduDemoLane) — adjacent screens shouldn't speak two identity
@@ -664,10 +668,17 @@ struct OnboardingAccountsStepView: View {
                 HStack(spacing: 6) {
                     Text(g.email).font(CockpitTheme.Onboarding.controlLabel)
                     Spacer()
-                    if acct != nil {
+                    switch state {
+                    case .added:
                         Text("Added")
                             .font(CockpitTheme.numeric(11, weight: .semibold))
                             .foregroundColor(CockpitTheme.okTx)
+                    case .failed:
+                        Text(OnboardingAccountsCopy.rowFailed)
+                            .font(CockpitTheme.numeric(11, weight: .semibold))
+                            .foregroundColor(CockpitTheme.warn)
+                    case .adding:
+                        EmptyView()
                     }
                 }
                 if isAmbiguous(g) {
@@ -675,27 +686,45 @@ struct OnboardingAccountsStepView: View {
                         .font(CockpitTheme.Onboarding.annotation)
                         .foregroundColor(CockpitTheme.ter)
                 }
-                if !buckets.isEmpty {
+                switch state {
+                case .added where !buckets.isEmpty:
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(Array(buckets.enumerated()), id: \.offset) { _, bucket in
                             RunwayBar(bucket: bucket, now: Date())
                         }
                     }
                     .padding(.top, 2)
-                } else {
-                    // Being added but no snapshot has landed yet, or still
-                    // mid-adopt — a quiet placeholder, never a blank row
-                    // under the email (audit 2026-08-16 F2).
-                    Text("Adding…")
+                case .added:
+                    // Registered, first snapshot not landed yet — a quiet
+                    // placeholder, never a blank row under the email
+                    // (audit 2026-08-16 F2), and never "Adding…" beside
+                    // "Added" (U6).
+                    Text(OnboardingAccountsCopy.rowAddedWaiting)
                         .font(CockpitTheme.Onboarding.annotation)
                         .foregroundColor(CockpitTheme.ter)
                         .padding(.top, 2)
+                case .adding:
+                    Text(OnboardingAccountsCopy.rowAdding)
+                        .font(CockpitTheme.Onboarding.annotation)
+                        .foregroundColor(CockpitTheme.ter)
+                        .padding(.top, 2)
+                case .failed:
+                    HStack(spacing: 10) {
+                        Text(OnboardingAccountsCopy.rowFailedHint)
+                            .font(CockpitTheme.Onboarding.annotation)
+                            .foregroundColor(CockpitTheme.ter)
+                        Button(AddAccountCopy.signInAgain, action: onSignInAgain)
+                            .onboardingSecondary()
+                            .accessibilityIdentifier("onboarding-adopt-failed-signin-\(g.email)")
+                    }
+                    .padding(.top, 4)
                 }
             }
         }
         .padding(.vertical, 8)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("onboarding-account-row-\(g.email)")
+        .accessibilityValue(state == .failed ? OnboardingAccountsCopy.rowFailed : state == .added ? "Added" : OnboardingAccountsCopy.rowAdding)
     }
 }
 
@@ -722,8 +751,8 @@ struct OnboardingFlowView: View {
     var onAddAccount: () -> Void = {}
     /// Passed through to the accounts step — see its own doc comment.
     var onAdoptDetected: () -> Void = {}
-    /// Passed through to the accounts step — its adopt-failure callout.
-    var adoptFailedCount = 0
+    /// Passed through to the accounts step — the dirs whose adopt failed.
+    var adoptFailedDirs: Set<String> = []
     var onExit: () -> Void = {}
     var onRecover: () -> Void = {}
     var quoteFailed = false
@@ -745,7 +774,7 @@ struct OnboardingFlowView: View {
                 onAddAccount: onAddAccount,
                 onContinue: { model.accountsForward == .advance ? model.advance() : onExit() },
                 onAdoptDetected: onAdoptDetected,
-                adoptFailedCount: adoptFailedCount)
+                adoptFailedDirs: adoptFailedDirs)
         case .ask:
             PaywallView(
                 ask: ask!, dots: PaywallDots(base: model.phases.count, total: model.total),

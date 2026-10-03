@@ -575,7 +575,7 @@ func (s *sweep) checkInstall() {
 		s.add(Finding{
 			ID: "statusline_absent", Check: CheckStatusLine, Severity: Info,
 			Title:  "Claude Code is not showing your runway",
-			Detail: "The statusline is not installed, so your limits are only visible here and in the cockpit.",
+			Detail: "The statusline is not installed, so your limits show only in llmpilot, not in your terminal.",
 			Remedy: Remedy{Verb: VerbInstallStatusline, Label: "Install the statusline", Command: "llmpilot statusline install"},
 		})
 	case facts.StatusLine == StatusLineForeign:

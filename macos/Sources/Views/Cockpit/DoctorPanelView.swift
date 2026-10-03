@@ -62,6 +62,14 @@ final class DoctorPanelModel: ObservableObject {
     private let onReviewStash: () -> Void
     private var lastReloadKey: String?
 
+    /// U5: the statusline note's remedy is a BUTTON here (the daemon runs
+    /// the CLI verb's writer), not a command to type — on an app-only
+    /// install `llmpilot` is not on PATH. After a write lands the sweep
+    /// re-runs so the resolved note leaves the screen.
+    private(set) lazy var statuslineInstall = StatuslineInstallModel(api: api) { [weak self] in
+        Task { await self?.load() }
+    }
+
     init(
         api: CockpitDaemonAPI & DaemonAPI,
         onAddAccount: @escaping () -> Void,
@@ -95,6 +103,11 @@ final class DoctorPanelModel: ObservableObject {
             }
             report = r
             sweepErr = nil
+            // The statusline note is back after an install landed: give
+            // the row its button again instead of a stale "Installed —".
+            if r.findings.contains(where: { $0.remedy.verb == "install_statusline" }) {
+                statuslineInstall.reset()
+            }
             return true
         } catch is CancellationError {
             return false
@@ -123,6 +136,9 @@ final class DoctorPanelModel: ObservableObject {
         case addAccount
         case reviewStash
         case switchTo(target: String, findingID: String)
+        /// The daemon installs the statusline (U5) — rendered as
+        /// `StatuslineInstallControl`, which owns the consent step.
+        case installStatusline
         case none
     }
 
@@ -132,6 +148,8 @@ final class DoctorPanelModel: ObservableObject {
             return .addAccount
         case "review_stash":
             return .reviewStash
+        case "install_statusline":
+            return .installStatusline
         case "switch":
             // The daemon never emits "switch" for a pinned target, so this
             // can only ever call a switch the engine accepts — guarded here
@@ -162,6 +180,8 @@ final class DoctorPanelModel: ObservableObject {
                 }
                 busyFindingID = nil
             }
+        case .installStatusline:
+            statuslineInstall.install()
         case .none:
             break
         }
@@ -172,6 +192,21 @@ final class DoctorPanelModel: ObservableObject {
     var notChecked: [DoctorCheck] { (report?.checks ?? []).filter { $0.state == "not_checked" } }
     var ran: [DoctorCheck] { (report?.checks ?? []).filter { $0.state != "not_checked" } }
     var notes: Int { (report?.findings.count ?? 0) - (report?.problems ?? 0) }
+
+    /// U4 (audit 2026-10-02): with notes only, the card is ONE line and the
+    /// board leads — the list opens on "N notes". A problem, an unchecked
+    /// item, or an engine verdict that is not `clean` (the "does not add
+    /// up" headline) keeps the list open: those are the card's reason to
+    /// exist, and folding findings behind an inconsistent report would
+    /// hide exactly what the headline warns about (review 2026-10-03).
+    static func notesCollapse(clean: Bool, problems: Int, notChecked: Int, notes: Int) -> Bool {
+        clean && problems == 0 && notChecked == 0 && notes > 0
+    }
+
+    var notesCollapsible: Bool {
+        guard let report else { return false }
+        return Self.notesCollapse(clean: report.clean, problems: report.problems, notChecked: notChecked.count, notes: notes)
+    }
 
     /// Defence in depth (DoctorPanel.tsx:92-94): the all-clear needs BOTH
     /// the engine's verdict and no unchecked item in the list the user can
@@ -231,6 +266,8 @@ struct DoctorPanelView: View {
     let reloadKey: String
 
     @State private var checkedOpen = false
+    /// U4: the notes list, when the card collapsed to its headline.
+    @State private var notesOpen = false
 
     var body: some View {
         // NOT a bare Group: on first appearance sweepErr and report are both
@@ -269,9 +306,24 @@ struct DoctorPanelView: View {
 
     private var panel: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
+            let collapsed = model.notesCollapsible && !notesOpen
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(model.headline)
                     .font(CockpitTheme.numeric(12.5, weight: .bold))
+                if model.notesCollapsible {
+                    Button(action: { notesOpen.toggle() }) {
+                        HStack(spacing: 3) {
+                            Text("\(model.notes) note\(model.notes == 1 ? "" : "s")")
+                            Image(systemName: notesOpen ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 8, weight: .semibold))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(CockpitTheme.numeric(11, weight: .semibold))
+                    .foregroundColor(CockpitTheme.sec)
+                    .accessibilityIdentifier("doctor-notes-toggle")
+                    .accessibilityLabel(notesOpen ? "Hide notes" : "Show notes")
+                }
                 Spacer()
                 Button(checkedOpen ? "Hide what was checked" : "What was checked") {
                     checkedOpen.toggle()
@@ -282,13 +334,13 @@ struct DoctorPanelView: View {
                 .accessibilityIdentifier("doctor-what-was-checked")
             }
 
-            if model.notes > 0 {
+            if model.notes > 0, !model.notesCollapsible {
                 Text("\(model.notes) note\(model.notes == 1 ? "" : "s") below.")
                     .font(CockpitTheme.numeric(11))
                     .foregroundColor(CockpitTheme.ter)
             }
 
-            if let report = model.report, !report.findings.isEmpty {
+            if let report = model.report, !report.findings.isEmpty, !collapsed {
                 VStack(spacing: 0) {
                     ForEach(Array(report.findings.enumerated()), id: \.offset) { idx, finding in
                         findingRow(finding)
@@ -346,7 +398,10 @@ struct DoctorPanelView: View {
                 }
             }
             Spacer(minLength: 0)
-            if action != .none {
+            if action == .installStatusline {
+                StatuslineInstallControl(model: model.statuslineInstall, filled: true)
+                    .frame(maxWidth: 300, alignment: .trailing)
+            } else if action != .none {
                 let label = model.busyFindingID == finding.id ? "Working…" : finding.remedy.label
                 Button(action: { model.run(action) }) {
                     Text(label)
@@ -460,6 +515,8 @@ private final class PreviewDoctorAPI: CockpitDaemonAPI & DaemonAPI, @unchecked S
     func statuslineConfig() async throws -> StatuslineConfigResponse { throw DaemonError.down }
     func putStatuslineConfig(_ cfg: StatuslineConfig) async throws -> StatuslineConfigResponse { throw DaemonError.down }
     func statuslineSegments() async throws -> StatuslineSegmentsResponse { throw DaemonError.down }
+    func statuslineSegmentPreview(config: String) async throws -> StatuslinePreviewResponse { throw DaemonError.down }
+    func installStatusline(mode: StatuslineInstallMode?) async throws -> StatuslineInstallOutcome { throw DaemonError.down }
     func license(reveal: Bool) async throws -> LicenseInfo { throw DaemonError.down }
     func licenseQuote() async throws -> LicenseQuote { throw DaemonError.down }
     func licenseCheckout(rung: String, echo: QuoteEcho, remindDaysBefore: Int?) async throws -> CheckoutHandoff {

@@ -284,7 +284,7 @@ struct MenuBarView: View {
             // say what the lane is for instead of offering a verb it can't
             // do.
             if account.pinned, !active {
-                Text("Pinned to its own config dir — used there directly, not switched into.")
+                Text(FleetCopy.watchedLane)
                     .font(.system(size: 10.5))
                     .foregroundStyle(.tertiary)
             }
@@ -343,7 +343,7 @@ struct MenuBarView: View {
             Text("No accounts yet.")
                 .font(.system(size: 12, weight: .semibold))
             if unregistered.isEmpty {
-                Text("No logged-in Claude Code accounts found. Log in with `claude` first, then reopen this menu.")
+                Text(FleetCopy.noAccountsHint)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

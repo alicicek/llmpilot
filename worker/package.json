@@ -15,7 +15,7 @@
     "secrets:push": "node scripts/secrets-push.mjs"
   },
   "dependencies": {
-    "hono": "4.12.29",
+    "hono": "4.12.34",
     "stripe": "22.3.1"
   },
   "devDependencies": {
@@ -25,6 +25,7 @@
     "wrangler": "4.110.0"
   },
   "overrides": {
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.3",
+    "undici": "7.29.0"
   }
 }

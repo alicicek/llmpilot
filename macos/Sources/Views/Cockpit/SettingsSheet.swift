@@ -23,6 +23,10 @@ enum SettingsCopy {
     static let statusline = "Statusline" // :117
     static let statuslineHint = "Segments, presets, and a live preview of your terminal line." // :117
     static let customizeStatusline = "Customize statusline" // :125
+    /// U5: the install row — the daemon writes Claude Code's settings.json,
+    /// so a DMG-only install needs no terminal for this.
+    static let terminalStatusline = "Terminal statusline"
+    static let terminalStatuslineHint = "Wire the line into Claude Code so your limits show in the terminal."
     static let usageNotifications = "Usage notifications" // :128
     static let defaultThresholdsText = "75, 90" // :82
     static let planCostHint = "Monthly cost, used by the value readout in History." // :141
@@ -36,6 +40,14 @@ enum SettingsCopy {
         }
         return "Switches to the account with headroom near \(jsNumberString(threshold))%." // :107
     }
+
+    /// U7 (audit 2026-10-02): the row's state while the autopilot is not
+    /// running — unlicensed, lapsed, or a build without the engine. The
+    /// toggle is gone, not merely disabled: a switch drawn ON would claim a
+    /// feature that is not switching anything.
+    static let autoSwitchNeedsAutopilot = "Needs the autopilot — nothing switches until it is on."
+    static let autoSwitchNotInBuild = "Needs the autopilot — not included in this build."
+    static let autoSwitchOffer = "Turn on the autopilot"
 
     static func notificationsHint(_ thresholdsText: String) -> String {
         "Notifies when a bucket crosses \(thresholdsText)%." // :128
@@ -70,8 +82,16 @@ final class SettingsModel: ObservableObject {
 
     private let api: CockpitDaemonAPI
 
-    init(api: CockpitDaemonAPI) {
+    /// U5: the Statusline row's "Install statusline" button — the daemon
+    /// writes settings.json, so a DMG-only install needs no terminal. The
+    /// integrator passes the doctor's reload so the "not showing your
+    /// runway" note leaves the cockpit as soon as the write lands.
+    private(set) lazy var statuslineInstall = StatuslineInstallModel(api: api, onInstalled: onStatuslineInstalled)
+    private let onStatuslineInstalled: () -> Void
+
+    init(api: CockpitDaemonAPI, onStatuslineInstalled: @escaping () -> Void = {}) {
         self.api = api
+        self.onStatuslineInstalled = onStatuslineInstalled
     }
 
     /// SettingsDialog.tsx:61-69's `useEffect` on open.
@@ -218,6 +238,25 @@ struct SettingsSheet: View {
     var licenseModel: LicenseAccountModel? = nil
     var onTurnOn: () -> Void = {}
 
+    /// U7: whether the Auto-switch row may show a live toggle at all. The
+    /// daemon's own verdict (`/v1/license` active = its entitlement gate
+    /// for "autopilot") is the only source — config.autopilot.disabled says
+    /// what the user WANTS, not what is running. nil license (unreachable,
+    /// or a build without the engine) reads as not running.
+    static func autopilotRunning(license: LicenseInfo?) -> Bool {
+        license?.active == true
+    }
+
+    /// Whether the row may OFFER to turn the autopilot on. Only a daemon
+    /// with the licence surface (`available`) can sell it — a source build
+    /// answers 501 to the quote and the checkout, so the offer there was a
+    /// button into two errors (review 2026-10-03 P1); nil (unreachable or
+    /// still loading) offers nothing either.
+    static func autopilotOfferable(license: LicenseInfo?) -> Bool {
+        guard let license else { return false }
+        return license.available && !license.active
+    }
+
     /// Native twin of the web's `localStorage.llmpilot.showHistory`
     /// (SettingsDialog.tsx:6-10) — a LOCAL display preference, never PUT to
     /// the daemon. Default true matches `showHistoryPref()`'s `!== "off"`.
@@ -251,16 +290,31 @@ struct SettingsSheet: View {
                         .accessibilityIdentifier("settings-show-history")
                         .accessibilityLabel(SettingsCopy.showHistory)
                 }
-                SettingsRow(
-                    label: SettingsCopy.autoSwitch,
-                    hint: SettingsCopy.autoSwitchHint(model.thresholdPercent)
-                ) {
-                    Toggle("", isOn: Binding(get: { model.autoOn }, set: model.setAutoSwitch))
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .disabled(!model.loaded)
-                        .accessibilityIdentifier("settings-auto-switch")
-                        .accessibilityLabel(SettingsCopy.autoSwitch)
+                if Self.autopilotRunning(license: license) {
+                    SettingsRow(
+                        label: SettingsCopy.autoSwitch,
+                        hint: SettingsCopy.autoSwitchHint(model.thresholdPercent)
+                    ) {
+                        Toggle("", isOn: Binding(get: { model.autoOn }, set: model.setAutoSwitch))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .disabled(!model.loaded)
+                            .accessibilityIdentifier("settings-auto-switch")
+                            .accessibilityLabel(SettingsCopy.autoSwitch)
+                    }
+                } else if Self.autopilotOfferable(license: license) {
+                    SettingsRow(label: SettingsCopy.autoSwitch, hint: SettingsCopy.autoSwitchNeedsAutopilot) {
+                        Button(SettingsCopy.autoSwitchOffer, action: onTurnOn)
+                            .accessibilityIdentifier("settings-auto-switch-offer")
+                            .accessibilityLabel(SettingsCopy.autoSwitchOffer)
+                    }
+                } else {
+                    SettingsRow(
+                        label: SettingsCopy.autoSwitch,
+                        hint: license?.available == false ? SettingsCopy.autoSwitchNotInBuild : SettingsCopy.autoSwitchNeedsAutopilot
+                    ) {
+                        EmptyView()
+                    }
                 }
                 SettingsRow(label: SettingsCopy.statusline, hint: SettingsCopy.statuslineHint) {
                     Button(SettingsCopy.customizeStatusline) {
@@ -269,6 +323,10 @@ struct SettingsSheet: View {
                     }
                     .accessibilityIdentifier("settings-customize-statusline")
                     .accessibilityLabel(SettingsCopy.customizeStatusline)
+                }
+                SettingsRow(label: SettingsCopy.terminalStatusline, hint: SettingsCopy.terminalStatuslineHint) {
+                    StatuslineInstallControl(model: model.statuslineInstall)
+                        .frame(maxWidth: 230, alignment: .trailing)
                 }
                 SettingsRow(
                     label: SettingsCopy.usageNotifications,

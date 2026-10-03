@@ -72,6 +72,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/statusline/config", d.handleStatuslineConfigGet)
 	mux.HandleFunc("PUT /v1/statusline/config", d.handleStatuslineConfigPut)
 	mux.HandleFunc("GET /v1/statusline/segments", d.handleStatuslineSegments)
+	mux.HandleFunc("POST /v1/statusline/install", d.handleStatuslineInstall)
 	mux.HandleFunc("GET /v1/license", d.handleLicenseGet)
 	mux.HandleFunc("GET /v1/license/quote", d.handleLicenseQuote)
 	mux.HandleFunc("POST /v1/license/checkout", d.handleLicenseCheckout)

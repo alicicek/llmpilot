@@ -107,6 +107,10 @@ enum BoardInspectorDerivation {
 /// close it, ported from Inspector.tsx's own document-level listeners as
 /// local NSEvent monitors (AppKit has no DOM bubbling to hook instead).
 struct BoardInspector: View {
+    /// DESIGN-SYSTEM.md §4 INSPECTOR: a 302px right panel. The board reads
+    /// this to give the panel's width back before sizing its track (U3).
+    static let panelWidth: Double = 302
+
     let email: String
     let ls: BoardClassify.LaneSchedule
     let cls: BoardClassify.ChipClass
@@ -143,7 +147,7 @@ struct BoardInspector: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .frame(width: 302)
+        .frame(width: Self.panelWidth)
         .frame(maxHeight: .infinity)
         .background(CockpitTheme.panel)
         .overlay(Rectangle().fill(CockpitTheme.hair).frame(width: 1), alignment: .leading)

@@ -18,6 +18,7 @@ import (
 
 	"github.com/alicicek/llmpilot/internal/anthropic"
 	"github.com/alicicek/llmpilot/internal/claudecfg"
+	"github.com/alicicek/llmpilot/internal/cli"
 	"github.com/alicicek/llmpilot/internal/daemon"
 	"github.com/alicicek/llmpilot/internal/detect"
 	"github.com/alicicek/llmpilot/internal/pilot"
@@ -378,6 +379,27 @@ func newDaemon(st *store.Store) *daemon.Daemon {
 	// The health sweep's local readers — the same gatherer `llmpilot doctor`
 	// uses when no daemon answers, so both surfaces report one truth.
 	d.DoctorReaders = doctorReaders(st, sw)
+	// The cockpit's "Install statusline" button — the CLI verb's own
+	// writer, with the result as a value instead of a transcript.
+	d.StatuslineInstaller = func(mode string) (string, error) {
+		dir, err := claudecfg.DefaultDir()
+		if err != nil {
+			return "", err
+		}
+		bin, err := os.Executable()
+		if err != nil {
+			return "", err
+		}
+		m := cli.InstallRefuse
+		switch mode {
+		case "keep":
+			m = cli.InstallKeep
+		case "replace":
+			m = cli.InstallReplace
+		}
+		out, err := cli.InstallStatuslineOutcome(dir, st.Home(), bin, m)
+		return string(out), err
+	}
 	// The adaptive ceiling's tier input (owner 2026-08-13): read from the
 	// config dir the account actually signs in from — its own dir when
 	// pinned, the global slot otherwise. The daemon only asks about the

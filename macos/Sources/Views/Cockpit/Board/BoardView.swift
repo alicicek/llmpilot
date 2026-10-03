@@ -28,6 +28,11 @@ struct BoardView: View {
     var onMove: (String, Int, Int) -> Void = { _, _, _ in }
     var onDelete: (String) -> Void = { _ in }
     var onFullyBooked: (String) -> Void = { _ in }
+    /// Width of whatever the integrator lays over the board's trailing
+    /// edge (the Inspector while a schedule is selected). Subtracted from
+    /// the measured width before the track is derived, so the 24h axis
+    /// always fits the part of the board a person can see (U3).
+    var reservedTrailing: Double = 0
     @Binding var selectedID: String?
 
     private var scheduleInputs: [BoardClassify.ScheduleInput] {
@@ -60,7 +65,7 @@ struct BoardView: View {
             // fills — and never overflows — its container. See
             // NativeBoardSection.swift for the ScrollView this replaced.
             GeometryReader { proxy in
-                let trackPx = BoardGeometry.trackWidth(forAvailable: proxy.size.width)
+                let trackPx = BoardGeometry.trackWidth(forAvailable: proxy.size.width, reservedTrailing: reservedTrailing)
                 ZStack(alignment: .topLeading) {
                     VStack(spacing: 0) {
                         BoardAxis()

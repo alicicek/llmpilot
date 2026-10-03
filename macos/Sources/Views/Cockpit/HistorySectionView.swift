@@ -491,6 +491,8 @@ private final class PreviewHistoryAPI: CockpitDaemonAPI & DaemonAPI, @unchecked 
     func statuslineConfig() async throws -> StatuslineConfigResponse { throw DaemonError.down }
     func putStatuslineConfig(_ cfg: StatuslineConfig) async throws -> StatuslineConfigResponse { throw DaemonError.down }
     func statuslineSegments() async throws -> StatuslineSegmentsResponse { throw DaemonError.down }
+    func statuslineSegmentPreview(config: String) async throws -> StatuslinePreviewResponse { throw DaemonError.down }
+    func installStatusline(mode: StatuslineInstallMode?) async throws -> StatuslineInstallOutcome { throw DaemonError.down }
     func license(reveal: Bool) async throws -> LicenseInfo { throw DaemonError.down }
     func licenseQuote() async throws -> LicenseQuote { throw DaemonError.down }
     func licenseCheckout(rung: String, echo: QuoteEcho, remindDaysBefore: Int?) async throws -> CheckoutHandoff {

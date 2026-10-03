@@ -321,6 +321,17 @@ struct SLPreset: Decodable, Equatable, Identifiable {
 }
 
 /// GET /v1/statusline/segments (statusline.go:121-128).
+/// What the user told the installer to do about a foreign statusline
+/// (internal/cli/slinstall.go InstallMode, minus the default refuse).
+enum StatuslineInstallMode: String, Equatable {
+    case keep, replace
+}
+
+/// internal/cli/slinstall.go InstallOutcome, verbatim.
+enum StatuslineInstallOutcome: String, Equatable {
+    case installed, already, updated, kept, replaced, foreign
+}
+
 struct StatuslineSegmentsResponse: Decodable, Equatable {
     var segments: [SLSegmentSpec]
     var presets: [SLPreset]

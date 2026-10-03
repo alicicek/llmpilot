@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -303,5 +304,79 @@ func TestInstallKeepRefusesNonCommandStatusline(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "nothing runnable to keep") {
 		t.Errorf("must explain why keep refused: %s", out.String())
+	}
+}
+
+// The GUI path (cockpit "Install statusline" button) shares the CLI's one
+// rule: a foreign line is reported, never written over, until a mode says so.
+func TestInstallOutcomeForeignRefusesThenKeepsOrReplaces(t *testing.T) {
+	foreign := `{"statusLine": {"type": "command", "command": "npx ccstatusline"}, "theme": "dark"}`
+
+	t.Run("no mode reports foreign and writes nothing", func(t *testing.T) {
+		dir := settingsDir(t, foreign)
+		home := t.TempDir()
+		before, _ := os.ReadFile(dir.SettingsPath())
+		got, err := InstallStatuslineOutcome(dir, home, "/bin/llmpilot", InstallRefuse)
+		if err != nil || got != OutcomeForeign {
+			t.Fatalf("outcome=%q err=%v, want foreign/nil", got, err)
+		}
+		after, _ := os.ReadFile(dir.SettingsPath())
+		if !bytes.Equal(before, after) {
+			t.Fatalf("settings.json changed without consent:\n%s", after)
+		}
+		if _, err := os.Stat(statusline.ConfigPath(home)); err == nil {
+			t.Fatal("statusline.json was seeded on a refused install")
+		}
+	})
+
+	t.Run("keep coexists", func(t *testing.T) {
+		dir := settingsDir(t, foreign)
+		home := t.TempDir()
+		got, err := InstallStatuslineOutcome(dir, home, "/bin/llmpilot", InstallKeep)
+		if err != nil || got != OutcomeKept {
+			t.Fatalf("outcome=%q err=%v, want kept/nil", got, err)
+		}
+		doc := readSettingsRaw(t, dir)
+		if cmd := claudecfg.StatusLineCommand(doc["statusLine"]); cmd != "/bin/llmpilot statusline" {
+			t.Fatalf("statusLine after keep = %q", cmd)
+		}
+		cfg, err := statusline.LoadConfig(home)
+		if err != nil || cfg.Keep == nil || cfg.Keep.Command != "npx ccstatusline" {
+			t.Fatalf("kept command not recorded: cfg.Keep=%+v err=%v", cfg.Keep, err)
+		}
+	})
+
+	t.Run("replace swaps with a backup", func(t *testing.T) {
+		dir := settingsDir(t, foreign)
+		home := t.TempDir()
+		got, err := InstallStatuslineOutcome(dir, home, "/bin/llmpilot", InstallReplace)
+		if err != nil || got != OutcomeReplaced {
+			t.Fatalf("outcome=%q err=%v, want replaced/nil", got, err)
+		}
+		if _, err := os.Stat(replacedPath(home)); err != nil {
+			t.Fatalf("no restore record after replace: %v", err)
+		}
+	})
+
+	t.Run("keep on a non-command value is an error, not a false kept", func(t *testing.T) {
+		dir := settingsDir(t, `{"statusLine": {"type": "weird"}}`)
+		got, err := InstallStatuslineOutcome(dir, t.TempDir(), "/bin/llmpilot", InstallKeep)
+		if !errors.Is(err, ErrForeignNotRunnable) || got != "" {
+			t.Fatalf("outcome=%q err=%v, want \"\"/ErrForeignNotRunnable", got, err)
+		}
+	})
+}
+
+func TestInstallOutcomeFreshThenAlreadyThenUpdated(t *testing.T) {
+	dir := settingsDir(t, "")
+	home := t.TempDir()
+	if got, err := InstallStatuslineOutcome(dir, home, "/bin/llmpilot", InstallRefuse); err != nil || got != OutcomeInstalled {
+		t.Fatalf("fresh: outcome=%q err=%v", got, err)
+	}
+	if got, err := InstallStatuslineOutcome(dir, home, "/bin/llmpilot", InstallRefuse); err != nil || got != OutcomeAlready {
+		t.Fatalf("second run: outcome=%q err=%v", got, err)
+	}
+	if got, err := InstallStatuslineOutcome(dir, home, "/opt/other/llmpilot", InstallRefuse); err != nil || got != OutcomeUpdated {
+		t.Fatalf("moved binary: outcome=%q err=%v", got, err)
 	}
 }

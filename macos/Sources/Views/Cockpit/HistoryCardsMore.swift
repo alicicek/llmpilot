@@ -23,54 +23,80 @@ struct RhythmCard: View {
     /// are Sun-first (row 0 = Sunday).
     private func dataRow(forDisplayRow displayRow: Int) -> Int { (displayRow + 1) % 7 }
 
-    var body: some View {
-        HistoryCard(title: "Rhythm", subCaption: "your rhythm — quiet cells are good times for fresh windows") {
-            HStack(alignment: .top, spacing: 6) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Color.clear.frame(height: 14) // aligns under the hour-tick row
-                    ForEach(Self.weekdayLabelsMonFirst, id: \.self) { d in
-                        Text(d)
-                            .font(.system(size: 9))
-                            .foregroundColor(CockpitTheme.ter)
-                            .frame(height: 14, alignment: .leading)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    hourTicksRow
-                    ForEach(0..<7, id: \.self) { displayRow in
-                        weekdayRow(displayRow)
-                    }
-                }
-                .accessibilityLabel("Token activity by hour of day and day of week, a 24 by 7 heatmap")
-            }
-        }
+    /// What one cell paints. A zero cell is EMPTY — it never takes the
+    /// ramp's weakest step, because on the dark ramp that step is a full
+    /// blue and an idle week read as seven days of peak activity.
+    enum Cell: Equatable {
+        case empty
+        case filled(hex: String)
     }
 
-    private var hourTicksRow: some View {
-        Grid(horizontalSpacing: 0) {
-            GridRow {
-                ForEach(0..<24, id: \.self) { h in
-                    Text(Self.hourTicks.contains(h) ? String(format: "%02d", h) : "")
-                        .font(.system(size: 9))
-                        .foregroundColor(CockpitTheme.ter)
-                        .frame(height: 14)
+    static func cell(value: Int64, maxValue: Int64, dark: Bool) -> Cell {
+        guard value > 0 else { return .empty }
+        let t = Double(value) / Double(max(1, maxValue))
+        return .filled(hex: HistoryColors.sequentialColor(t, dark: dark))
+    }
+
+    /// The hour-axis label for column `hour`, nil where the axis is blank.
+    /// Each label sits in its OWN column of the grid, so 00/06/12/18 land
+    /// over the cells they describe instead of collapsing into one run.
+    static func hourLabel(_ hour: Int) -> String? {
+        hourTicks.contains(hour) ? String(format: "%02d", hour) : nil
+    }
+
+    /// The day-label column's fixed width. The 24 cell columns are
+    /// flexible, so without a floor the Grid shares the width 25 ways and
+    /// "Mon" collapses to "…" (seen in the first re-capture).
+    static let dayLabelWidth: CGFloat = 26
+
+    var body: some View {
+        HistoryCard(title: "Rhythm", subCaption: "your rhythm — quiet cells are good times for fresh windows") {
+            // One Grid for labels and cells together: column 0 is the day
+            // label, columns 1…24 are the hours — so the day labels sit
+            // beside their rows and the hour ticks over their columns by
+            // construction, whatever width the card gets.
+            Grid(alignment: .leading, horizontalSpacing: 2, verticalSpacing: 2) {
+                GridRow {
+                    Color.clear.frame(width: Self.dayLabelWidth, height: 12)
+                    ForEach(0..<24, id: \.self) { h in
+                        Text(Self.hourLabel(h) ?? "")
+                            .font(.system(size: 9))
+                            .foregroundColor(CockpitTheme.ter)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(height: 12)
+                    }
+                }
+                ForEach(0..<7, id: \.self) { displayRow in
+                    weekdayRow(displayRow)
                 }
             }
+            .accessibilityLabel("Token activity by hour of day and day of week, a 24 by 7 heatmap")
         }
     }
 
     private func weekdayRow(_ displayRow: Int) -> some View {
         let row = hourWeekday.indices.contains(dataRow(forDisplayRow: displayRow)) ? hourWeekday[dataRow(forDisplayRow: displayRow)] : []
-        return HStack(spacing: 2) {
+        return GridRow {
+            Text(Self.weekdayLabelsMonFirst[displayRow])
+                .font(.system(size: 9))
+                .foregroundColor(CockpitTheme.ter)
+                .lineLimit(1)
+                .frame(width: Self.dayLabelWidth, height: 14, alignment: .leading)
             ForEach(0..<24, id: \.self) { hour in
                 let v = row.indices.contains(hour) ? row[hour] : 0
-                let t = Double(v) / Double(maxValue)
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(historyColor(HistoryColors.sequentialColor(t, dark: dark)))
+                    .fill(cellColor(Self.cell(value: v, maxValue: maxValue, dark: dark)))
+                    .frame(maxWidth: .infinity)
                     .frame(height: 14)
                     .help("\(Self.weekdayLabelsMonFirst[displayRow]) \(String(format: "%02d", hour)):00 — \(HistoryFormat.formatTokens(Double(v))) tokens")
             }
+        }
+    }
+
+    private func cellColor(_ cell: Cell) -> Color {
+        switch cell {
+        case .empty: return CockpitTheme.hatchBg
+        case let .filled(hex): return historyColor(hex)
         }
     }
 }
