@@ -66,7 +66,11 @@ jobs:
           go-version: stable
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.12
+          # Must be built with a Go at least as new as the `stable` toolchain
+          # above: v2.12 (go1.26) panics on a go1.27 runner with "file requires
+          # newer Go version". v2.14.0 is built with go1.27.0 (verified from the
+          # released binary, 2026-10-03).
+          version: v2.14
 
   # The public tree on linux — what a from-source build gets, plus the grep
   # proof that no pro-engine source reaches the public tree. `test` covers the
