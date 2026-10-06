@@ -119,10 +119,25 @@ func span(text string) Span           { return Span{Text: text} }
 func spanSem(text string, s Sem) Span { return Span{Text: text, Sem: s} }
 func spanHex(text, hex string) Span   { return Span{Text: text, Hex: hex} }
 
+// isControl reports a byte segment text never carries: a newline in a folder
+// or branch name would start a row of its own, a raw ESC would inject.
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
+
+// printable is segment text as it prints — control bytes dropped.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if isControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // paint renders spans for a tier. Plain strips everything.
 func paint(spans []Span, tier Tier) string {
 	var b strings.Builder
 	for _, sp := range spans {
+		sp.Text = printable(sp.Text)
 		code := sgrFor(sp, tier)
 		if code == "" {
 			b.WriteString(sp.Text)

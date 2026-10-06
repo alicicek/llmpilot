@@ -365,6 +365,16 @@ struct StatuslinePreviewResponse: Decodable, Equatable {
     var plain: String
     var width: Int
     var tier: String
+    /// "claude-code" when `width` is the last COLUMNS Claude Code gave the
+    /// statusline, "default" when it never has. Absent when the request
+    /// carried a numeric width (the chips' width 0); a daemon that predates
+    /// width=auto refuses the auto request with a 400 instead.
+    var widthSource: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case line, plain, width, tier
+        case widthSource = "width_source"
+    }
 }
 
 // MARK: - licensing (internal/daemon/license.go)

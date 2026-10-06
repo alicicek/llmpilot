@@ -166,10 +166,11 @@ func statuslineCmd() *cobra.Command {
 	var privacy bool
 	cmd := &cobra.Command{
 		Use:   "statusline",
-		Short: "one-line runway readout for Claude Code's statusLine hook",
+		Short: "runway readout for Claude Code's statusLine hook",
 		Long: `Reads Claude Code's statusline JSON on stdin, cache files directly (no
-daemon round-trip), and prints one line. Customize segments in the cockpit
-(Settings → Statusline) or $LLMPILOT_HOME/statusline.json; zero config renders
+daemon round-trip), and prints one line (two with a New line segment).
+Customize segments in the cockpit (Settings → Statusline) or
+$LLMPILOT_HOME/statusline.json; zero config renders
 the classic runway line. Wire it up with: llmpilot statusline install`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -209,6 +210,16 @@ the classic runway line. Wire it up with: llmpilot statusline install`,
 				// A kept statusline is a whole program (often an npx spawn) —
 				// it gets a budget of its own, not the segment budget.
 				KeepExec: cli.StatuslineExec(time.Second, stdin),
+			}
+			if home != "" && statusline.ParsePayload(stdin).SessionID != "" {
+				// Run by Claude Code (its payload carries a session id), which
+				// sets COLUMNS to the live terminal width: remember it so the
+				// editor previews the line at the user's real width. Not the
+				// tput fallback: with stdout piped to Claude Code it can't see
+				// the terminal and prints terminfo's default 80.
+				if n, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil {
+					_ = statusline.RecordWidth(home, n)
+				}
 			}
 			if home != "" {
 				opts.History = cli.StatuslineHistory(home)

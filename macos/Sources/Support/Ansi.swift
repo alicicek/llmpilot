@@ -166,3 +166,43 @@ func ansiAttributedString(_ spans: [AnsiSpan], defaultColor: Color) -> Attribute
     }
     return result
 }
+
+/// Claude Code never wraps a statusline row. Measured live in Claude Code
+/// 2.1.289 (80 columns: 76 chars fit in full, 77 show 75 + "…"): a row of up
+/// to `columns − 4` visible chars is shown unchanged; a longer one is cut to
+/// `columns − 5` chars plus "…". The visible width is the Characters of the
+/// parsed text, escape codes excluded; the cut keeps each surviving span's
+/// colour.
+func previewFitColumns(_ columns: Int) -> Int { max(columns - 4, 0) }
+func previewVisibleColumns(_ columns: Int) -> Int { max(columns - 5, 0) }
+
+/// The editor preview as Claude Code prints it: the daemon's bytes split
+/// into rows on "\n", each row parsed and cut to the terminal's width.
+/// Empty bytes are no rows at all (the view shows its placeholder).
+func previewRows(_ ansi: String, columns: Int) -> [[AnsiSpan]] {
+    guard !ansi.isEmpty else { return [] }
+    let fits = previewFitColumns(columns)
+    let limit = previewVisibleColumns(columns)
+    return ansi.split(separator: "\n", omittingEmptySubsequences: false).map { row in
+        let spans = parseAnsi(String(row))
+        guard spans.reduce(0, { $0 + $1.text.count }) > fits else { return spans }
+        var kept: [AnsiSpan] = []
+        var left = limit
+        for span in spans where left > 0 {
+            var s = span
+            s.text = String(span.text.prefix(left))
+            left -= s.text.count
+            kept.append(s)
+        }
+        kept.append(AnsiSpan(text: "…", color: nil))
+        return kept
+    }
+}
+
+/// The preview box's width in cells: the longest row as cut, plus the
+/// 2-cell indent, never past the terminal's own width. A short line in a
+/// wide terminal is a compact box, not 200 cells of empty black.
+func previewBoxCells(_ rows: [[AnsiSpan]], columns: Int) -> Int {
+    let longest = rows.map { $0.reduce(0) { $0 + $1.text.count } }.max() ?? 0
+    return min(columns, longest + 2)
+}

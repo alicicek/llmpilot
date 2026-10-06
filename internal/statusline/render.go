@@ -1,5 +1,7 @@
 package statusline
 
+import "strings"
+
 // Flex modes: how much of the terminal the line may use. full-minus-40 is
 // the default — it reserves Claude Code's own chrome on the same row
 // (teardown: renderer.ts flex modes).
@@ -36,16 +38,45 @@ type renderedSeg struct {
 	narrowed bool
 }
 
-// Render produces the one-line statusline for a config. Segments render in
-// config order; when the width budget is exceeded, lower-priority segments
-// first try their narrow form, then drop entirely — lowest priority first,
-// rightmost first on ties. The result carries ANSI per ctx.Tier.
+// NewlineID is the "New line" segment: it ends the first row and starts the
+// second. One per line (v1), so a statusline is at most two rows.
+const NewlineID = "newline"
+
+// Render produces the statusline for a config: one row, or two when a New
+// line segment splits it. Segments render in config order; when a row
+// exceeds the width budget, its lower-priority segments first try their
+// narrow form, then drop entirely — lowest priority first, rightmost first
+// on ties. Each row collapses on its own, since Claude Code cuts each row at
+// the terminal width independently. An empty row prints nothing. The result
+// carries ANSI per ctx.Tier.
 func Render(cfg Config, ctx *Ctx) string {
 	ctx.defaults()
+	var rows []string
+	for _, segs := range splitRows(cfg.Segments) {
+		if row := renderRow(cfg, segs, ctx); row != "" {
+			rows = append(rows, row)
+		}
+	}
+	return strings.Join(rows, "\n")
+}
+
+// splitRows cuts the segment list at the first New line. A later New line
+// renders nothing (Validate refuses it; Migrate drops it from hand-edited
+// files), so the line stays at two rows.
+func splitRows(segs []SegmentConfig) [][]SegmentConfig {
+	for i, sc := range segs {
+		if sc.ID == NewlineID {
+			return [][]SegmentConfig{segs[:i], segs[i+1:]}
+		}
+	}
+	return [][]SegmentConfig{segs}
+}
+
+func renderRow(cfg Config, segs []SegmentConfig, ctx *Ctx) string {
 	sep := cfg.separator()
 
 	var items []*renderedSeg
-	for _, sc := range cfg.Segments {
+	for _, sc := range segs {
 		seg, ok := registry[sc.ID]
 		if !ok {
 			continue // forward-compat: a newer file's segment just doesn't render
@@ -76,10 +107,12 @@ func Render(cfg Config, ctx *Ctx) string {
 	return paint(all, ctx.Tier)
 }
 
+// spansWidth measures what paint prints, so a control byte can't push a
+// segment that fits out of the row.
 func spansWidth(spans []Span) int {
 	w := 0
 	for _, sp := range spans {
-		w += len([]rune(sp.Text))
+		w += len([]rune(printable(sp.Text)))
 	}
 	return w
 }

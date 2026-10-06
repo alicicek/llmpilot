@@ -71,7 +71,9 @@ protocol CockpitDaemonAPI: DaemonAPI {
 
     // GET /v1/statusline/preview — no auth (server.go:70; statusline.go:52-92).
     // `config` previews a DRAFT config JSON string; nil previews the saved one.
-    func statuslinePreview(width: Int, tier: String, config: String?) async throws -> StatuslinePreviewResponse
+    // `width` nil sends width=auto: the daemon resolves it to the columns
+    // Claude Code last gave the statusline (else 120).
+    func statuslinePreview(width: Int?, tier: String, config: String?) async throws -> StatuslinePreviewResponse
     // GET /v1/statusline/preview for ONE segment at width 0 (no collapse) —
     // the editor's chips carry the renderer's own bytes for each segment
     // (U1). Same endpoint as statuslinePreview; a separate call so the
@@ -322,8 +324,8 @@ extension HTTPDaemonClient: CockpitDaemonAPI {
     /// of the endpoint (internal/daemon/statusline.go handleStatuslinePreview
     /// reads a `config` query param): the editor previews unsaved edits with
     /// the daemon's real renderer. nil previews the saved config.
-    func statuslinePreview(width: Int, tier: String, config: String? = nil) async throws -> StatuslinePreviewResponse {
-        var query = ["width": String(width), "tier": tier]
+    func statuslinePreview(width: Int?, tier: String, config: String? = nil) async throws -> StatuslinePreviewResponse {
+        var query = ["width": width.map(String.init) ?? "auto", "tier": tier]
         if let config { query["config"] = config }
         return try DaemonDates.decoder().decode(
             StatuslinePreviewResponse.self,

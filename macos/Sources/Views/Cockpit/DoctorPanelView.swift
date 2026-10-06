@@ -509,7 +509,7 @@ private final class PreviewDoctorAPI: CockpitDaemonAPI & DaemonAPI, @unchecked S
         return reportResult
     }
     func analytics(days: Int) async throws -> AnalyticsResponse { throw DaemonError.down }
-    func statuslinePreview(width: Int, tier: String, config: String?) async throws -> StatuslinePreviewResponse {
+    func statuslinePreview(width: Int?, tier: String, config: String?) async throws -> StatuslinePreviewResponse {
         throw DaemonError.down
     }
     func statuslineConfig() async throws -> StatuslineConfigResponse { throw DaemonError.down }

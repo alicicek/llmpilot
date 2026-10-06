@@ -233,7 +233,7 @@ final class StatuslineEditorTests: XCTestCase {
         XCTAssertEqual(
             api.statuslinePreviewRequests.count, baseline + 1,
             "rapid mutations must coalesce into exactly one preview call, not one per change")
-        XCTAssertEqual(api.statuslinePreviewRequests.last?.width, 120)
+        XCTAssertNil(api.statuslinePreviewRequests.last?.width, "auto: nil on the wire is width=auto")
         XCTAssertEqual(api.statuslinePreviewRequests.last?.tier, "truecolor")
     }
 

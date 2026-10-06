@@ -122,10 +122,16 @@ func Migrate(raw Config) Config {
 	if raw.Keep != nil && validKeepCommand(raw.Keep.Command) {
 		out.Keep = &KeepConfig{Command: raw.Keep.Command}
 	}
+	newlines := 0
 	for _, sc := range raw.Segments {
 		seg, ok := registry[sc.ID]
 		if !ok {
 			continue
+		}
+		if sc.ID == NewlineID {
+			if newlines++; newlines > 1 {
+				continue // one New line per statusline (v1)
+			}
 		}
 		clean := SegmentConfig{ID: sc.ID}
 		for _, spec := range seg.Options {
@@ -140,7 +146,7 @@ func Migrate(raw Config) Config {
 		}
 		out.Segments = append(out.Segments, clean)
 	}
-	if len(out.Segments) == 0 {
+	if contentSegments(out.Segments) == 0 {
 		out.Segments = Default().Segments
 		if out.Preset == "" {
 			out.Preset = "runway"
@@ -156,8 +162,17 @@ func Validate(c Config) error {
 	if c.Version != 0 && c.Version != ConfigVersion {
 		return fmt.Errorf("unsupported config version %d (current %d)", c.Version, ConfigVersion)
 	}
-	if len(c.Segments) == 0 {
+	if contentSegments(c.Segments) == 0 {
 		return errors.New("at least one segment is required")
+	}
+	newlines := 0
+	for _, sc := range c.Segments {
+		if sc.ID == NewlineID {
+			newlines++
+		}
+	}
+	if newlines > 1 {
+		return errors.New("only one New line per statusline")
 	}
 	if len(c.Separator) > 8 {
 		return fmt.Errorf("separator too long (%d chars, max 8)", len(c.Separator))
@@ -196,6 +211,18 @@ func Validate(c Config) error {
 	return nil
 }
 
+// contentSegments counts the segments that print something — a New line
+// alone is an empty statusline.
+func contentSegments(segs []SegmentConfig) int {
+	n := 0
+	for _, sc := range segs {
+		if sc.ID != NewlineID {
+			n++
+		}
+	}
+	return n
+}
+
 // SaveConfig validates and writes statusline.json atomically.
 func SaveConfig(home string, c Config) error {
 	if err := Validate(c); err != nil {
@@ -210,7 +237,7 @@ func SaveConfig(home string, c Config) error {
 // from a hand-edited config or the API.
 func hasControl(s string) bool {
 	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
+		if isControl(r) {
 			return true
 		}
 	}

@@ -1,6 +1,7 @@
 # Statusline
 
-`llmpilot statusline` prints one line for Claude Code's `statusLine` hook.
+`llmpilot statusline` prints your line for Claude Code's `statusLine` hook —
+one row, or two when a New line segment splits it.
 Zero config renders the classic runway line; `$LLMPILOT_HOME/statusline.json`
 (or the app's editor: Settings → Statusline → Customize statusline, where you
 drag segment chips between your line and a tray of the rest) makes it yours.
@@ -69,6 +70,7 @@ Segments render in config order; anything without data hides honestly.
 | `autopilot` | `auto:on` / `auto:off` / `auto:down` (daemon not answering) | store + socket |
 | `command` | first line of a shell command (150 ms budget) | exec |
 | `text` | a fixed label, optionally colored | — |
+| `newline` | New line: everything after it prints on a second row (one per line) | — |
 
 `burn`, `fleet`, `rotation`, and `autopilot` are daemon-backed — segments a
 stateless statusline script cannot render.

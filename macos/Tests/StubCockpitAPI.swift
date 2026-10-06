@@ -134,10 +134,10 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
     var putStatuslineConfigResult: Result<StatuslineConfigResponse, Error> = .failure(DaemonError.down)
     var statuslineSegmentsResult: Result<StatuslineSegmentsResponse, Error> = .failure(DaemonError.down)
 
-    private(set) var statuslinePreviewRequests: [(width: Int, tier: String, config: String?)] = []
+    private(set) var statuslinePreviewRequests: [(width: Int?, tier: String, config: String?)] = []
     private(set) var putStatuslineConfigs: [StatuslineConfig] = []
 
-    func statuslinePreview(width: Int, tier: String, config: String?) async throws -> StatuslinePreviewResponse {
+    func statuslinePreview(width: Int?, tier: String, config: String?) async throws -> StatuslinePreviewResponse {
         statuslinePreviewRequests.append((width, tier, config))
         return try statuslinePreviewResult.get()
     }

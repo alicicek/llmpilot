@@ -23,9 +23,18 @@ enum StatuslineEditorCopy {
     static let offlineCommand = "llmpilot daemon run"
 
     static let previewHelper =
-        "Rendered by the daemon's real renderer, shown at 120 columns, full color. Your " +
-        "terminal's own width and color depth apply there. Session fields (model, dir, cost) " +
-        "show sample values here."
+        "Rendered by the daemon's real renderer. Claude Code cuts a row that's too wide with “…” — " +
+        "so does this. Session fields (model, dir, cost) show sample values."
+    /// The line above the preview box, split around the column count so
+    /// the view can set the number in tabular numerals.
+    /// The width is the last one ANY Claude Code session reported, so the
+    /// copy never claims it is "your" terminal's.
+    static func widthCaption(real: Bool) -> (lead: String, tail: String) {
+        real
+            ? ("At the width Claude Code last reported: ", " columns.")
+            : ("Claude Code hasn't reported its width yet — previewing at ", " columns.")
+    }
+    static func previewLabel(columns: Int) -> String { "Statusline preview, \(columns) columns" }
     static let renderingPlaceholder = "rendering…"
 
     static let emptyLine = "Empty line — drag a segment up from the tray."
@@ -34,7 +43,8 @@ enum StatuslineEditorCopy {
     static let trayEmpty = "Every segment is on your line."
     static let presetHeader = "Preset"
     static let customPreset = "Custom"
-    static let legend = "Drag to reorder · drag a chip down to take it off the line · click a chip for its options."
+    static let legend = "Drag to reorder · drag a chip down to take it off the line · click a chip for its options · New line starts a second row."
+    static let newlineHint = "next row starts here"
     static let quietSegment = "nothing to show right now"
     static let takeOffLine = "Take off the line"
     static let moveLeft = "Move left"
@@ -86,6 +96,19 @@ final class StatuslineEditorModel: ObservableObject {
     @Published private(set) var saved: StatuslineConfig?
     @Published var draft: StatuslineConfig?
     @Published private(set) var preview: String = ""
+    /// The width `preview` was rendered at — the daemon's resolved columns.
+    /// The view cuts and labels at it, so the bytes are never cut to a
+    /// width they weren't rendered for.
+    @Published private(set) var previewRenderedColumns: Int = 120
+    /// True when that width is the one Claude Code last gave the
+    /// statusline; false when the daemon never saw one and used 120.
+    @Published private(set) var previewWidthIsReal = false
+    /// False until the first full-line render has answered — the view shows
+    /// no width caption before that (and after a failed first call).
+    @Published private(set) var previewWidthLanded = false
+    /// The registry's row break: a chip like any other, but it renders no
+    /// bytes of its own (a lone-segment preview of it is a 400).
+    static let newlineID = "newline"
     @Published var err: String?
     @Published private(set) var applied = false
     /// U1: each chip carries the renderer's own bytes for its segment,
@@ -121,11 +144,16 @@ final class StatuslineEditorModel: ObservableObject {
 
     // MARK: - derived state
 
+    /// The "N segments" count: a row break is not a segment.
+    var lineSegmentCount: Int {
+        (draft?.segments ?? []).filter { $0.id != Self.newlineID }.count
+    }
+
     /// StatuslineDialog.tsx:166 `JSON.stringify(draft) !== JSON.stringify(saved)`.
     var dirty: Bool { draft != saved }
 
     /// StatuslineDialog.tsx:395 `disabled={!dirty || segments.length === 0}`.
-    var canApply: Bool { dirty && !(draft?.segments.isEmpty ?? true) }
+    var canApply: Bool { dirty && lineSegmentCount > 0 }
 
     /// StatuslineDialog.tsx:165 `available` — segments not already in the line.
     var availableSegments: [SLSegmentSpec] {
@@ -185,7 +213,7 @@ final class StatuslineEditorModel: ObservableObject {
         var seen = Set<String>()
         func want(_ id: String, _ options: [String: JSONValue]?) {
             let key = Self.segmentPreviewKey(id: id, options: options)
-            guard !seen.contains(key), segmentPreviews[key] == nil else { return }
+            guard id != Self.newlineID, !seen.contains(key), segmentPreviews[key] == nil else { return }
             seen.insert(key)
             // The draft's colour mode rides along so a colour-off line gets
             // colour-off chips; flex off so a chip never collapses itself.
@@ -224,6 +252,9 @@ final class StatuslineEditorModel: ObservableObject {
         // fresh full-line preview (review 2026-10-03 P1).
         segmentPreviews = [:]
         segmentPreviewTask?.cancel()
+        // Same for the width caption: the terminal may have been resized
+        // since; say nothing until this open's render lands.
+        previewWidthLanded = false
         do {
             async let metaResult = api.statuslineSegments()
             async let configResult = api.statuslineConfig()
@@ -419,7 +450,7 @@ final class StatuslineEditorModel: ObservableObject {
     private func runPreview(_ draft: StatuslineConfig) async {
         // An empty line is a valid editing state the daemon refuses to
         // render (400) — show it empty instead of the previous line.
-        guard !draft.segments.isEmpty else {
+        guard draft.segments.contains(where: { $0.id != Self.newlineID }) else {
             preview = ""
             clearPreviewError()
             refreshSegmentPreviews()
@@ -427,9 +458,14 @@ final class StatuslineEditorModel: ObservableObject {
         }
         do {
             let cfgJSON = try Self.encode(draft)
-            let resp = try await api.statuslinePreview(width: 120, tier: "truecolor", config: cfgJSON)
+            // width nil = auto: the daemon answers at the columns Claude Code
+            // last gave the statusline, so the preview is YOUR terminal's.
+            let resp = try await api.statuslinePreview(width: nil, tier: "truecolor", config: cfgJSON)
             guard !Task.isCancelled else { return }
             preview = resp.line
+            previewRenderedColumns = resp.width > 0 ? resp.width : 120
+            previewWidthIsReal = resp.widthSource == "claude-code"
+            previewWidthLanded = true
             clearPreviewError()
             refreshSegmentPreviews()
         } catch is CancellationError {

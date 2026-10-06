@@ -4,6 +4,45 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-10-06
+
+The statusline can print two rows, its chips move with your pointer, and
+the editor previews the line at your terminal's real width. No price, trial
+length, offer, or account-data changes.
+
+### Added
+
+- **Split the statusline into two rows.** A New line segment ends the first
+  row and starts a second — one per line. Claude Code never wraps a
+  statusline: a row wider than the terminal is cut with "…". With New line,
+  a long line moves its tail below instead of losing it, and each row fits
+  the terminal on its own, so a crowded second row never costs the first
+  one anything. Drag New line from the editor's tray like any other
+  segment, or add `{"id": "newline"}` to `~/.llmpilot/statusline.json`.
+
+### Changed
+
+- **Chips move with your pointer.** In Settings → Statusline → Customize
+  statusline, a chip you press lifts and follows the pointer while the other
+  chips slide aside to open the gap where it will land. Drop it in the tray
+  to take it off the line; press Escape or drop it anywhere else and it goes
+  back. A click still opens its options, keyboard and VoiceOver actions are
+  unchanged, and with Reduce Motion on the chips move without sliding or
+  scaling.
+- **The preview shows your line at your terminal's width.** Each time
+  Claude Code runs the statusline, llmpilot notes the width it reports (a
+  single number, kept in `~/.llmpilot/statusline-width.json`). The editor
+  previews at that width — each row in a box as wide as your terminal, cut
+  with "…" exactly where Claude Code cuts it — and a caption names the
+  width. Until Claude Code has run the line once, the preview uses 120
+  columns and says so. The preview no longer scrolls sideways.
+
+### Fixed
+
+- **A line break in a folder or branch name stays off your statusline.**
+  Control characters in segment text are dropped before printing, so they
+  can no longer push part of the line onto an extra row.
+
 ## [1.3.6] - 2026-10-03
 
 The statusline becomes something you install and arrange from the app, and

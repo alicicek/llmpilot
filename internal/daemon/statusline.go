@@ -67,8 +67,17 @@ func (d *Daemon) handleStatuslinePreview(w http.ResponseWriter, r *http.Request)
 		}
 		cfg = draft
 	}
-	width := 0
-	if v := q.Get("width"); v != "" {
+	width, source := 0, ""
+	switch v := q.Get("width"); v {
+	case "":
+	case "auto":
+		// The width Claude Code last rendered the line at, so the editor
+		// shows the line as the user's own terminal does; 120 until then.
+		width, source = statusline.DefaultPreviewColumns, "default"
+		if n, ok := statusline.LastWidth(d.Store.Home()); ok {
+			width, source = n, "claude-code"
+		}
+	default:
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 || n > 1000 {
 			httpError(w, http.StatusBadRequest, errors.New("width must be an integer in [0,1000]"))
@@ -83,12 +92,16 @@ func (d *Daemon) handleStatuslinePreview(w http.ResponseWriter, r *http.Request)
 
 	line := statusline.Render(cfg, d.previewCtx(r, tier, width))
 	plain := statusline.Render(cfg, d.previewCtx(r, statusline.TierPlain, width))
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"line":  line,
 		"plain": plain,
 		"width": width,
 		"tier":  tier.String(),
-	})
+	}
+	if source != "" {
+		resp["width_source"] = source
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (d *Daemon) handleStatuslineConfigGet(w http.ResponseWriter, _ *http.Request) {

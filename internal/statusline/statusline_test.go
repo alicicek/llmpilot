@@ -113,6 +113,9 @@ func TestSegmentMatrix(t *testing.T) {
 		"usage":   {"mode": "bar"},
 	}
 	for _, spec := range Specs() {
+		if spec.ID == NewlineID {
+			continue // a layout marker — TestNewlineSplitsRows covers it
+		}
 		for _, tier := range tiers {
 			t.Run(spec.ID+"/"+tier.String(), func(t *testing.T) {
 				ctx := fixtureCtx(t, tier)
@@ -170,6 +173,136 @@ func TestWidthCollapse(t *testing.T) {
 	t.Logf("width 200: %q", wide)
 	t.Logf("width 100: %q", medium)
 	t.Logf("width  60: %q", narrow)
+}
+
+// TestNewlineSplitsRows: a New line segment prints two rows, and each row
+// collapses against the terminal width on its own — Claude Code cuts every
+// row independently (measured: 2.1.289 shows each line as its own row).
+func TestNewlineSplitsRows(t *testing.T) {
+	cfg := Config{Version: 1, Flex: FlexFull, Segments: []SegmentConfig{
+		{ID: "account"}, {ID: "usage"}, {ID: NewlineID},
+		{ID: "dir"}, {ID: "model"}, {ID: "context"}, {ID: "cost"}, {ID: "autopilot"},
+	}}
+	for _, width := range []int{0, 50, 80, 120, 200} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			ctx := fixtureCtx(t, TierPlain)
+			ctx.Width = width
+			rows := strings.Split(Render(cfg, ctx), "\n")
+			if len(rows) != 2 {
+				t.Fatalf("want 2 rows, got %d: %q", len(rows), rows)
+			}
+			if !strings.Contains(rows[0], "5h:23%") {
+				t.Errorf("row 1 lost the usage runway: %q", rows[0])
+			}
+			if strings.Contains(rows[0], "Fable") || strings.Contains(rows[1], "5h:23%") {
+				t.Errorf("segments crossed the New line: %q", rows)
+			}
+			if budget := widthBudget(cfg.Flex, width); budget > 0 {
+				for i, row := range rows {
+					if w := len([]rune(row)); w > budget {
+						t.Errorf("row %d is %d chars, budget %d: %q", i+1, w, budget, row)
+					}
+				}
+			}
+			if width == 0 || width >= 120 {
+				for _, want := range []string{"a@example.dev", "myrepo", "Fable", "ctx:34%", "$3.42", "auto:on"} {
+					if !strings.Contains(strings.Join(rows, "\n"), want) {
+						t.Errorf("width %d dropped %q: %q", width, want, rows)
+					}
+				}
+			}
+			t.Logf("COLUMNS=%-3d row1 %q", width, rows[0])
+			t.Logf("COLUMNS=%-3d row2 %q", width, rows[1])
+		})
+	}
+
+	// Per-row: at 80 columns (budget 74) a crowded row 2 must collapse to
+	// fit on its own, and its overflow must not cost row 1 anything.
+	crowded := Config{Version: 1, Flex: FlexFull, Segments: []SegmentConfig{
+		{ID: "account"}, {ID: "usage"}, {ID: NewlineID},
+		{ID: "dir"}, {ID: "model"}, {ID: "context"}, {ID: "cost"}, {ID: "autopilot"},
+		{ID: "fleet"}, {ID: "rotation"}, {ID: "burn"},
+	}}
+	at := func(c Config, width int) []string {
+		ctx := fixtureCtx(t, TierPlain)
+		ctx.Width = width
+		return strings.Split(Render(c, ctx), "\n")
+	}
+	full, got := at(crowded, 0), at(crowded, 80)
+	if w := len([]rune(full[1])); w <= 74 {
+		t.Fatalf("fixture must overflow row 2 at 80 columns: %d chars", w)
+	}
+	if len(got) != 2 || len([]rune(got[1])) > 74 || got[1] == "" {
+		t.Errorf("row 2 must collapse into its own 74-char budget, got %q", got)
+	}
+	one := at(Config{Version: 1, Flex: FlexFull, Segments: []SegmentConfig{{ID: "account"}, {ID: "usage"}}}, 80)[0]
+	if got[0] != one {
+		t.Errorf("row 1 collapsed with row 2's overflow:\n got %q\nwant %q", got[0], one)
+	}
+	t.Logf("crowded row2 @80 %q", got[1])
+}
+
+// TestPaintStripsControlBytes: a newline or raw ESC in segment text (a
+// folder or branch name) can neither start a third row nor inject escapes.
+func TestPaintStripsControlBytes(t *testing.T) {
+	if got := paint([]Span{span("a\nb\x1b[31mc\x7f")}, TierPlain); got != "ab[31mc" {
+		t.Errorf("paint kept control bytes: %q", got)
+	}
+}
+
+// TestWidthCountsPrintedText: collapse measures what paint prints, so a
+// control byte in a folder name can't narrow or drop a segment that fits.
+func TestWidthCountsPrintedText(t *testing.T) {
+	spans := []Span{span("a\nb\x1b[31mc\x7f")}
+	if got, want := spansWidth(spans), len([]rune(paint(spans, TierPlain))); got != want {
+		t.Errorf("spansWidth = %d, printed width = %d", got, want)
+	}
+}
+
+// TestNewlineEdgesPrintNoBlankRow: a New line first or last leaves one row,
+// never an empty one.
+func TestNewlineEdgesPrintNoBlankRow(t *testing.T) {
+	for name, segs := range map[string][]SegmentConfig{
+		"first": {{ID: NewlineID}, {ID: "usage"}},
+		"last":  {{ID: "usage"}, {ID: NewlineID}},
+	} {
+		ctx := fixtureCtx(t, TierPlain)
+		got := Render(Config{Version: 1, Segments: segs}, ctx)
+		if got == "" || strings.Contains(got, "\n") {
+			t.Errorf("%s: want one non-empty row, got %q", name, got)
+		}
+	}
+}
+
+// TestNewlineOnePerLine: Validate refuses a second New line or a line of
+// nothing but a New line; Migrate keeps a hand-edited file at two rows.
+func TestNewlineOnePerLine(t *testing.T) {
+	two := Config{Version: 1, Segments: []SegmentConfig{
+		{ID: "usage"}, {ID: NewlineID}, {ID: "model"}, {ID: NewlineID}, {ID: "cost"},
+	}}
+	if err := Validate(two); err == nil {
+		t.Error("Validate accepted two New lines")
+	}
+	if err := Validate(Config{Version: 1, Segments: []SegmentConfig{{ID: NewlineID}}}); err == nil {
+		t.Error("Validate accepted a line of only a New line")
+	}
+	one := Config{Version: 1, Segments: []SegmentConfig{{ID: "usage"}, {ID: NewlineID}, {ID: "model"}}}
+	if err := Validate(one); err != nil {
+		t.Errorf("Validate refused one New line: %v", err)
+	}
+	m := Migrate(two)
+	n := 0
+	for _, sc := range m.Segments {
+		if sc.ID == NewlineID {
+			n++
+		}
+	}
+	if n != 1 || len(m.Segments) != 4 {
+		t.Errorf("Migrate kept %d New lines in %v, want the first only", n, m.Segments)
+	}
+	if m := Migrate(Config{Segments: []SegmentConfig{{ID: NewlineID}}}); m.Preset != "runway" {
+		t.Errorf("a New-line-only file must load as the default line, got %+v", m)
+	}
 }
 
 // TestWidthCollapseDropsRightmostOnTie: equal priorities drop right-to-left.

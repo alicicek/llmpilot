@@ -120,6 +120,35 @@ func TestStatuslinePreviewRejectsJunk(t *testing.T) {
 	}
 }
 
+// TestStatuslinePreviewAutoWidth: width=auto previews at the width Claude
+// Code last rendered the line at, and says when it is only the default.
+func TestStatuslinePreviewAutoWidth(t *testing.T) {
+	d, st := slFixture(t)
+	srv := httptest.NewServer(withToken(d))
+	defer srv.Close()
+
+	var doc struct {
+		Width       int    `json:"width"`
+		WidthSource string `json:"width_source"`
+	}
+	getJSON(t, srv.URL+"/v1/statusline/preview?width=auto", &doc)
+	if doc.Width != 120 || doc.WidthSource != "default" {
+		t.Errorf("never seen: width %d source %q, want 120 default", doc.Width, doc.WidthSource)
+	}
+	if err := statusline.RecordWidth(st.Home(), 80); err != nil {
+		t.Fatal(err)
+	}
+	getJSON(t, srv.URL+"/v1/statusline/preview?width=auto", &doc)
+	if doc.Width != 80 || doc.WidthSource != "claude-code" {
+		t.Errorf("seen at 80: width %d source %q, want 80 claude-code", doc.Width, doc.WidthSource)
+	}
+	doc.WidthSource = ""
+	getJSON(t, srv.URL+"/v1/statusline/preview?width=0", &doc)
+	if doc.WidthSource != "" {
+		t.Errorf("an explicit width carries no source, got %q", doc.WidthSource)
+	}
+}
+
 // TestStatuslinePreviewNeverExecutesCommands: a command segment in a draft
 // config previews as a placeholder — a GET must not reach the shell.
 func TestStatuslinePreviewNeverExecutesCommands(t *testing.T) {

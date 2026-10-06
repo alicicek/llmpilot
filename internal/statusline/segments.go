@@ -188,6 +188,12 @@ func init() {
 		},
 		render: renderText,
 	})
+	// A layout marker, not a renderer: Render splits the line here into a
+	// second row (Claude Code shows each printed line as its own row).
+	register(&Segment{
+		ID: NewlineID, Name: "New line", Desc: "starts a second row — everything after it prints on its own line",
+		render: func(*Ctx, segOpts) []Span { return nil },
+	})
 }
 
 // --- account -----------------------------------------------------------

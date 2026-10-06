@@ -277,7 +277,15 @@ struct NativeCockpitRootView: View {
             .onDisappear { licenseAccountModel.resetTransientUI() }
         }
         .sheet(isPresented: $statuslineOpen) {
-            SheetChrome(minWidth: 560, minHeight: 480, onClose: { statuslineOpen = false }) {
+            // A 120-column preview box (the width Claude Code is assumed to
+            // have until it reports one) must fit unclipped at 11.5pt: 120
+            // cells + the box's own 12pt side padding ×2 + SheetChrome's
+            // 20pt inset ×2, rounded up. A wider box shrinks the font (floor
+            // 9pt) and then scrolls inside the sheet; the sheet doesn't grow.
+            SheetChrome(minWidth: ceil(StatuslineEditorView.previewBoxWidth(cells: 120, fontSize: StatuslineEditorView.previewFontBase)
+                                        + StatuslineEditorView.previewBoxInset * 2
+                                        + SheetChromeMetrics.inset * 2),
+                        minHeight: 480, onClose: { statuslineOpen = false }) {
                 StatuslineEditorView(model: statuslineModel, offline: fleet.status != .live)
             }
         }
@@ -1338,6 +1346,10 @@ final class NativeCockpitWindowController: NSWindowController, NSWindowDelegate 
 /// from the top/left edge while Close sat 16pt from the bottom-right — the
 /// asymmetry the owner's walk caught. This chrome is now the ONLY inset
 /// owner; the sheet bodies it wraps ship edge-to-edge.
+enum SheetChromeMetrics {
+    static let inset: CGFloat = 20
+}
+
 struct SheetChrome<Content: View>: View {
     var width: CGFloat? = nil
     var minWidth: CGFloat? = nil
@@ -1354,7 +1366,7 @@ struct SheetChrome<Content: View>: View {
                     .keyboardShortcut(.cancelAction)
             }
         }
-        .padding(20)
+        .padding(SheetChromeMetrics.inset)
         .frame(width: width)
         .frame(minWidth: minWidth, minHeight: minHeight)
     }

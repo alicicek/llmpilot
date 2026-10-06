@@ -96,7 +96,7 @@ private struct PreviewStubAPI: CockpitDaemonAPI {
     func history(accountID: String, kind: String, scope: String?) async throws -> [HistorySample] { try await fail() }
     func doctor() async throws -> DoctorReport { try await fail() }
     func analytics(days: Int) async throws -> AnalyticsResponse { try await fail() }
-    func statuslinePreview(width: Int, tier: String, config: String?) async throws -> StatuslinePreviewResponse { try await fail() }
+    func statuslinePreview(width: Int?, tier: String, config: String?) async throws -> StatuslinePreviewResponse { try await fail() }
     func statuslineConfig() async throws -> StatuslineConfigResponse { try await fail() }
     func putStatuslineConfig(_ cfg: StatuslineConfig) async throws -> StatuslineConfigResponse { try await fail() }
     func statuslineSegments() async throws -> StatuslineSegmentsResponse { try await fail() }

@@ -485,7 +485,7 @@ private final class PreviewHistoryAPI: CockpitDaemonAPI & DaemonAPI, @unchecked 
         guard let analyticsResult else { throw DaemonError.down }
         return analyticsResult
     }
-    func statuslinePreview(width: Int, tier: String, config: String?) async throws -> StatuslinePreviewResponse {
+    func statuslinePreview(width: Int?, tier: String, config: String?) async throws -> StatuslinePreviewResponse {
         throw DaemonError.down
     }
     func statuslineConfig() async throws -> StatuslineConfigResponse { throw DaemonError.down }
