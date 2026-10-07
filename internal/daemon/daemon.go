@@ -393,10 +393,10 @@ func (d *Daemon) init() {
 		if tok, err := newAuthToken(); err == nil {
 			d.authToken = tok
 		} else {
-			// Fail closed twice over: an empty token never matches, so guarded
-			// license routes answer 401 on a bare Handler(), and Serve()
-			// refuses to start at all rather than run without a token file.
-			d.Log.Error("auth token generation failed — license actions disabled", "err", err)
+			// Fail closed twice over: an empty token never matches, so every
+			// API route answers 401 on a bare Handler(), and Serve() refuses
+			// to start at all rather than run without a token file.
+			d.Log.Error("auth token generation failed — the API will not serve", "err", err)
 		}
 		if d.PollInterval < DefaultPollInterval && !d.AllowFastPoll {
 			d.PollInterval = DefaultPollInterval

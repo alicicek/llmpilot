@@ -19,6 +19,10 @@ UID_N=$(id -u)
 ROOT=$(mktemp -d /tmp/llmpilot-e2e-firstrun.XXXXXX)
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home" # NOT created — fresh install
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export HOME="$ROOT/home"
 export CLAUDE_CONFIG_DIR="$ROOT/home/claude-main"
 KEYCHAIN="$ROOT/throwaway.keychain-db"
@@ -93,7 +97,7 @@ PORT=""
 for _ in $(seq 1 120); do
   if [ -f "$LLMPILOT_HOME/daemon.port" ]; then
     PORT=$(cat "$LLMPILOT_HOME/daemon.port")
-    curl -sf "http://127.0.0.1:$PORT/v1/state" >/dev/null 2>&1 && break
+    dget -sf "http://127.0.0.1:$PORT/v1/state" >/dev/null 2>&1 && break
     PORT=""
   fi
   sleep 0.5
@@ -147,7 +151,7 @@ case "$SECOND_OUT" in
   *"already running"*) echo "== single-instance (already-live): second daemon run exited 0: '$SECOND_OUT' ==" ;;
   *) echo "E2E FIRSTRUN: FAIL — unexpected second-run output: $SECOND_OUT"; exit 1 ;;
 esac
-curl -sf "http://127.0.0.1:$PORT/v1/state" >/dev/null || { echo "E2E FIRSTRUN: FAIL — first daemon lost its socket"; exit 1; }
+dget -sf "http://127.0.0.1:$PORT/v1/state" >/dev/null || { echo "E2E FIRSTRUN: FAIL — first daemon lost its socket"; exit 1; }
 DAEMONS=$(pgrep -f "$BIN daemon run" | wc -l | tr -d ' ')
 [ "$DAEMONS" = "1" ] || { echo "E2E FIRSTRUN: FAIL — $DAEMONS daemons running, want 1"; exit 1; }
 echo "== exactly ONE daemon process (legacy-fallback path): $DAEMONS =="

@@ -51,6 +51,10 @@ echo "== sandboxed Pro daemon pointed at the local worker =="
 export TZ=UTC
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/home"
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export LLMPILOT_KEYCHAIN="$KEYCHAIN"
 export LLMPILOT_ENTITLEMENT_URL="http://localhost:8787"
 mkdir -p "$LLMPILOT_HOME"
@@ -67,7 +71,7 @@ echo "  daemon on $BASE"
 TOKEN=$(cat "$LLMPILOT_HOME/daemon.token")
 
 echo "== GET /v1/license (official build, no entitlement yet) =="
-curl -fsS "$BASE/v1/license" | jq '{available, active, status}'
+dget -fsS "$BASE/v1/license" | jq '{available, active, status}'
 
 echo "== POST /v1/license/checkout WITHOUT the install token must be 401 =="
 NOAUTH=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE/v1/license/checkout" \
@@ -78,7 +82,7 @@ fi
 echo "  PASS: tokenless checkout refused (401)"
 
 echo "== GET /v1/license/quote — the server-quoted consent terms =="
-QUOTE=$(curl -fsS "$BASE/v1/license/quote")
+QUOTE=$(dget -fsS "$BASE/v1/license/quote")
 TRIAL_DAYS=$(printf '%s' "$QUOTE" | jq -r '.trial_days')
 CUR=$(printf '%s' "$QUOTE" | jq -r '.prices.discount | keys[0]')
 AMOUNT=$(printf '%s' "$QUOTE" | jq -r ".prices.discount[\"$CUR\"]")

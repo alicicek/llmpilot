@@ -65,7 +65,7 @@ export function nextBookableReset(opts: {
 }
 
 export async function fetchSchedules(): Promise<Schedule[]> {
-  const res = await fetch("/v1/schedules");
+  const res = await fetch("/v1/schedules", { headers: authHeaders() });
   if (!res.ok) throw new Error(`schedules: HTTP ${res.status}`);
   return ((await res.json()) as Schedule[] | null) ?? [];
 }

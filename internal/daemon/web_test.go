@@ -46,10 +46,12 @@ func TestWebDoesNotShadowAPI(t *testing.T) {
 		Store: testStore(t),
 		WebFS: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("cockpit")}},
 	}
+	h := d.Handler()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/state", nil)
 	req.Host = "127.0.0.1:5555" // checkHost admits loopback only
-	d.Handler().ServeHTTP(rec, req)
+	req.Header.Set("Authorization", "Bearer "+d.authToken)
+	h.ServeHTTP(rec, req)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "accounts") {
 		t.Fatalf("API shadowed by web handler: %d %q", rec.Code, rec.Body.String())
 	}

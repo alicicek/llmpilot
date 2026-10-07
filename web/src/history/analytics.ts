@@ -1,3 +1,4 @@
+import { authHeaders } from "../auth.ts";
 import type { TokenCounts } from "./pricing.ts";
 
 // Mirrors of GET /v1/analytics and GET /v1/history (internal/daemon API).
@@ -26,7 +27,7 @@ export interface HistorySample {
 }
 
 export async function fetchAnalytics(days: number): Promise<Analytics> {
-  const res = await fetch(`/v1/analytics?days=${days}`);
+  const res = await fetch(`/v1/analytics?days=${days}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`analytics: HTTP ${res.status}`);
   const raw = (await res.json()) as Analytics;
   return {
@@ -39,7 +40,7 @@ export async function fetchAnalytics(days: number): Promise<Analytics> {
 export async function fetchHistory(accountID: string, kind: string, scope?: string): Promise<HistorySample[]> {
   const params = new URLSearchParams({ account_id: accountID, kind });
   if (scope) params.set("scope", scope);
-  const res = await fetch(`/v1/history?${params}`);
+  const res = await fetch(`/v1/history?${params}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`history: HTTP ${res.status}`);
   const raw = (await res.json()) as { samples: HistorySample[] | null };
   return raw.samples ?? [];

@@ -36,6 +36,10 @@ REAL_HOME="$HOME"
 ROOT=$(mktemp -d /tmp/llmpilot-e2e-native.XXXXXX)
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home"
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export HOME="$ROOT/home"
 export CLAUDE_CONFIG_DIR="$ROOT/claude"
 export LLMPILOT_DISABLE_SMAPPSERVICE=1
@@ -121,7 +125,7 @@ PORT=""
 for _ in $(seq 1 20); do
   if [ -f "$LLMPILOT_HOME/daemon.port" ]; then
     PORT=$(cat "$LLMPILOT_HOME/daemon.port")
-    curl -sf "http://127.0.0.1:$PORT/v1/state" >/dev/null 2>&1 && break
+    dget -sf "http://127.0.0.1:$PORT/v1/state" >/dev/null 2>&1 && break
     PORT=""
   fi
   sleep 0.5
@@ -131,7 +135,7 @@ echo "== demo daemon reachable: /v1/state ok on :$PORT =="
 
 # internal/daemon/demo.go DemoFleet: "returns four fictional accounts".
 WANT_ACCOUNTS=4
-GOT_ACCOUNTS=$(curl -sf "http://127.0.0.1:$PORT/v1/state" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['accounts']))")
+GOT_ACCOUNTS=$(dget -sf "http://127.0.0.1:$PORT/v1/state" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['accounts']))")
 [ "$GOT_ACCOUNTS" = "$WANT_ACCOUNTS" ] || {
   echo "E2E NATIVE: FAIL — /v1/state has $GOT_ACCOUNTS accounts, want the demo fleet's $WANT_ACCOUNTS"; exit 1; }
 echo "== demo fleet served: $GOT_ACCOUNTS accounts =="

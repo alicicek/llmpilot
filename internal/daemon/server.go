@@ -125,6 +125,9 @@ func requireJSON(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (d *Daemon) handleState(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	st, err := d.State(r.Context())
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
@@ -134,6 +137,9 @@ func (d *Daemon) handleState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		httpError(w, http.StatusInternalServerError, errors.New("streaming unsupported"))
@@ -474,6 +480,9 @@ func (d *Daemon) afterScheduleMutation(ctx context.Context) {
 }
 
 func (d *Daemon) handleSchedulesList(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	scheds, err := d.Store.Schedules()
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
@@ -698,6 +707,9 @@ func alreadyRegistered(det detect.Detected, existing []store.Account) bool {
 }
 
 func (d *Daemon) handleDetect(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	if d.Detect == nil {
 		httpError(w, http.StatusNotImplemented, errors.New("detect not wired"))
 		return
@@ -912,6 +924,9 @@ func (d *Daemon) handleAdoptMove(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleConfigGet(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	cfg, err := d.Store.Config()
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
@@ -947,6 +962,9 @@ func (d *Daemon) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleHistory(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	accountID := r.URL.Query().Get("account_id")
 	kind := r.URL.Query().Get("kind")
 	if accountID == "" || kind == "" {
@@ -974,6 +992,9 @@ func (d *Daemon) handleHistory(w http.ResponseWriter, r *http.Request) {
 // any given historical session in the shared dir is not recoverable from
 // local state alone.
 func (d *Daemon) handleAnalytics(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	days := 30
 	if v := r.URL.Query().Get("days"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -1155,6 +1176,23 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	}
 	defer func() { _ = lock.Close() }() // close drops the flock
 
+	// A daemon that died without its cleanup left daemon.port naming a port
+	// anyone can bind now. Drop it before the new token exists, so this run's
+	// token never sits on disk beside that stale port.
+	_ = os.Remove(PortFilePath(home))
+
+	// The token file lands BEFORE the socket and the port file: clients treat
+	// either as the readiness signal and every API route needs the token, so
+	// it must already be readable when they find the daemon.
+	if d.authToken == "" {
+		return errors.New("auth token missing — refusing to serve the API unauthenticated")
+	}
+	tokenFile := TokenFilePath(home)
+	if err := os.WriteFile(tokenFile, []byte(d.authToken+"\n"), 0o600); err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tokenFile) }()
+
 	sock := SocketPath(home)
 	_ = os.Remove(sock) // stale socket from a dead daemon; we hold the lock
 	ul, err := net.Listen("unix", sock)
@@ -1165,17 +1203,6 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	if err := os.Chmod(sock, 0o600); err != nil {
 		return err
 	}
-
-	// The token file lands BEFORE the port file: clients treat the port file
-	// as the readiness signal, so the token must already be readable then.
-	if d.authToken == "" {
-		return errors.New("auth token missing — refusing to serve license routes unauthenticated")
-	}
-	tokenFile := TokenFilePath(home)
-	if err := os.WriteFile(tokenFile, []byte(d.authToken+"\n"), 0o600); err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(tokenFile) }()
 
 	tl, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

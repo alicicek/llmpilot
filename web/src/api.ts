@@ -70,7 +70,7 @@ export interface State {
   license_error?: string;
 }
 
-export type Connection = "connecting" | "live" | "down";
+export type Connection = "connecting" | "live" | "down" | "auth";
 
 // Mirror of store.Config (internal/store/config.go), kept in sync by hand.
 export interface Config {
@@ -101,7 +101,7 @@ export interface DetectedDir {
 }
 
 export async function fetchConfig(): Promise<Config> {
-  const res = await fetch("/v1/config");
+  const res = await fetch("/v1/config", { headers: authHeaders() });
   if (!res.ok) throw new Error(`config: HTTP ${res.status}`);
   return res.json();
 }
@@ -119,7 +119,7 @@ export async function saveConfig(cfg: Config): Promise<void> {
 }
 
 export async function fetchDetected(): Promise<DetectedDir[]> {
-  const res = await fetch("/v1/detect");
+  const res = await fetch("/v1/detect", { headers: authHeaders() });
   if (!res.ok) throw new Error(`detect: HTTP ${res.status}`);
   return ((await res.json()) as DetectedDir[] | null) ?? [];
 }
@@ -273,8 +273,8 @@ export function normalizeState(raw: State): State {
 }
 
 export async function fetchState(): Promise<State> {
-  const res = await fetch("/v1/state");
-  if (!res.ok) throw new Error(`state: HTTP ${res.status}`);
+  const res = await fetch("/v1/state", { headers: authHeaders() });
+  if (!res.ok) throw await licenseError(res, `state: HTTP ${res.status}`);
   return normalizeState((await res.json()) as State);
 }
 
@@ -327,7 +327,7 @@ export interface DoctorReport {
 }
 
 export async function fetchDoctor(): Promise<DoctorReport> {
-  const res = await fetch("/v1/doctor");
+  const res = await fetch("/v1/doctor", { headers: authHeaders() });
   if (!res.ok) throw new Error(`doctor: HTTP ${res.status}`);
   const raw = (await res.json()) as DoctorReport;
   // A sweep always runs a fixed list of checks, so a document with none is not
@@ -393,7 +393,7 @@ export async function fetchStatuslineMeta(): Promise<{
   segments: SLSegmentSpec[];
   presets: SLPreset[];
 }> {
-  const res = await fetch("/v1/statusline/segments");
+  const res = await fetch("/v1/statusline/segments", { headers: authHeaders() });
   if (!res.ok) throw new Error(`statusline segments: HTTP ${res.status}`);
   return res.json();
 }
@@ -402,7 +402,7 @@ export async function fetchStatuslineConfig(): Promise<{
   config: SLConfig;
   load_error?: string;
 }> {
-  const res = await fetch("/v1/statusline/config");
+  const res = await fetch("/v1/statusline/config", { headers: authHeaders() });
   if (!res.ok) throw new Error(`statusline config: HTTP ${res.status}`);
   return res.json();
 }
@@ -431,7 +431,7 @@ export async function previewStatusline(
     width: String(width),
     tier,
   });
-  const res = await fetch(`/v1/statusline/preview?${params}`);
+  const res = await fetch(`/v1/statusline/preview?${params}`, { headers: authHeaders() });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? `preview: HTTP ${res.status}`);
@@ -497,7 +497,7 @@ async function licenseError(res: Response, fallback: string): Promise<Error> {
 
 export async function fetchLicense(reveal = false): Promise<License> {
   const res = await fetch(`/v1/license${reveal ? "?reveal=1" : ""}`, {
-    headers: reveal ? authHeaders() : {},
+    headers: authHeaders(),
   });
   if (!res.ok) throw await licenseError(res, `license: HTTP ${res.status}`);
   return res.json();
@@ -524,7 +524,7 @@ export interface QuoteEcho {
 }
 
 export async function fetchQuote(): Promise<Quote> {
-  const res = await fetch("/v1/license/quote");
+  const res = await fetch("/v1/license/quote", { headers: authHeaders() });
   if (!res.ok) throw await licenseError(res, `quote: HTTP ${res.status}`);
   const q = (await res.json()) as Quote;
   // A quote that cannot state a price or a parseable charge date must never

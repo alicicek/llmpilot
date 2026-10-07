@@ -52,7 +52,16 @@ func socketGetState(home string) error {
 			},
 		},
 	}
-	resp, err := c.Get("http://llmpilot/v1/state")
+	tok, err := os.ReadFile(TokenFilePath(home))
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodGet, "http://llmpilot/v1/state", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
+	resp, err := c.Do(req)
 	if err != nil {
 		return err
 	}

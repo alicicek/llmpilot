@@ -44,11 +44,12 @@ struct ApiError: LocalizedError, Equatable {
 /// sign-in. One protocol so later phases build views against it without
 /// touching HTTPDaemonClient again.
 ///
-/// Auth notes throughout (internal/daemon/auth.go): a route requires the
-/// Bearer install token ONLY when its handler calls `d.requireAuth` — that is
-/// stated per method below, verified against server.go/login.go/license.go.
+/// Auth notes throughout (internal/daemon/auth.go): every /v1 route — reads
+/// and mutations alike — requires the Bearer install token; only GET / (the
+/// static cockpit files) is open. `cGet` and `cSend` attach it to every
+/// request, so no method below can opt out.
 protocol CockpitDaemonAPI: DaemonAPI {
-    // GET /v1/schedules — no auth (server.go:52,405-415).
+    // GET /v1/schedules (server.go:52,405-415).
     func schedules() async throws -> [ScheduleRecord]
     // POST /v1/schedules — REQUIRES the Bearer install token (it rewrites
     // launchd agents); entitlement-gated 402 server-side.
@@ -60,16 +61,16 @@ protocol CockpitDaemonAPI: DaemonAPI {
     // DELETE /v1/schedules/{id} — REQUIRES the Bearer install token.
     func deleteSchedule(id: String) async throws
 
-    // GET /v1/history — no auth (server.go:68,851-864).
+    // GET /v1/history (server.go:68,851-864).
     func history(accountID: String, kind: String, scope: String?) async throws -> [HistorySample]
 
-    // GET /v1/doctor — no auth, read-only sweep (server.go:56; doctor.go:120-125).
+    // GET /v1/doctor — read-only sweep (server.go:56; doctor.go:120-125).
     func doctor() async throws -> DoctorReport
 
-    // GET /v1/analytics — no auth (server.go:69,878-972).
+    // GET /v1/analytics (server.go:69,878-972).
     func analytics(days: Int) async throws -> AnalyticsResponse
 
-    // GET /v1/statusline/preview — no auth (server.go:70; statusline.go:52-92).
+    // GET /v1/statusline/preview (server.go:70; statusline.go:52-92).
     // `config` previews a DRAFT config JSON string; nil previews the saved one.
     // `width` nil sends width=auto: the daemon resolves it to the columns
     // Claude Code last gave the statusline (else 120).
@@ -79,13 +80,13 @@ protocol CockpitDaemonAPI: DaemonAPI {
     // (U1). Same endpoint as statuslinePreview; a separate call so the
     // full-line preview's debounce accounting stays its own.
     func statuslineSegmentPreview(config: String) async throws -> StatuslinePreviewResponse
-    // GET /v1/statusline/config — no auth (server.go:71; statusline.go:94-102).
+    // GET /v1/statusline/config (server.go:71; statusline.go:94-102).
     func statuslineConfig() async throws -> StatuslineConfigResponse
     // PUT /v1/statusline/config — REQUIRES the Bearer install token: a saved
     // config can carry commands the statusline runs (statusline.go
     // handleStatuslineConfigPut).
     func putStatuslineConfig(_ cfg: StatuslineConfig) async throws -> StatuslineConfigResponse
-    // GET /v1/statusline/segments — no auth (server.go:73; statusline.go:121-128).
+    // GET /v1/statusline/segments (server.go:73; statusline.go:121-128).
     func statuslineSegments() async throws -> StatuslineSegmentsResponse
     // POST /v1/statusline/install — REQUIRES the Bearer install token
     // (daemon/statusline.go handleStatuslineInstall). mode nil/"" probes:
@@ -93,12 +94,11 @@ protocol CockpitDaemonAPI: DaemonAPI {
     // or "replace" is the user's explicit answer to that.
     func installStatusline(mode: StatuslineInstallMode?) async throws -> StatuslineInstallOutcome
 
-    // GET /v1/license — no auth UNLESS reveal=1, which requires the Bearer
-    // install token to reveal the full license id (server.go:74;
-    // license.go:184-242, reveal check at license.go:214-219).
+    // GET /v1/license — reveal=1 additionally returns the full license id
+    // (server.go:74; license.go:184-242, reveal check at license.go:214-219).
     func license(reveal: Bool) async throws -> LicenseInfo
-    // GET /v1/license/quote — no auth; public pre-checkout pricing proxied
-    // from the worker (server.go:75; license.go:420-438).
+    // GET /v1/license/quote — pre-checkout pricing proxied from the worker
+    // (server.go:75; license.go:420-438).
     func licenseQuote() async throws -> LicenseQuote
 
     // POST /v1/license/checkout — REQUIRES the Bearer install token
@@ -132,7 +132,7 @@ protocol CockpitDaemonAPI: DaemonAPI {
     // (retires the source config dir) (server.go handleAdoptMove).
     func adoptMove(configDir: String, label: String?) async throws -> AdoptMoveResult
 
-    // GET /v1/config — no auth (server.go:66; handleConfigGet at
+    // GET /v1/config (server.go:66; handleConfigGet at
     // server.go:821-831 serves the full store config with notification
     // defaults applied visibly). The read path Value.tsx's plan-cost
     // comparison needs.
@@ -180,16 +180,14 @@ extension HTTPDaemonClient: CockpitDaemonAPI {
         return url
     }
 
-    /// bearer defaults false: most cockpit GETs are unguarded, so this never
-    /// sends the token unless a caller explicitly needs it (license reveal,
-    /// the browser-login status poll).
+    /// Every daemon route takes the install token, so the Bearer rides every
+    /// GET when the token file exists — there is deliberately no way to opt out.
     private func cGet(
-        _ path: String, query: [String: String] = [:], bearer: Bool = false,
-        timeout: TimeInterval = 10
+        _ path: String, query: [String: String] = [:], timeout: TimeInterval = 10
     ) async throws -> Data {
         var req = URLRequest(url: try cockpitRequestURL(path, query: query))
         req.timeoutInterval = timeout
-        if bearer, let tok = Self.installToken() {
+        if let tok = Self.installToken() {
             req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }
         let (data, resp): (Data, URLResponse)
@@ -214,8 +212,7 @@ extension HTTPDaemonClient: CockpitDaemonAPI {
     /// Content-Type: application/json on every mutation — the daemon
     /// 415-rejects anything else (requireJSON, server.go:111-123). The
     /// Bearer token rides every mutation when available, same as
-    /// postJSONData: an extra header on an unguarded route is harmless, and
-    /// several of these DO require it.
+    /// postJSONData.
     private func cSend<T: Encodable>(
         _ method: String, _ path: String, body: T, timeout: TimeInterval = 10
     ) async throws -> Data {
@@ -368,7 +365,7 @@ extension HTTPDaemonClient: CockpitDaemonAPI {
     func license(reveal: Bool = false) async throws -> LicenseInfo {
         let query = reveal ? ["reveal": "1"] : [:]
         return try DaemonDates.decoder().decode(
-            LicenseInfo.self, from: try await cGet("v1/license", query: query, bearer: reveal))
+            LicenseInfo.self, from: try await cGet("v1/license", query: query))
     }
 
     func licenseQuote() async throws -> LicenseQuote {
@@ -450,7 +447,7 @@ extension HTTPDaemonClient: CockpitDaemonAPI {
     func browserLoginStatus(attempt: String) async throws -> BrowserLoginStatus {
         try DaemonDates.decoder().decode(
             BrowserLoginStatus.self,
-            from: try await cGet("v1/login/browser/status", query: ["attempt": attempt], bearer: true))
+            from: try await cGet("v1/login/browser/status", query: ["attempt": attempt]))
     }
 }
 

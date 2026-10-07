@@ -17,6 +17,10 @@ cd "$(dirname "$0")/.."
 ROOT=$(mktemp -d /tmp/llmpilot-e2e-stash.XXXXXX)
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home"
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export CLAUDE_CONFIG_DIR="$ROOT/claude"
 KEYCHAIN="$ROOT/throwaway.keychain-db"
 export LLMPILOT_KEYCHAIN="$KEYCHAIN"
@@ -84,12 +88,12 @@ echo "port: $PORT"
 echo
 echo "== 1. startup sweep migrates the legacy unmatched-* item (real dump-keychain List) =="
 for i in $(seq 1 50); do
-  N=$(curl -s "$API/v1/state" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('stash') or []))")
+  N=$(dget -s "$API/v1/state" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('stash') or []))")
   [ "$N" = "1" ] && break
   sleep 0.2
 done
 [ "$N" = "1" ] || { echo "sweep did not surface the legacy item (stash=$N)"; exit 1; }
-curl -s "$API/v1/state" | python3 -c "
+dget -s "$API/v1/state" | python3 -c "
 import json,sys
 s = json.load(sys.stdin)['stash']
 assert s[0]['label'] == 'old.stranger@example.dev', s
@@ -100,13 +104,13 @@ echo "  legacy keychain item removed after migration"
 
 echo
 echo "== 2. switch away from the foreign login → stash + event + SSE =="
-curl -s -N --max-time 4 "$API/v1/events" > "$ROOT/sse.log" &
+dget -s -N --max-time 4 "$API/v1/events" > "$ROOT/sse.log" &
 SSE_PID=$!
 sleep 0.5
 curl -s -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d '{"account_id":"acct-b"}' "$API/v1/switch" \
   | python3 -c "import json,sys; print('  switch:', json.load(sys.stdin))"
 wait $SSE_PID 2>/dev/null || true
-STASH_JSON=$(curl -s "$API/v1/state")
+STASH_JSON=$(dget -s "$API/v1/state")
 FP_F=$(printf '%s' "$STASH_JSON" | python3 -c "
 import json,sys
 s = json.load(sys.stdin)['stash']
@@ -139,7 +143,7 @@ echo "== 4. adopt the foreign entry → fleet row appears =="
 curl -s -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
   -d "{\"fingerprint\":\"$FP_F\"}" "$API/v1/stash/adopt" \
   | python3 -c "import json,sys; a=json.load(sys.stdin); print('  adopted:', a['id'], a['email'])"
-curl -s "$API/v1/state" | python3 -c "
+dget -s "$API/v1/state" | python3 -c "
 import json,sys
 st = json.load(sys.stdin)
 emails = [a['email'] for a in st['accounts']]
@@ -154,7 +158,7 @@ echo "== 5. discard the legacy entry → payload deleted =="
 curl -s -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
   -d "{\"fingerprint\":\"$FP_L\"}" "$API/v1/stash/discard" \
   | python3 -c "import json,sys; print('  discard:', json.load(sys.stdin))"
-FINAL=$(curl -s "$API/v1/state")
+FINAL=$(dget -s "$API/v1/state")
 printf '%s' "$FINAL" | python3 -c "
 import json,sys
 st = json.load(sys.stdin)

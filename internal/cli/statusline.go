@@ -117,14 +117,22 @@ func socketClient(home string) *http.Client {
 }
 
 // StatuslineHistory returns a HistoryFn backed by GET /v1/history over the
-// daemon socket, with the statusline's tight timeout. Failures are empty
-// history — the burn segment hides, honestly.
+// daemon socket (bearer-authenticated like every read), with the statusline's
+// tight timeout. Failures are empty history — the burn segment hides,
+// honestly.
 func StatuslineHistory(home string) statusline.HistoryFn {
 	return func(accountID, kind, scope string) []statusline.Sample {
 		hc := socketClient(home)
 		endpoint := "http://llmpilot/v1/history?account_id=" + url.QueryEscape(accountID) +
 			"&kind=" + url.QueryEscape(kind) + "&scope=" + url.QueryEscape(scope)
-		resp, err := hc.Get(endpoint)
+		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil
+		}
+		if tok := installToken(home); tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+		resp, err := hc.Do(req)
 		if err != nil {
 			return nil
 		}

@@ -580,8 +580,8 @@ func (s *sweep) checkInstall() {
 		})
 	case facts.StatusLine == StatusLineForeign:
 		// Only the NAME of the program, never its arguments: a statusline
-		// command is arbitrary user content on an unguarded endpoint, and
-		// arguments are where secrets live (`mytool --api-key=…`). The name is
+		// command is arbitrary user content in a report every surface prints,
+		// and arguments are where secrets live (`mytool --api-key=…`). The name is
 		// all this copy needs to tell the user whose line it is.
 		owner := toolName(facts.StatusLineOwner)
 		if owner == "" {
@@ -1123,7 +1123,7 @@ func (s *sweep) checkWatched(accounts []store.Account) {
 const setupTokenWarning = 30 * 24 * time.Hour
 
 // checkSetupTokens reminds about headless tokens nearing their declared
-// 1-year expiry. WIRE PRIVACY: /v1/doctor is unguarded, so findings carry a
+// 1-year expiry. PRIVACY: every surface prints the report, so findings carry a
 // COUNT and days-to-soonest-expiry only — never a label; `llmpilot token
 // list` is where names live. Metadata only: this check never reads the token
 // Keychain service.
@@ -1136,8 +1136,8 @@ func (s *sweep) checkSetupTokens() {
 	if err != nil {
 		// Corrupt or unreadable is NOT "no tokens" — an expiring CI token
 		// must never vanish into an all-clear behind a parse error. The
-		// reader's error carries the records' absolute path (a username on
-		// the unguarded wire), so the reason names the file, not the error.
+		// reader's error carries the records' absolute path (a username in
+		// a printed report), so the reason names the file, not the error.
 		s.notChecked(CheckSetupTokens, "llmpilot could not read its setup-token records — setup-tokens.json is unreadable or does not parse")
 		return
 	}

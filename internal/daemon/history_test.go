@@ -10,7 +10,7 @@ import (
 
 func TestHistoryRequiresParams(t *testing.T) {
 	d := &Daemon{Store: testStore(t)}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	cases := []string{
@@ -32,7 +32,7 @@ func TestHistoryRequiresParams(t *testing.T) {
 
 func TestHistoryEmptyIsEmptyArray(t *testing.T) {
 	d := &Daemon{Store: testStore(t)}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/v1/history?account_id=a&kind=session")
@@ -75,7 +75,7 @@ func TestHistoryEndpointServesAppendedSamples(t *testing.T) {
 	d := &Daemon{Store: testStore(t)}
 	d.init()
 	d.appendHistory(historyKey("a", "session", ""), HistorySample{At: time.Now(), Percent: 42})
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/v1/history?account_id=a&kind=session")

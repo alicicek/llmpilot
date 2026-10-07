@@ -54,6 +54,10 @@ ROOT=$(mktemp -d /tmp/llmpilot-e2e-native-board.XXXXXX)
 export TZ=UTC
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home"
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export HOME="$ROOT/home"
 # The global config dir lives OUTSIDE the redirected $HOME — same reasoning
 # as e2e-menubar.sh/e2e-native-switch.sh: the assertSandboxDir interlock
@@ -196,7 +200,7 @@ BASE="http://127.0.0.1:$PORT"
 echo "== sandbox live: daemon on $BASE =="
 
 schedules_for() { # <accountID> -> JSON array of that account's schedules
-  curl -s "$BASE/v1/schedules" | python3 -c "
+  dget -s "$BASE/v1/schedules" | python3 -c "
 import json, sys
 scheds = json.load(sys.stdin)
 print(json.dumps([s for s in scheds if s['account_id'] == '$1']))
@@ -205,7 +209,7 @@ print(json.dumps([s for s in scheds if s['account_id'] == '$1']))
 schedule_count_for() { schedules_for "$1" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))"; }
 
 # ---- resolve the target account: a@example.dev ----
-TARGET_JSON=$(curl -s "$BASE/v1/state" | python3 -c "
+TARGET_JSON=$(dget -s "$BASE/v1/state" | python3 -c "
 import json, sys
 doc = json.load(sys.stdin)
 for acct in doc['accounts']:
@@ -303,7 +307,7 @@ osa_axpress_ident() { osa_query "$1" press; }
 # (custom accessibility-action closures are never invoked; coordinate
 # clicks cannot reach a locked/backgrounded display — both measured).
 # ============================================================
-TARGET_LABEL=$(curl -s "$BASE/v1/state" | python3 -c "
+TARGET_LABEL=$(dget -s "$BASE/v1/state" | python3 -c "
 import json,sys
 for a in json.load(sys.stdin)['accounts']:
     if a['id'] == '$TARGET_ID':
@@ -414,7 +418,7 @@ print(m['hour'] * 60 + m['minute'] if m else -1)
 done
 [ "$MOVED" = "1" ] || {
   echo "E2E NATIVE-BOARD: FAIL — schedule did not advance by 15min within 30s (want total-minutes=$EXPECT_TOTAL, last seen=$CUR)"
-  echo "  raw schedules: $(curl -s "$BASE/v1/schedules")"
+  echo "  raw schedules: $(dget -s "$BASE/v1/schedules")"
   exit 1
 }
 echo "== MOVE observed: $START_HOUR:$START_MIN -> total-minutes=$EXPECT_TOTAL (via Inspector +15 nudge) =="

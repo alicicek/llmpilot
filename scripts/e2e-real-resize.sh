@@ -49,6 +49,10 @@ REAL_HOME="$HOME"
 ROOT=$(mktemp -d /tmp/llmpilot-e2e-real-resize.XXXXXX)
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home"
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export HOME="$ROOT/home"
 export CLAUDE_CONFIG_DIR="$ROOT/claude"
 export LLMPILOT_DISABLE_SMAPPSERVICE=1
@@ -124,7 +128,7 @@ PORT=""
 for _ in $(seq 1 20); do
   if [ -f "$LLMPILOT_HOME/daemon.port" ]; then
     PORT=$(cat "$LLMPILOT_HOME/daemon.port")
-    curl -sf "http://127.0.0.1:$PORT/v1/state" >/dev/null 2>&1 && break
+    dget -sf "http://127.0.0.1:$PORT/v1/state" >/dev/null 2>&1 && break
     PORT=""
   fi
   sleep 0.5

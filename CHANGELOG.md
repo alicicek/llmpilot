@@ -4,6 +4,29 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-10-07
+
+A security fix: other user accounts on the same Mac can no longer read
+your llmpilot data from the daemon. No price, trial length, offer, or
+account-data changes.
+
+### Fixed
+
+- **Other user accounts on the same Mac can no longer read your llmpilot
+  data.** Account emails, usage, schedules, settings, detected Claude
+  folders, project activity, and the statusline's line — including any
+  commands it runs — now need the same session token in `~/.llmpilot` that
+  every change already needed. The app, the CLI, the statusline, and
+  `llmpilot open` send it for you. If you installed llmpilot with Homebrew,
+  run `brew update && brew upgrade llmpilot`: an older CLI cannot read from
+  an updated daemon. If your daemon runs from Homebrew, restart it with
+  `launchctl kickstart -k gui/$(id -u)/dev.llmpilot.daemon` — the app never
+  restarts a Homebrew daemon, and a running one serves the old way until it
+  restarts. A cockpit browser tab
+  opened without its session token, for example by pasting its address
+  into a new tab, now says the token is missing instead of showing your
+  data: run `llmpilot open` to reopen it.
+
 ## [1.4.0] - 2026-10-06
 
 The statusline can print two rows, its chips move with your pointer, and
@@ -642,6 +665,8 @@ Initial public release: live usage for every account, lock-first switching,
 window scheduling, the cockpit, the menu bar app, the statusline, and the
 one-time Pro autopilot.
 
+[1.4.1]: https://github.com/alicicek/llmpilot/compare/v1.4.0...v1.4.1
+[1.4.0]: https://github.com/alicicek/llmpilot/compare/v1.3.6...v1.4.0
 [1.3.6]: https://github.com/alicicek/llmpilot/compare/v1.3.5...v1.3.6
 [1.3.5]: https://github.com/alicicek/llmpilot/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/alicicek/llmpilot/compare/v1.3.3...v1.3.4

@@ -35,6 +35,10 @@ REAL_HOME="$HOME"
 ROOT=$(mktemp -d /tmp/llmpilot-e2e-native-switch.XXXXXX)
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home"
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export HOME="$ROOT/home"
 # The global config dir lives OUTSIDE the redirected $HOME — same reasoning
 # as e2e-menubar.sh: the assertSandboxDir interlock refuses to swap/keep-warm
@@ -154,7 +158,7 @@ PORT=$(cat "$LLMPILOT_HOME/daemon.port")
 BASE="http://127.0.0.1:$PORT"
 
 active_id() {
-  curl -s "$BASE/v1/state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('active_id',''))"
+  dget -s "$BASE/v1/state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('active_id',''))"
 }
 show_oauth() {
   python3 -c "import json; print('  oauthAccount:', json.load(open('$CLAUDE_CONFIG_DIR/.claude.json'))['oauthAccount']['emailAddress'])"
@@ -165,7 +169,7 @@ echo "== sandbox live: daemon on $BASE · active: $BEFORE =="
 show_oauth
 
 # ---- determine the switch target: the OTHER account in /v1/state ----
-TARGET_JSON=$(curl -s "$BASE/v1/state" | python3 -c "
+TARGET_JSON=$(dget -s "$BASE/v1/state" | python3 -c "
 import json, sys
 doc = json.load(sys.stdin)
 before = doc.get('active_id', '')

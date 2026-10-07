@@ -391,6 +391,12 @@ func daemonStatusCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			state, err := (&cli.Client{Home: st.Home()}).State(cmd.Context())
+			if errors.Is(err, cli.ErrDaemonAnswered) {
+				// Something is listening: "not running — install it" would send
+				// the user to rewrite a launch agent that already works.
+				fmt.Fprintf(out, "daemon running, but it did not answer this command (%s) — llmpilot doctor explains\n", cli.AnsweredReason(err))
+				return nil
+			}
 			if errors.Is(err, cli.ErrDaemonDown) {
 				fmt.Fprintln(out, "daemon not running — llmpilot daemon install (or foreground: llmpilot daemon run)")
 				return nil

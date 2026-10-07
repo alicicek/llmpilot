@@ -256,7 +256,15 @@ func TestServeSocketAndPortFile(t *testing.T) {
 	}}
 	// "llmpilot" is the placeholder Host the real CLI sends over the socket;
 	// checkHost admits it.
-	resp, err := uc.Get("http://llmpilot/v1/state")
+	authedGet := func(hc *http.Client, url string) (*http.Response, error) {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
+		return hc.Do(req)
+	}
+	resp, err := authedGet(&uc, "http://llmpilot/v1/state")
 	if err != nil {
 		t.Fatalf("unix socket GET: %v", err)
 	}
@@ -265,7 +273,7 @@ func TestServeSocketAndPortFile(t *testing.T) {
 		t.Fatalf("unix socket status = %d", resp.StatusCode)
 	}
 	// …and on loopback.
-	resp2, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/v1/state", port))
+	resp2, err := authedGet(http.DefaultClient, fmt.Sprintf("http://127.0.0.1:%d/v1/state", port))
 	if err != nil {
 		t.Fatalf("loopback GET: %v", err)
 	}

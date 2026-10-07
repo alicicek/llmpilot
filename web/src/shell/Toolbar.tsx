@@ -21,9 +21,11 @@ export function Toolbar(props: {
       ? "Daemon active"
       : props.conn === "connecting"
         ? "Connecting"
-        : props.asOfAge
-          ? `Daemon down — as of ${props.asOfAge}`
-          : "Daemon not running";
+        : props.conn === "auth"
+          ? "Session token missing"
+          : props.asOfAge
+            ? `Daemon down — as of ${props.asOfAge}`
+            : "Daemon not running";
 
   return (
     <header className="flex h-[52px] items-center gap-2.5 border-b border-hair bg-toolbar px-4">

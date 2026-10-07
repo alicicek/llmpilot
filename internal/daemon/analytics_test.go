@@ -64,7 +64,7 @@ func getAnalytics(t *testing.T, srv *httptest.Server, query string) (analyticsRe
 
 func TestAnalyticsBadDaysParam(t *testing.T) {
 	d := &Daemon{Store: testStore(t)}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/v1/analytics?days=nope")
@@ -80,7 +80,7 @@ func TestAnalyticsBadDaysParam(t *testing.T) {
 func TestAnalyticsEmptyRegistryIsEmptyArrays(t *testing.T) {
 	st := store.At(t.TempDir()) // no accounts at all
 	d := &Daemon{Store: st}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	out, code := getAnalytics(t, srv, "")
@@ -112,7 +112,7 @@ func TestAnalyticsWalksOwnConfigDirAndFiltersByDay(t *testing.T) {
 	writeTranscript(t, filepath.Join(cfgDir, "projects", "-Users-x-repo", "s.jsonl"), transcript)
 
 	d := &Daemon{Store: st}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	// Default 30-day window: only the recent-day cell should appear.
@@ -174,7 +174,7 @@ func TestAnalyticsSharedDirWalkedOnce(t *testing.T) {
 	writeTranscript(t, filepath.Join(globalDir, "projects", "proj", "s.jsonl"), transcript)
 
 	d := &Daemon{Store: st}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	out, code := getAnalytics(t, srv, "")
@@ -212,7 +212,7 @@ func TestAnalyticsHourWeekday(t *testing.T) {
 	writeTranscript(t, filepath.Join(cfgDir, "projects", "p", "s.jsonl"), transcript)
 
 	d := &Daemon{Store: st}
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	out, code := getAnalytics(t, srv, "?days=3650")

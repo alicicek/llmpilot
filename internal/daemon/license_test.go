@@ -176,7 +176,7 @@ func TestLicenseCheckoutPollsUntilActivatedAndPersists(t *testing.T) {
 
 	store := &memLicenseStore{}
 	d := licenseDaemon(t, worker.URL, store, pub, true, &logs, now)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, body := postJSON(t, d, srv.URL+"/v1/license/checkout", `{"rung":"discount_trial"}`)
@@ -225,10 +225,10 @@ func TestLicenseQuoteProxiesWorkerTerms(t *testing.T) {
 	}))
 	defer worker.Close()
 	d := licenseDaemon(t, worker.URL, &memLicenseStore{}, pub, true, nil, time.Now())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
-	// No install token: the quote is public pricing, deliberately open.
+	// The quote is public pricing, but it takes the install token like every route.
 	resp, err := http.Get(srv.URL + "/v1/license/quote")
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +243,7 @@ func TestLicenseQuoteProxiesWorkerTerms(t *testing.T) {
 func TestLicenseQuoteUnavailableOnSourceBuild(t *testing.T) {
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	d := licenseDaemon(t, "http://unused.invalid", &panicStore{t: t}, pub, false, nil, time.Now())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/v1/license/quote")
 	if err != nil {
@@ -282,7 +282,7 @@ func TestCheckoutForwardsQuoteEchoVerbatim(t *testing.T) {
 	}))
 	defer worker.Close()
 	d := licenseDaemon(t, worker.URL, &memLicenseStore{}, pub, true, nil, time.Now())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, body := postJSON(t, d, srv.URL+"/v1/license/checkout",
@@ -319,7 +319,7 @@ func TestLicenseGetComputesTrialViewAndHidesSecrets(t *testing.T) {
 		TrialEnd: &trialEnd, StoredAt: now, LastValidated: now,
 	}}
 	d := licenseDaemon(t, "http://unused.invalid", store, pub, true, nil, now)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/v1/license")
@@ -376,7 +376,7 @@ func TestLicenseGetUnavailableOnSourceBuild(t *testing.T) {
 	// A source build must answer without ever reading the store.
 	store := &panicStore{t: t}
 	d := licenseDaemon(t, "http://unused.invalid", store, pub, false, nil, time.Now())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/v1/license")
 	if err != nil {
@@ -428,7 +428,7 @@ func TestLicenseCancelLapsesAndPausesPro(t *testing.T) {
 	}))
 	defer worker.Close()
 	d := licenseDaemon(t, worker.URL, store, pub, true, nil, now)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, body := postJSON(t, d, srv.URL+"/v1/license/cancel", `{}`)
@@ -456,7 +456,7 @@ func TestLicenseRecoverIsUniform202(t *testing.T) {
 	}))
 	defer worker.Close()
 	d := licenseDaemon(t, worker.URL, &memLicenseStore{}, pub, true, nil, time.Now())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	for _, email := range []string{`{"email":"known@example.com"}`, `{"email":"nobody@example.com"}`} {
@@ -483,7 +483,7 @@ func TestLicenseClaimActivatesRecoveredGrant(t *testing.T) {
 	defer worker.Close()
 	store := &memLicenseStore{}
 	d := licenseDaemon(t, worker.URL, store, pub, true, nil, now)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, body := postJSON(t, d, srv.URL+"/v1/license/recover/claim", `{"token":"magic-token-123"}`)
@@ -507,7 +507,7 @@ func TestLicenseMarkerHidesNocardRung(t *testing.T) {
 	}))
 	defer worker.Close()
 	d := licenseDaemon(t, worker.URL, &memLicenseStore{}, pub, true, nil, time.Now())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	if resp, body := postJSON(t, d, srv.URL+"/v1/license/marker", `{"present":true}`); resp.StatusCode != 200 {
@@ -559,7 +559,7 @@ func TestActivationRefusalStopsPollerAndSurfacesCode(t *testing.T) {
 
 	store := &memLicenseStore{}
 	d := licenseDaemon(t, worker.URL, store, pub, true, nil, now)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, body := postJSON(t, d, srv.URL+"/v1/license/checkout", `{"rung":"full"}`)
@@ -607,7 +607,7 @@ func TestClaimRefusalForwardsWorkerCode(t *testing.T) {
 	}))
 	defer worker.Close()
 	d := licenseDaemon(t, worker.URL, &memLicenseStore{}, pub, true, nil, time.Now())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, body := postJSON(t, d, srv.URL+"/v1/license/recover/claim", `{"token":"stale-token"}`)

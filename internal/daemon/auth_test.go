@@ -16,12 +16,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/alicicek/llmpilot/internal/detect"
 	"github.com/alicicek/llmpilot/internal/pilot"
 	"github.com/alicicek/llmpilot/internal/statusline"
 	"github.com/alicicek/llmpilot/internal/store"
+	"github.com/alicicek/llmpilot/pilotapi"
 )
 
 // withToken serves d.Handler() the way the apps reach it: every request
@@ -35,20 +37,21 @@ func withToken(d *Daemon) http.Handler {
 	})
 }
 
-// guardedReads are the only GET routes that take the install token. Every
-// other GET must stay open: the apps read them without a bearer (the native
-// first-run screen reads /v1/detect bare).
-var guardedReads = map[string]bool{
-	"/v1/notices":              true,
-	"/v1/login/browser/status": true,
+// registeredRoute is one Handler() registration as written in the source.
+type registeredRoute struct {
+	method, path string
+	fd           *ast.FuncDecl
 }
 
-// TestEveryRouteGuardsByMethod walks Handler()'s registrations in the source
-// so a new route cannot skip the rule: every non-GET handler must reach
-// requireAuth before doing anything but inert checks, and a GET handler must
-// do so only when listed in guardedReads. It reads the code instead of calling handlers, so no handler
-// body (Keychain sweeps, network calls) runs.
-func TestEveryRouteGuardsByMethod(t *testing.T) {
+// handlerRoutes parses this package's source and returns every
+// mux.HandleFunc registration in Handler(). It fails the test on any other
+// use of the mux except the one open route — `mux.Handle("GET /",
+// webHandler(...))`, the cockpit's static files, which a browser loads by
+// navigation and so cannot carry a header. Reading the code instead of
+// calling handlers means no handler body (Keychain sweeps, network calls)
+// runs.
+func handlerRoutes(t *testing.T) []registeredRoute {
+	t.Helper()
 	fset := token.NewFileSet()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -76,6 +79,90 @@ func TestEveryRouteGuardsByMethod(t *testing.T) {
 	if handler == nil {
 		t.Fatal("Handler() not found")
 	}
+	var routes []registeredRoute
+	static := 0
+	// Every mention of the mux must be one this walk understands: its
+	// definition, a HandleFunc/Handle receiver, or checkHost's argument. An
+	// alias (`m := mux`) or a helper that took the mux could register routes
+	// the walk never sees.
+	muxIdents, muxKnown := 0, 0
+	ast.Inspect(handler.Body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == "mux" {
+			muxIdents++
+		}
+		return true
+	})
+	ast.Inspect(handler, func(n ast.Node) bool {
+		if as, ok := n.(*ast.AssignStmt); ok && as.Tok == token.DEFINE && len(as.Lhs) == 1 {
+			if id, ok := as.Lhs[0].(*ast.Ident); ok && id.Name == "mux" {
+				muxKnown++
+			}
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "checkHost" && len(call.Args) == 1 {
+			if id, ok := call.Args[0].(*ast.Ident); ok && id.Name == "mux" {
+				muxKnown++
+			}
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if recv, ok := sel.X.(*ast.Ident); !ok || recv.Name != "mux" {
+			return true
+		}
+		switch sel.Sel.Name {
+		case "HandleFunc":
+			lit, ok := call.Args[0].(*ast.BasicLit)
+			target, ok2 := call.Args[1].(*ast.SelectorExpr)
+			if len(call.Args) != 2 || !ok || !ok2 {
+				t.Errorf("unrecognized registration at %v", fset.Position(call.Pos()))
+				return true
+			}
+			method, path, _ := strings.Cut(strings.Trim(lit.Value, `"`), " ")
+			fd := funcs[target.Sel.Name]
+			if fd == nil {
+				t.Errorf("%s %s: handler %s not found", method, path, target.Sel.Name)
+				return true
+			}
+			muxKnown++
+			routes = append(routes, registeredRoute{method: method, path: path, fd: fd})
+		case "Handle":
+			lit, ok := call.Args[0].(*ast.BasicLit)
+			inner, ok2 := call.Args[1].(*ast.CallExpr)
+			if len(call.Args) == 2 && ok && ok2 && lit.Value == `"GET /"` {
+				if fn, ok := inner.Fun.(*ast.Ident); ok && fn.Name == "webHandler" {
+					muxKnown++
+					static++
+					return true
+				}
+			}
+			t.Errorf("mux.Handle at %v is an open route — only GET / → webHandler (static files) may skip the install token", fset.Position(call.Pos()))
+		default:
+			t.Errorf("unrecognized mux.%s at %v", sel.Sel.Name, fset.Position(call.Pos()))
+		}
+		return true
+	})
+	if muxIdents != muxKnown {
+		t.Errorf("Handler() mentions mux %d times but only %d are a definition, a registration or checkHost — an alias or helper could hide a route", muxIdents, muxKnown)
+	}
+	if static != 1 {
+		t.Errorf("found %d GET / → webHandler registrations, want exactly 1", static)
+	}
+	if len(routes) < 30 {
+		t.Fatalf("walked only %d routes — the registration shape changed; update this test", len(routes))
+	}
+	return routes
+}
+
+// TestEveryRouteRequiresInstallToken walks Handler()'s registrations in the
+// source so a new route cannot skip the rule: every API handler — reads
+// included — must reach requireAuth before doing anything but inert checks.
+// The static cockpit is the one open route (handlerRoutes enforces its shape).
+func TestEveryRouteRequiresInstallToken(t *testing.T) {
 	isAuthCheck := func(st ast.Stmt) bool {
 		ifs, ok := st.(*ast.IfStmt)
 		if !ok {
@@ -89,8 +176,16 @@ func TestEveryRouteGuardsByMethod(t *testing.T) {
 		if !ok {
 			return false
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		return ok && sel.Sel.Name == "requireAuth"
+		if sel, ok := call.Fun.(*ast.SelectorExpr); !ok || sel.Sel.Name != "requireAuth" {
+			return false
+		}
+		// A refused request must stop there: the guard's body ends in return.
+		n := len(ifs.Body.List)
+		if n == 0 {
+			return false
+		}
+		_, returns := ifs.Body.List[n-1].(*ast.ReturnStmt)
+		return returns
 	}
 	// inert: statements allowed ahead of the guard — a field read
 	// (`g := d.License`) or a refusal that only writes an error and returns
@@ -148,36 +243,103 @@ func TestEveryRouteGuardsByMethod(t *testing.T) {
 		}
 		return false
 	}
-	routes := 0
-	ast.Inspect(handler, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok || len(call.Args) != 2 {
-			return true
+	for _, rt := range handlerRoutes(t) {
+		if !opensWithAuth(rt.fd) {
+			t.Errorf("%s %s (%s) does not open with requireAuth", rt.method, rt.path, rt.fd.Name.Name)
 		}
-		if sel, ok := call.Fun.(*ast.SelectorExpr); !ok || sel.Sel.Name != "HandleFunc" {
-			return true
+	}
+}
+
+// TestReadsRequireInstallToken pins the cross-user boundary on reads: every
+// GET route Handler() registers (taken from the source, so a new read is
+// covered the day it lands) answers 401 to a request with no token or a
+// wrong one, and the 401 carries only the error — none of the emails,
+// folders or statusline commands the daemon holds. Nothing behind the guard
+// runs. The same reads WITH the token return that data, so the leak check
+// is not vacuous; the static cockpit stays open.
+func TestReadsRequireInstallToken(t *testing.T) {
+	st := store.At(t.TempDir())
+	const (
+		email   = "reads-guard@example.dev"
+		dir     = "/Users/someone/.claude-reads-guard"
+		planted = "echo planted-read"
+	)
+	if err := st.SaveAccounts([]store.Account{{ID: "a", Label: "a", Email: email, ConfigDir: dir}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveSchedules([]store.Schedule{{ID: "s1", AccountID: "a", Hour: 9}}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"version":1,"segments":[{"id":"command","options":{"command":"` + planted + `"}}],"keep":{"command":"` + planted + `"}}`
+	if err := os.WriteFile(statusline.ConfigPath(st.Home()), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reached := false
+	d := &Daemon{
+		Store: st,
+		Detect: func(context.Context) ([]detect.Detected, error) {
+			reached = true
+			return []detect.Detected{fakeDetected(dir, email)}, nil
+		},
+		MovedDirs: func(context.Context) (map[string]bool, error) { reached = true; return nil, nil },
+		StashList: func(context.Context) ([]pilotapi.StashEntry, error) { reached = true; return nil, nil },
+		WebFS:     fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("cockpit")}},
+	}
+	srv := httptest.NewServer(d.Handler())
+	// Drop the connections first: an unguarded stream would otherwise keep
+	// its handler alive and Close would wait on it forever.
+	defer func() { srv.CloseClientConnections(); srv.Close() }()
+
+	gets := 0
+	for _, rt := range handlerRoutes(t) {
+		if rt.method != http.MethodGet {
+			continue
 		}
-		lit, ok := call.Args[0].(*ast.BasicLit)
-		target, ok2 := call.Args[1].(*ast.SelectorExpr)
-		if !ok || !ok2 {
-			t.Errorf("unrecognized registration at %v", fset.Position(call.Pos()))
-			return true
+		gets++
+		for _, tok := range []string{"", "not-the-token"} {
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				resp, body := doAuthed(t, method, srv.URL+rt.path, "", tok)
+				if resp.StatusCode != http.StatusUnauthorized {
+					t.Errorf("%s %s with token %q = %d, want 401", method, rt.path, tok, resp.StatusCode)
+					continue
+				}
+				if method == http.MethodHead {
+					continue
+				}
+				var got map[string]any
+				if err := json.Unmarshal([]byte(body), &got); err != nil || len(got) != 2 || got["code"] != "auth_required" {
+					t.Errorf("GET %s 401 body = %s, want only {error, code: auth_required}", rt.path, body)
+				}
+				for _, secret := range []string{email, dir, planted} {
+					if strings.Contains(body, secret) {
+						t.Errorf("GET %s with token %q leaked %q", rt.path, tok, secret)
+					}
+				}
+			}
 		}
-		method, path, _ := strings.Cut(strings.Trim(lit.Value, `"`), " ")
-		fd := funcs[target.Sel.Name]
-		if fd == nil {
-			t.Errorf("%s %s: handler %s not found", method, path, target.Sel.Name)
-			return true
+	}
+	if gets < 15 {
+		t.Fatalf("walked only %d GET routes, want at least 15", gets)
+	}
+	if reached {
+		t.Error("an unauthenticated read reached detect, the moved-folder check or the stash")
+	}
+
+	// With the token the same reads carry the data the 401s withheld.
+	for path, want := range map[string]string{
+		"/v1/state":             email,
+		"/v1/statusline/config": planted,
+		"/v1/detect":            dir,
+	} {
+		resp, body := doAuthed(t, http.MethodGet, srv.URL+path, "", d.authToken)
+		if resp.StatusCode != http.StatusOK || !strings.Contains(body, want) {
+			t.Errorf("authed GET %s = %d, want 200 containing %q (body %.200s)", path, resp.StatusCode, want, body)
 		}
-		routes++
-		wantAuth := method != http.MethodGet || guardedReads[path]
-		if got := opensWithAuth(fd); got != wantAuth {
-			t.Errorf("%s %s (%s) opens with requireAuth = %v, want %v", method, path, fd.Name.Name, got, wantAuth)
-		}
-		return true
-	})
-	if routes < 30 {
-		t.Fatalf("walked only %d routes — the registration shape changed; update this test", routes)
+	}
+	// The static cockpit is the one route a browser loads without a header.
+	resp, body := doAuthed(t, http.MethodGet, srv.URL+"/", "", "")
+	if resp.StatusCode != http.StatusOK || body != "cockpit" {
+		t.Errorf("GET / without a token = %d %q, want 200 cockpit", resp.StatusCode, body)
 	}
 }
 
@@ -282,9 +444,13 @@ func doAuthed(t *testing.T, method, url, body, token string) (*http.Response, st
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	// Bounded and never reused: an unguarded stream (/v1/events) must fail
+	// the test, not hang it — a HEAD on a stream leaves its handler running,
+	// and a request reusing that connection would wait on it forever.
+	req.Close = true
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s %s: %v", method, url, err)
 	}
 	raw, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
@@ -330,10 +496,14 @@ func TestLicenseRoutesRequireInstallToken(t *testing.T) {
 		}
 	}
 
-	// The masked read-only view stays open — the statusline/menu bar tier.
+	// The masked view takes the token too, and still hides the full id.
 	resp, body := doAuthed(t, http.MethodGet, srv.URL+"/v1/license", "", "")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("masked GET without a token = %d (%s), want 401", resp.StatusCode, body)
+	}
+	resp, body = doAuthed(t, http.MethodGet, srv.URL+"/v1/license", "", d.authToken)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("masked GET = %d (%s), want 200", resp.StatusCode, body)
+		t.Fatalf("authed masked GET = %d (%s), want 200", resp.StatusCode, body)
 	}
 	if strings.Contains(body, "lic_guard000000secret") {
 		t.Fatal("masked GET leaked the full license id")

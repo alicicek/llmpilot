@@ -66,7 +66,7 @@ func TestCheckoutDeclinedSignalArmsOutcomeAndPaymentSupersedes(t *testing.T) {
 
 	store := &memLicenseStore{}
 	d := licenseDaemon(t, worker.URL, store, pub, true, nil, now)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, body := postJSON(t, d, srv.URL+"/v1/license/checkout", `{"rung":"full","ui":"hosted","quote":{"trial_days":4,"currency":"gbp","amount_minor":999}}`)
@@ -107,7 +107,7 @@ func TestCheckoutDeadlineLapseIsTheAbandonedVerdict(t *testing.T) {
 
 	d := licenseDaemon(t, worker.URL, &memLicenseStore{}, pub, true, nil, time.Now())
 	d.License.PollFor = 80 * time.Millisecond
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	if resp, body := postJSON(t, d, srv.URL+"/v1/license/checkout", `{"rung":"full","ui":"hosted","quote":{"trial_days":4,"currency":"gbp","amount_minor":999}}`); resp.StatusCode != 200 {
@@ -142,7 +142,7 @@ func TestAbandonedNeverDowngradesADeclinedVerdict(t *testing.T) {
 
 	d := licenseDaemon(t, worker.URL, &memLicenseStore{}, pub, true, nil, time.Now())
 	d.License.PollFor = 80 * time.Millisecond
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	if resp, body := postJSON(t, d, srv.URL+"/v1/license/checkout", `{"rung":"full","ui":"hosted","quote":{"trial_days":4,"currency":"gbp","amount_minor":999}}`); resp.StatusCode != 200 {
@@ -222,7 +222,7 @@ func TestLatePaymentInTheReconcilePhaseStillActivates(t *testing.T) {
 	store := &memLicenseStore{}
 	d := licenseDaemon(t, worker.URL, store, pub, true, nil, now)
 	d.License.PollFor = 60 * time.Millisecond
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	if resp, body := postJSON(t, d, srv.URL+"/v1/license/checkout", `{"rung":"full","ui":"hosted","quote":{"trial_days":4,"currency":"gbp","amount_minor":999}}`); resp.StatusCode != 200 {
@@ -272,7 +272,7 @@ func TestLatePaymentAfterAFailedExpireStillActivates(t *testing.T) {
 	store := &memLicenseStore{}
 	d := licenseDaemon(t, worker.URL, store, pub, true, nil, now)
 	d.License.PollFor = 60 * time.Millisecond
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	if resp, body := postJSON(t, d, srv.URL+"/v1/license/checkout", `{"rung":"full","ui":"hosted","quote":{"trial_days":4,"currency":"gbp","amount_minor":999}}`); resp.StatusCode != 200 {
@@ -316,7 +316,7 @@ func TestReconcileEndsOnceTheSessionExpires(t *testing.T) {
 
 	d := licenseDaemon(t, worker.URL, &memLicenseStore{}, pub, true, nil, time.Now())
 	d.License.PollFor = 60 * time.Millisecond
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	if resp, body := postJSON(t, d, srv.URL+"/v1/license/checkout", `{"rung":"full","ui":"hosted","quote":{"trial_days":4,"currency":"gbp","amount_minor":999}}`); resp.StatusCode != 200 {
@@ -368,7 +368,7 @@ func TestNewerCheckoutPressOwnsTheVerdict(t *testing.T) {
 	defer worker.Close()
 
 	d := licenseDaemon(t, worker.URL, &memLicenseStore{}, pub, true, nil, time.Now())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	press := func() {

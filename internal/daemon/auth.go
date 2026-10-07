@@ -1,11 +1,11 @@
 package daemon
 
-// Install-scoped auth for every route that changes state, plus the license
-// reveal, the notices stream, and the browser sign-in status poll (GET
-// /v1/state and /v1/events stay open). The loopback port is reachable by any
-// local process — including other users' — so reachability is not
-// authority: these routes require the per-run token the daemon writes beside
-// the port file (0600). Presenting it proves same-user filesystem access to
+// Install-scoped auth for every API route, reads included — the only open
+// route is GET / (the cockpit's static files). Reads name your accounts,
+// usage, folders, project paths and statusline commands. The loopback port is
+// reachable by any local process — including other users' — so reachability
+// is not authority: every /v1 route requires the per-run token the daemon
+// writes beside the port file (0600). Presenting it proves same-user filesystem access to
 // the llmpilot home — the same trust boundary as install.id and the Keychain
 // item.
 

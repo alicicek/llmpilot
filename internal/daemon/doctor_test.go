@@ -77,7 +77,7 @@ func doctorDaemon(t *testing.T) *Daemon {
 // null, and that no token, fingerprint or credential byte reaches the payload.
 func TestDoctorEndpoint(t *testing.T) {
 	d := doctorDaemon(t)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(withToken(d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/v1/doctor")
@@ -137,7 +137,7 @@ func TestDoctorEndpoint(t *testing.T) {
 
 	// An EMPTY fleet still decodes: findings/checks are arrays, not null.
 	empty := &Daemon{Store: store.At(t.TempDir())}
-	esrv := httptest.NewServer(empty.Handler())
+	esrv := httptest.NewServer(withToken(empty))
 	defer esrv.Close()
 	eresp, err := http.Get(esrv.URL + "/v1/doctor")
 	if err != nil {

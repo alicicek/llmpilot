@@ -141,6 +141,10 @@ echo "== sandbox: fake HOME, throwaway keychain, native-cockpit env =="
 export TZ=UTC
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home"
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export HOME="$ROOT/home"
 # OUTSIDE the fake home, same reasoning as e2e-native-board.sh/e2e-menubar.sh
 # — and left EMPTY on purpose: this is the zero-accounts, zero-detected
@@ -185,7 +189,7 @@ BASE="http://127.0.0.1:$PORT"
 echo "  daemon on $BASE"
 
 echo "== confirm the official-build entitlement gate: available=true active=false status=none =="
-LIC=$(curl -fsS "$BASE/v1/license")
+LIC=$(dget -fsS "$BASE/v1/license")
 echo "  GET /v1/license -> $(printf '%s' "$LIC" | jq -c '{available, active, status}')"
 AVAIL=$(printf '%s' "$LIC" | jq -r '.available')
 ACTIVE=$(printf '%s' "$LIC" | jq -r '.active')
@@ -194,7 +198,7 @@ STATUS=$(printf '%s' "$LIC" | jq -r '.status')
   echo "E2E PRO-NATIVE: FAIL — /v1/license not in the expected first-run shape"; exit 1; }
 
 echo "== fetch the REAL quoted terms ourselves (GET /v1/license/quote) =="
-QUOTE=$(curl -fsS "$BASE/v1/license/quote")
+QUOTE=$(dget -fsS "$BASE/v1/license/quote")
 TRIAL_DAYS=$(printf '%s' "$QUOTE" | jq -r '.trial_days')
 FULL_MINOR=$(printf '%s' "$QUOTE" | jq -r '.prices.full.gbp')
 DISC_MINOR=$(printf '%s' "$QUOTE" | jq -r '.prices.discount.gbp')

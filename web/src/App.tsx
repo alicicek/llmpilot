@@ -501,7 +501,12 @@ export default function App() {
             : "flex-1"
         }
       >
-        {conn === "down" && !state ? (
+        {conn === "auth" && !state ? (
+          <div className="mx-auto mt-16 w-[440px] max-w-[92vw] text-[12.5px] leading-relaxed">
+            <p className="font-semibold">Session token missing — nothing here is live.</p>
+            <p className="mt-1 text-sec">{licenseErrorCopy("auth_required")}</p>
+          </div>
+        ) : conn === "down" && !state ? (
           <div className="mx-auto mt-16 w-[440px] max-w-[92vw] text-[12.5px] leading-relaxed">
             <p className="font-semibold">Daemon not running — nothing here is live.</p>
             <p className="mt-1 text-sec">
@@ -521,7 +526,9 @@ export default function App() {
               <p className="mb-4 text-[11px] text-ter" role="status">
                 {conn === "connecting"
                   ? "Connecting to the daemon…"
-                  : asOfAge
+                  : conn === "auth"
+                    ? licenseErrorCopy("auth_required")
+                    : asOfAge
                     ? `Daemon down — numbers as of ${asOfAge}`
                     : "Daemon not running."}
               </p>

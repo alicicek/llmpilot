@@ -90,8 +90,8 @@ struct HTTPDaemonClient: DaemonAPI {
     }
 
     /// This run's install token from $LLMPILOT_HOME/daemon.token — the
-    /// daemon's mutation and license-reveal routes require it as a Bearer header
-    /// (internal/daemon/auth.go).
+    /// daemon requires it as a Bearer header on every /v1 route, reads and
+    /// mutations alike (internal/daemon/auth.go).
     static func installToken() -> String? {
         let tokenFile = Self.home().appendingPathComponent("daemon.token")
         guard let raw = try? String(contentsOf: tokenFile, encoding: .utf8) else { return nil }
@@ -101,7 +101,7 @@ struct HTTPDaemonClient: DaemonAPI {
 
     /// Loopback base plus the install token as a URL fragment: the fragment
     /// never rides a request, and the embedded web app moves it into
-    /// sessionStorage to authorize license actions.
+    /// sessionStorage to authorize every daemon request it makes.
     func cockpitURL() -> URL? {
         guard let base = baseURL() else { return nil }
         guard let tok = Self.installToken() else { return base }
@@ -118,6 +118,9 @@ struct HTTPDaemonClient: DaemonAPI {
         do {
             var req = URLRequest(url: try url(path))
             req.timeoutInterval = 5
+            if let tok = Self.installToken() {
+                req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
+            }
             (data, resp) = try await URLSession.shared.data(for: req)
         } catch let e as DaemonError {
             throw e
@@ -210,6 +213,9 @@ struct HTTPDaemonClient: DaemonAPI {
                 do {
                     var req = URLRequest(url: try url("v1/events"))
                     req.timeoutInterval = 3600 * 24
+                    if let tok = Self.installToken() {
+                        req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
+                    }
                     let (bytes, resp) = try await URLSession.shared.bytes(for: req)
                     guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
                         throw DaemonError.down

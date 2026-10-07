@@ -15,6 +15,10 @@ REAL_HOME="$HOME"
 ROOT=$(mktemp -d /tmp/llmpilot-e2e-menubar.XXXXXX)
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home"
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export HOME="$ROOT/home"
 # The global config dir lives OUTSIDE the redirected $HOME (the
 # e2e-switch-hardening.sh layout): the assertSandboxDir interlock refuses to
@@ -100,7 +104,7 @@ show_oauth() {
   python3 -c "import json; print('  oauthAccount:', json.load(open('$CLAUDE_CONFIG_DIR/.claude.json'))['oauthAccount']['emailAddress'])"
 }
 active_id() {
-  curl -s "$BASE/v1/state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('active_id',''))"
+  dget -s "$BASE/v1/state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('active_id',''))"
 }
 
 BEFORE=$(active_id)

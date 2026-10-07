@@ -19,6 +19,10 @@ export TZ=UTC
 export NO_COLOR=1
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home"
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export LLMPILOT_AGENTS_DIR="$ROOT/launch-agents"
 export HOME="$ROOT/home"
 export CLAUDE_CONFIG_DIR="$ROOT/home/claude-main"
@@ -150,7 +154,7 @@ section "same events over SSE (GET /v1/events)"
   echo '```console'
   echo "\$ curl --unix-socket \$LLMPILOT_HOME/daemon.sock http://llmpilot/v1/events  # first SSE frame"
   # SSE streams forever: --max-time ends curl non-zero by design.
-  (curl -s --max-time 3 --unix-socket "$LLMPILOT_HOME/daemon.sock" http://llmpilot/v1/events || true) \
+  (dget -s --max-time 3 --unix-socket "$LLMPILOT_HOME/daemon.sock" http://llmpilot/v1/events || true) \
     | head -2 | python3 -c '
 import json, sys
 lines = sys.stdin.read().splitlines()

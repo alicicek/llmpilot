@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,6 +52,29 @@ func shortHome(t *testing.T) string {
 	return home
 }
 
+// serveReal runs a real daemon.Serve on home (socket, port file and token file
+// included) and returns once the port file — the readiness signal — exists.
+// Every /v1 read needs the token Serve mints, so a bare Handler() cannot stand
+// in for it.
+func serveReal(t *testing.T, home string, st *store.Store) {
+	t.Helper()
+	d := &daemon.Daemon{Store: st, AllowFastPoll: true, PollInterval: time.Hour}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for !fileExists(daemon.PortFilePath(home)) {
+		if time.Now().After(deadline) {
+			t.Fatal("daemon never wrote daemon.port")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestClientStateOverUnixSocket(t *testing.T) {
 	home := shortHome(t)
 	st := store.At(home)
@@ -65,16 +89,7 @@ func TestClientStateOverUnixSocket(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	d := &daemon.Daemon{Store: st}
-
-	sock := daemon.SocketPath(home)
-	ul, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatalf("unix listen: %v", err)
-	}
-	srv := &http.Server{Handler: d.Handler(), ReadHeaderTimeout: time.Second}
-	go func() { _ = srv.Serve(ul) }()
-	t.Cleanup(func() { _ = srv.Close() })
+	serveReal(t, home, st)
 
 	c := &Client{Home: home}
 	got, err := c.State(context.Background())
@@ -88,19 +103,18 @@ func TestClientStateOverUnixSocket(t *testing.T) {
 }
 
 func TestClientFallsBackToLoopbackPort(t *testing.T) {
-	home, st := seededHome(t)
-	d := &daemon.Daemon{Store: st}
-	srv := httptest.NewServer(d.Handler())
-	t.Cleanup(srv.Close)
-
-	port := strings.TrimPrefix(srv.URL, "http://127.0.0.1:")
-	if _, err := strconv.Atoi(port); err != nil {
-		t.Fatalf("unexpected httptest addr %s", srv.URL)
-	}
-	if err := os.WriteFile(daemon.PortFilePath(home), []byte(port+"\n"), 0o600); err != nil {
+	home := shortHome(t)
+	st := store.At(home)
+	if err := st.SaveAccounts([]store.Account{
+		{ID: "acct-1", Label: "keep", Email: "a@example.dev"},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	// No socket exists — the client must fall through to the port file.
+	serveReal(t, home, st)
+	// Drop the socket file — the client must fall through to the port file.
+	if err := os.Remove(daemon.SocketPath(home)); err != nil {
+		t.Fatal(err)
+	}
 	c := &Client{Home: home}
 	got, err := c.State(context.Background())
 	if err != nil {
@@ -112,9 +126,16 @@ func TestClientFallsBackToLoopbackPort(t *testing.T) {
 }
 
 func TestCockpitURLCarriesTokenFragment(t *testing.T) {
-	home, st := seededHome(t)
-	d := &daemon.Daemon{Store: st}
-	srv := httptest.NewServer(d.Handler())
+	home, _ := seededHome(t)
+	// Like the daemon: every read wants this run's token.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer cafe01" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"code":"auth_required"}`))
+			return
+		}
+		_, _ = w.Write([]byte("{}"))
+	}))
 	t.Cleanup(srv.Close)
 	port := strings.TrimPrefix(srv.URL, "http://127.0.0.1:")
 	if err := os.WriteFile(daemon.PortFilePath(home), []byte(port+"\n"), 0o600); err != nil {
@@ -122,7 +143,8 @@ func TestCockpitURLCarriesTokenFragment(t *testing.T) {
 	}
 	c := &Client{Home: home}
 
-	// No token file yet — the bare URL still opens a read-only cockpit.
+	// No token file yet — the daemon answers 401, which still means it is
+	// running: the bare URL opens the cockpit's session-token screen.
 	url, err := c.CockpitURL(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +163,142 @@ func TestCockpitURLCarriesTokenFragment(t *testing.T) {
 	if url != srv.URL+"/#token=cafe01" {
 		t.Errorf("CockpitURL = %q, want token fragment", url)
 	}
+
+	// A token the listener refuses is not a running daemon of ours: the
+	// probe already sent it, but no URL is built, so open does not hand the
+	// browser a cockpit address with the token in it.
+	if err := os.WriteFile(daemon.TokenFilePath(home), []byte("beef02\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if url, err := c.CockpitURL(context.Background()); !errors.Is(err, ErrDaemonDown) {
+		t.Errorf("CockpitURL with a refused token = %q, %v; want ErrDaemonDown", url, err)
+	}
+}
+
+// authSeen is a fake daemon that records the Authorization header of every
+// request and answers each /v1 route with a minimal valid document.
+type authSeen struct {
+	mu   sync.Mutex
+	auth []string
+}
+
+func (a *authSeen) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	a.auth = append(a.auth, r.Header.Get("Authorization"))
+	a.mu.Unlock()
+	switch r.URL.Path {
+	case "/v1/doctor":
+		_, _ = w.Write([]byte(`{"checks":[{"id":"x","name":"x","status":"pass"}]}`))
+	case "/v1/history":
+		_, _ = w.Write([]byte(`{"samples":[]}`))
+	default:
+		_, _ = w.Write([]byte("{}"))
+	}
+}
+
+func (a *authSeen) take() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := a.auth
+	a.auth = nil
+	return out
+}
+
+func wantAuth(t *testing.T, what string, got []string, want string) {
+	t.Helper()
+	if len(got) == 0 {
+		t.Fatalf("%s: the fake daemon saw no request", what)
+	}
+	for _, g := range got {
+		if g != want {
+			t.Errorf("%s: Authorization = %q, want %q", what, g, want)
+		}
+	}
+}
+
+func TestClientReadsSendTheInstallToken(t *testing.T) {
+	home := shortHome(t)
+	seen := &authSeen{}
+
+	sock, err := net.Listen("unix", daemon.SocketPath(home))
+	if err != nil {
+		t.Fatalf("unix listen: %v", err)
+	}
+	ssrv := &http.Server{Handler: seen, ReadHeaderTimeout: time.Second}
+	go func() { _ = ssrv.Serve(sock) }()
+	t.Cleanup(func() { _ = ssrv.Close() })
+
+	psrv := httptest.NewServer(seen)
+	t.Cleanup(psrv.Close)
+	port := strings.TrimPrefix(psrv.URL, "http://127.0.0.1:")
+	if err := os.WriteFile(daemon.PortFilePath(home), []byte(port+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{Home: home}
+	ctx := context.Background()
+
+	// No token file: the request still goes out, with no Authorization header.
+	if _, err := c.State(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantAuth(t, "tokenless State", seen.take(), "")
+
+	if err := os.WriteFile(daemon.TokenFilePath(home), []byte("  cafe01\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const want = "Bearer cafe01"
+	if _, err := c.State(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantAuth(t, "State over the socket", seen.take(), want)
+	if _, err := c.Doctor(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantAuth(t, "Doctor over the socket", seen.take(), want)
+
+	// Drop the socket so the loopback port path is the one exercised.
+	if err := os.Remove(daemon.SocketPath(home)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.State(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantAuth(t, "State over the port", seen.take(), want)
+	if _, err := c.LoopbackURL(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantAuth(t, "LoopbackURL", seen.take(), want)
+
+	// A restarted daemon mints a new token; the next call must pick it up.
+	if err := os.WriteFile(daemon.TokenFilePath(home), []byte("beef02\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.State(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantAuth(t, "State after a token rotation", seen.take(), "Bearer beef02")
+}
+
+func TestStatuslineHistorySendsTheInstallToken(t *testing.T) {
+	home := shortHome(t)
+	seen := &authSeen{}
+	sock, err := net.Listen("unix", daemon.SocketPath(home))
+	if err != nil {
+		t.Fatalf("unix listen: %v", err)
+	}
+	srv := &http.Server{Handler: seen, ReadHeaderTimeout: time.Second}
+	go func() { _ = srv.Serve(sock) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	hist := StatuslineHistory(home)
+	hist("acct-1", "session", "")
+	wantAuth(t, "tokenless history", seen.take(), "")
+
+	if err := os.WriteFile(daemon.TokenFilePath(home), []byte("cafe01\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hist("acct-1", "session", "")
+	wantAuth(t, "history", seen.take(), "Bearer cafe01")
 }
 
 func TestClientDaemonDown(t *testing.T) {

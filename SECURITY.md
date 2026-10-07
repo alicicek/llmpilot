@@ -43,19 +43,23 @@
 - **A loopback socket** — every surface reads the daemon over `127.0.0.1` / a
   unix socket: the menu bar, the cockpit (a native window in the app, or a
   browser page opened with `llmpilot open` on a CLI-only install), the
-  statusline, and the CLI. Every route that changes something — switching
-  the active account, adding an account or moving a sign-in into the fleet,
+  statusline, and the CLI. Every API route requires an install-scoped
+  `Authorization: Bearer` token — the same token either cockpit form, the
+  statusline and the CLI present. That covers every change — switching the
+  active account, adding an account or moving a sign-in into the fleet,
   adopting or discarding a kept sign-in, creating, moving or removing a
   schedule, saving settings, saving the statusline's line (which can name
   commands the statusline runs), installing the statusline into
-  `~/.claude/settings.json`, signing in, and changing your license — and the
-  route that reveals your full license id require an install-scoped
-  `Authorization: Bearer` token — the same token either cockpit form
-  presents — so a web page or another user's process cannot do those
-  things. A process running as you can: the token is a file only your user
-  can read, under `~/.llmpilot`. Read-only routes (such as account emails, usage,
-  schedules, the doctor report) need no token, so any process on this Mac,
-  including another user's, can read them. The one path any local
+  `~/.claude/settings.json`, signing in, and changing your license — and
+  every read: account emails, usage, schedules, settings, detected Claude
+  folders, project activity, the statusline's line and its commands, the
+  doctor report, and your license. A web page or another user's process can
+  neither change nor read any of it. A process running as you can: the
+  token is a file only your user can read, under `~/.llmpilot`. Two things
+  answer without the token: the cockpit's static page, which holds no data
+  until it presents the token, and the sign-in callback a browser sign-in
+  opens for ten minutes, which accepts only the request carrying that
+  sign-in's one-time state. The one path any local
   actor can *initiate* is the `llmpilot://recover` link (the recovery
   email's one-click restore): it carries no authority of its own — it can
   only attempt a restore with a token the initiator already holds, and the

@@ -213,6 +213,9 @@ func maskLicense(id string) string {
 // plus an offline verify. An expired trial is not an error — it is the honest
 // paused state (status stays "trialing", Active is false).
 func (d *Daemon) handleLicenseGet(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	g := d.License
 	if g == nil {
 		httpError(w, http.StatusNotImplemented, errors.New("licensing not wired"))
@@ -242,11 +245,8 @@ func (d *Daemon) handleLicenseGet(w http.ResponseWriter, r *http.Request) {
 	info.Status = stored.Status
 	info.LicenseIDMasked = maskLicense(stored.LicenseID)
 	// The full id is a bearer capability (the worker's /v1/validate serves
-	// the current token for it) — revealing it requires the install token.
+	// the current token for it); the route's install-token guard covers it.
 	if r.URL.Query().Get("reveal") == "1" {
-		if !d.requireAuth(w, r) {
-			return
-		}
 		info.LicenseID = stored.LicenseID
 	}
 	if !stored.LastValidated.IsZero() {
@@ -532,9 +532,13 @@ func (d *Daemon) setLicenseError(ctx context.Context, code string) {
 }
 
 // handleLicenseQuote proxies the worker's pre-checkout consent terms (trial
-// length, prices, charge date) to the paywall. Read-only public pricing — no
-// install token required; a browser-only cockpit can still show honest terms.
+// length, prices, charge date) to the paywall. Public pricing, but it still
+// takes the install token: every API route does, and an open route would let
+// any local process make the daemon call the worker.
 func (d *Daemon) handleLicenseQuote(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	g := d.License
 	if g == nil || !g.Available {
 		httpError(w, http.StatusNotImplemented, errors.New("licensing not wired"))

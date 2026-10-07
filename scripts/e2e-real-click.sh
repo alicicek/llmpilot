@@ -50,6 +50,10 @@ REAL_HOME="$HOME"
 ROOT=$(mktemp -d /tmp/llmpilot-e2e-real-click.XXXXXX)
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home"
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export HOME="$ROOT/home"
 export CLAUDE_CONFIG_DIR="$ROOT/claude"
 export LLMPILOT_DISABLE_SMAPPSERVICE=1
@@ -124,7 +128,7 @@ PORT=""
 for _ in $(seq 1 20); do
   if [ -f "$LLMPILOT_HOME/daemon.port" ]; then
     PORT=$(cat "$LLMPILOT_HOME/daemon.port")
-    curl -sf "http://127.0.0.1:$PORT/v1/state" >/dev/null 2>&1 && break
+    dget -sf "http://127.0.0.1:$PORT/v1/state" >/dev/null 2>&1 && break
     PORT=""
   fi
   sleep 0.5
@@ -134,7 +138,7 @@ BASE="http://127.0.0.1:$PORT"
 echo "== demo daemon reachable on :$PORT =="
 
 count_for() { # <accountID> -> number of that account's schedules
-  curl -s "$BASE/v1/schedules" | python3 -c "import json,sys; print(len([s for s in json.load(sys.stdin) if s['account_id']=='$1']))"
+  dget -s "$BASE/v1/schedules" | python3 -c "import json,sys; print(len([s for s in json.load(sys.stdin) if s['account_id']=='$1']))"
 }
 # theo: no schedules, no active session bucket → floor 0 → any hour books.
 TARGET=theo
@@ -228,7 +232,7 @@ for _ in $(seq 1 20); do
   [ "$(count_for $TARGET)" = "1" ] && { LANDED=1; break; }
   sleep 0.5
 done
-[ "$LANDED" = "1" ] || { echo "E2E REAL-CLICK: FAIL — a real click on track-$TARGET did not book a schedule (count $(count_for $TARGET)) — the tap never completed (F18: an exception on the first tick aborts createAt before onCreate); raw: $(curl -s "$BASE/v1/schedules")"; exit 1; }
+[ "$LANDED" = "1" ] || { echo "E2E REAL-CLICK: FAIL — a real click on track-$TARGET did not book a schedule (count $(count_for $TARGET)) — the tap never completed (F18: an exception on the first tick aborts createAt before onCreate); raw: $(dget -s "$BASE/v1/schedules")"; exit 1; }
 echo "== real click on the track booked a schedule for $TARGET (count 1) =="
 
 # ---- 2. REAL click on ⚙ AFTER the track click: the sheet must open ----

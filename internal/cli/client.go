@@ -231,6 +231,7 @@ func AnsweredReason(err error) string {
 // where nothing replied at all.
 type answeredError struct {
 	detail string
+	status int // the HTTP status, when the answer was one
 	// cause is kept so a caller can still ask what really happened — a
 	// deadline that fires mid-body reaches us as a read failure, and erasing
 	// it would classify a slow daemon as a broken one.
@@ -255,35 +256,56 @@ func (c *Client) LoopbackURL(ctx context.Context) (string, error) {
 	base := "http://127.0.0.1:" + strconv.Itoa(port)
 	var st daemon.State
 	if err := c.get(ctx, &http.Client{Timeout: c.timeout()}, base+"/v1/state", &st); err != nil {
+		// A 401 to a request that carried no token is a running daemon whose
+		// token file this process could not read: say so through the
+		// cockpit's session-token screen, not a false "daemon not running".
+		var ae *answeredError
+		if errors.As(err, &ae) && ae.status == http.StatusUnauthorized && installToken(c.Home) == "" {
+			return base, nil
+		}
 		return "", ErrDaemonDown
 	}
 	return base, nil
 }
 
+// installToken reads this run's install token from the per-run token file the
+// daemon writes before it opens the socket or the port. Read fresh on every
+// call: a restarted daemon mints a new one. A missing or empty file is "" — the
+// caller then sends no header and the daemon answers 401, which the client
+// already reports as an answer it could not use.
+func installToken(home string) string {
+	raw, err := os.ReadFile(daemon.TokenFilePath(home))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
 // CockpitURL is LoopbackURL plus the install token as a URL fragment — the
-// cockpit needs it for every change it makes, and a fragment never rides a
+// cockpit needs it for every request it makes, and a fragment never rides a
 // request or Referer. A missing token file degrades to the bare URL: the
-// cockpit still renders, its changes answer 401 with reopen copy.
+// cockpit opens on its session-token screen, since every read needs the token.
 func (c *Client) CockpitURL(ctx context.Context) (string, error) {
 	base, err := c.LoopbackURL(ctx)
 	if err != nil {
 		return "", err
 	}
-	raw, err := os.ReadFile(daemon.TokenFilePath(c.Home))
-	if err != nil {
-		return base, nil
-	}
-	tok := strings.TrimSpace(string(raw))
+	tok := installToken(c.Home)
 	if tok == "" {
 		return base, nil
 	}
 	return base + "/#token=" + tok, nil
 }
 
+// get performs one authenticated GET: every /v1 read route wants the install
+// token as a bearer header.
 func (c *Client) get(ctx context.Context, hc *http.Client, url string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
+	}
+	if tok := installToken(c.Home); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -291,7 +313,7 @@ func (c *Client) get(ctx context.Context, hc *http.Client, url string, dst any) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return &answeredError{detail: fmt.Sprintf("it answered %d", resp.StatusCode)}
+		return &answeredError{detail: fmt.Sprintf("it answered %d", resp.StatusCode), status: resp.StatusCode}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
 		// A daemon older than this binary has no such route, so the embedded

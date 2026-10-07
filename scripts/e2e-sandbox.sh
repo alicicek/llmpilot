@@ -9,6 +9,10 @@ set -euo pipefail
 ROOT=$(mktemp -d /tmp/llmpilot-e2e.XXXXXX)
 export LLMPILOT_TEST=1
 export LLMPILOT_HOME="$ROOT/llmpilot-home"
+# GET helper: every /v1 read needs the install token. It goes to curl on stdin
+# (-K -) so it never shows up in ps; re-read each call (the daemon rewrites it
+# on restart and the readiness loops start before it exists).
+dget() { printf 'header = "Authorization: Bearer %s"\n' "$(cat "$LLMPILOT_HOME/daemon.token" 2>/dev/null)" | curl -K - "$@"; }
 export CLAUDE_CONFIG_DIR="$ROOT/claude"
 KEYCHAIN="$ROOT/throwaway.keychain-db"
 export LLMPILOT_KEYCHAIN="$KEYCHAIN"
@@ -98,13 +102,13 @@ done
 PORT=$(cat "$LLMPILOT_HOME/daemon.port")
 TOKEN=$(cat "$LLMPILOT_HOME/daemon.token")
 echo "-- GET /v1/state (127.0.0.1:$PORT) --"
-curl -s "http://127.0.0.1:$PORT/v1/state" | python3 -m json.tool | head -30
+dget -s "http://127.0.0.1:$PORT/v1/state" | python3 -m json.tool | head -30
 echo "-- GET /v1/state (unix socket) --"
-curl -s --unix-socket "$LLMPILOT_HOME/daemon.sock" http://localhost/v1/state \
+dget -s --unix-socket "$LLMPILOT_HOME/daemon.sock" http://localhost/v1/state \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print('  accounts:', [a['label'] for a in d['accounts']], 'active:', d.get('active_id'))"
 
 echo "-- SSE: event on cache change --"
-curl -s -N --max-time 5 "http://127.0.0.1:$PORT/v1/events" > "$ROOT/sse.log" &
+dget -s -N --max-time 5 "http://127.0.0.1:$PORT/v1/events" > "$ROOT/sse.log" &
 SSE_PID=$!
 sleep 0.5
 # poke the cache the way a poll would: write a snapshot and switch via API
@@ -116,6 +120,10 @@ echo "  POST without application/json: HTTP $CODE (expect 415)"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"account_id":"acct-b"}' "http://127.0.0.1:$PORT/v1/switch")
 echo "  POST without the install token: HTTP $CODE (expect 401)"
 [ "$CODE" = "401" ] || { echo "auth guard missing on /v1/switch"; exit 1; }
+# … and reads need it too: a bare GET /v1/state is refused
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/v1/state")
+echo "  GET /v1/state without the install token: HTTP $CODE (expect 401)"
+[ "$CODE" = "401" ] || { echo "auth guard missing on GET /v1/state"; exit 1; }
 # … and the real call goes through
 curl -s -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d '{"account_id":"acct-b"}' "http://127.0.0.1:$PORT/v1/switch" \
   | python3 -c "import json,sys; print('  POST /v1/switch:', json.load(sys.stdin))"

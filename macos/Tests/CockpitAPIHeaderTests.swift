@@ -2,7 +2,7 @@ import XCTest
 @testable import llmpilot
 
 /// Hermetic transport tests for the auth-header contract in CockpitAPI.swift
-/// (lines 108-176) — a deferred phase-0 review finding: the Bearer/Content-
+/// (cGet/cSend) — a deferred phase-0 review finding: the Bearer/Content-
 /// Type discipline documented there had zero test coverage. `URLProtocol`
 /// intercepts every request before a socket opens (no real daemon, no real
 /// network), and `HTTPDaemonClient` is pointed at a throwaway `LLMPILOT_HOME`
@@ -109,7 +109,7 @@ final class CockpitAPIHeaderTests: XCTestCase {
 
     private var client: HTTPDaemonClient { HTTPDaemonClient() }
 
-    // MARK: - Authorization: present (bearer:true GETs, and every mutation via cSend)
+    // MARK: - Authorization: present (license reveal, browser-login status, every mutation via cSend)
 
     func testLicenseRevealSendsAuthorization() async throws {
         _ = try await client.license(reveal: true)
@@ -118,7 +118,7 @@ final class CockpitAPIHeaderTests: XCTestCase {
 
     func testBrowserLoginStatusSendsAuthorization() async throws {
         _ = try await client.browserLoginStatus(attempt: "att-1")
-        XCTAssertEqual(Self.recorder.last()?.value(forHTTPHeaderField: "Authorization"), "Bearer test-install-token")
+        assertLastSentToken("GET", "/v1/login/browser/status")
     }
 
     func testStashAdoptSendsAuthorization() async throws {
@@ -174,35 +174,94 @@ final class CockpitAPIHeaderTests: XCTestCase {
         assertLastSentToken("POST", "/v1/adopt")
     }
 
-    // MARK: - Authorization: absent (unguarded GETs, bearer defaults false)
+    // MARK: - Authorization: present on every GET (the daemon 401s a tokenless read)
 
-    func testDoctorHasNoAuthorization() async throws {
+    func testDoctorSendsTheBearer() async throws {
         _ = try await client.doctor()
-        XCTAssertNil(Self.recorder.last()?.value(forHTTPHeaderField: "Authorization"))
+        assertLastSentToken("GET", "/v1/doctor")
     }
 
-    func testAnalyticsHasNoAuthorization() async throws {
+    func testAnalyticsSendsTheBearer() async throws {
         _ = try await client.analytics(days: 30)
-        XCTAssertNil(Self.recorder.last()?.value(forHTTPHeaderField: "Authorization"))
+        assertLastSentToken("GET", "/v1/analytics")
     }
 
-    func testCockpitConfigHasNoAuthorization() async throws {
-        // GET /v1/config — handleConfigGet has no requireAuth (server.go).
-        _ = try await client.cockpitConfig()
-        let recorded = Self.recorder.last()
-        XCTAssertNotNil(recorded, "no request recorded — the assertion below would pass vacuously")
-        XCTAssertEqual(recorded?.url?.path, "/v1/config")
-        XCTAssertNil(recorded?.value(forHTTPHeaderField: "Authorization"))
+    func testCockpitConfigSendsTheBearer() async throws {
+        _ = try? await client.cockpitConfig()
+        assertLastSentToken("GET", "/v1/config")
     }
 
-    func testSchedulesHasNoAuthorization() async throws {
+    func testSchedulesSendsTheBearer() async throws {
         _ = try await client.schedules()
-        XCTAssertNil(Self.recorder.last()?.value(forHTTPHeaderField: "Authorization"))
+        assertLastSentToken("GET", "/v1/schedules")
     }
 
-    func testLicenseWithoutRevealHasNoAuthorization() async throws {
+    func testLicenseWithoutRevealSendsTheBearer() async throws {
         _ = try await client.license(reveal: false)
-        XCTAssertNil(Self.recorder.last()?.value(forHTTPHeaderField: "Authorization"))
+        assertLastSentToken("GET", "/v1/license")
+    }
+
+    func testStateSendsTheBearer() async throws {
+        _ = try? await client.state()
+        assertLastSentToken("GET", "/v1/state")
+    }
+
+    func testDetectSendsTheBearer() async throws {
+        _ = try? await client.detect()
+        assertLastSentToken("GET", "/v1/detect")
+    }
+
+    func testDaemonConfigSendsTheBearer() async throws {
+        _ = try? await client.config()
+        assertLastSentToken("GET", "/v1/config")
+    }
+
+    func testEventsStreamSendsTheBearer() async throws {
+        // The canned body has no `data:` line, so the stream ends right
+        // after the request is recorded — only that request is under test.
+        do { for try await _ in client.events() {} } catch {}
+        assertLastSentToken("GET", "/v1/events")
+    }
+
+    func testHistorySendsTheBearer() async throws {
+        _ = try? await client.history(accountID: "a1", kind: "five_hour", scope: nil)
+        assertLastSentToken("GET", "/v1/history")
+    }
+
+    func testStatuslinePreviewSendsTheBearer() async throws {
+        _ = try? await client.statuslinePreview(width: 80, tier: "truecolor", config: nil)
+        assertLastSentToken("GET", "/v1/statusline/preview")
+        _ = try? await client.statuslineSegmentPreview(config: "{}")
+        assertLastSentToken("GET", "/v1/statusline/preview")
+    }
+
+    func testStatuslineConfigSendsTheBearer() async throws {
+        _ = try? await client.statuslineConfig()
+        assertLastSentToken("GET", "/v1/statusline/config")
+    }
+
+    func testStatuslineSegmentsSendsTheBearer() async throws {
+        _ = try? await client.statuslineSegments()
+        assertLastSentToken("GET", "/v1/statusline/segments")
+    }
+
+    func testLicenseQuoteSendsTheBearer() async throws {
+        _ = try? await client.licenseQuote()
+        assertLastSentToken("GET", "/v1/license/quote")
+    }
+
+    // MARK: - Authorization: absent only when there is no token file
+
+    func testGetsWithoutATokenFileGoOutWithoutAuthorization() async throws {
+        try FileManager.default.removeItem(at: tempHome.appendingPathComponent("daemon.token"))
+        _ = try await client.doctor()
+        var req = Self.recorder.last()
+        XCTAssertTrue(req?.url?.path.hasSuffix("/v1/doctor") ?? false, "last request: \(String(describing: req?.url))")
+        XCTAssertNil(req?.value(forHTTPHeaderField: "Authorization"))
+        _ = try? await client.state()
+        req = Self.recorder.last()
+        XCTAssertTrue(req?.url?.path.hasSuffix("/v1/state") ?? false, "last request: \(String(describing: req?.url))")
+        XCTAssertNil(req?.value(forHTTPHeaderField: "Authorization"))
     }
 
     // MARK: - Content-Type: application/json on every mutation

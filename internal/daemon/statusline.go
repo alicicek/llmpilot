@@ -50,6 +50,9 @@ func (d *Daemon) previewCtx(r *http.Request, tier statusline.Tier, width int) *s
 }
 
 func (d *Daemon) handleStatuslinePreview(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	q := r.URL.Query()
 	cfg, err := statusline.LoadConfig(d.Store.Home())
 	if err != nil {
@@ -104,7 +107,10 @@ func (d *Daemon) handleStatuslinePreview(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (d *Daemon) handleStatuslineConfigGet(w http.ResponseWriter, _ *http.Request) {
+func (d *Daemon) handleStatuslineConfigGet(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	cfg, err := statusline.LoadConfig(d.Store.Home())
 	note := ""
 	if err != nil {
@@ -140,7 +146,10 @@ func (d *Daemon) handleStatuslineConfigPut(w http.ResponseWriter, r *http.Reques
 
 // handleStatuslineSegments serves the registry and presets — the ONE
 // registry drives the editor's palette (wave anchor).
-func (d *Daemon) handleStatuslineSegments(w http.ResponseWriter, _ *http.Request) {
+func (d *Daemon) handleStatuslineSegments(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"segments": statusline.Specs(),
 		"presets":  statusline.Presets(),

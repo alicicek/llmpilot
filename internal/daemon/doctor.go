@@ -117,9 +117,11 @@ func (d *Daemon) doctorFacts(ctx context.Context) *doctor.DaemonFacts {
 	return f
 }
 
-// handleDoctor serves the sweep. Unguarded like GET /v1/state: the same class
-// of data (account labels and folder paths, never a secret), and the doctor
-// adds no mutation to guard.
+// handleDoctor serves the sweep. It names accounts and folders and reads each
+// backup Keychain item, so it takes the install token like every API route.
 func (d *Daemon) handleDoctor(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
 	writeJSON(w, http.StatusOK, d.Doctor(r.Context()))
 }
