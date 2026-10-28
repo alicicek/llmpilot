@@ -2,12 +2,22 @@ import Foundation
 @testable import llmpilot
 
 /// Scriptable DaemonAPI stub — the unit-test stand-in for the daemon.
-final class StubAPI: DaemonAPI, @unchecked Sendable {
-    var stateResult: Result<DaemonState, Error> = .failure(DaemonError.down)
+///
+/// Main-actor isolated for the same reason as StubCockpitAPI: recorders are
+/// written by the async methods and read by @MainActor tests.
+@MainActor
+final class StubAPI: DaemonAPI {
+    /// Lock-guarded, not main-actor isolated: launch and login-item hooks
+    /// write it, and FleetViewModel runs `launch` in a detached task.
+    nonisolated var stateResult: Result<DaemonState, Error> {
+        get { stateBox.value }
+        set { stateBox.value = newValue }
+    }
+    private let stateBox = LockedBox<Result<DaemonState, Error>>(.failure(DaemonError.down))
     var switchResult: Result<Void, Error> = .success(())
     var detectResult: [DetectedDir] = []
     var configResult = DaemonConfig(autopilot: nil)
-    var base: URL? = URL(string: "http://127.0.0.1:59999")
+    nonisolated(unsafe) var base: URL? = URL(string: "http://127.0.0.1:59999")
     var startLoginResult: Result<LoginStart, Error> =
         .success(LoginStart(authorizeURL: "https://claude.com/cai/oauth/authorize?state=st-1", state: "st-1"))
     var completeLoginResult: Result<Void, Error> = .success(())
@@ -20,7 +30,7 @@ final class StubAPI: DaemonAPI, @unchecked Sendable {
     /// Applied to stateResult after a successful switch, so refresh() sees it.
     var stateAfterSwitch: DaemonState?
 
-    func baseURL() -> URL? { base }
+    nonisolated func baseURL() -> URL? { base }
 
     func state() async throws -> DaemonState { try stateResult.get() }
 
@@ -48,7 +58,7 @@ final class StubAPI: DaemonAPI, @unchecked Sendable {
         try completeLoginResult.get()
     }
 
-    func events() -> AsyncThrowingStream<DaemonState, Error> {
+    nonisolated func events() -> AsyncThrowingStream<DaemonState, Error> {
         AsyncThrowingStream { $0.finish(throwing: DaemonError.down) }
     }
 }
@@ -140,5 +150,17 @@ enum Fixtures {
             activeID: "acct-a",
             schedules: [],
             asOf: now)
+    }
+}
+
+/// A value behind a lock, for stub fields a test writes from a hook that the
+/// code under test calls off the main actor.
+final class LockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+    init(_ value: Value) { stored = value }
+    var value: Value {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); defer { lock.unlock() }; stored = newValue }
     }
 }

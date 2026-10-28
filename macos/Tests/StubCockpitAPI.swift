@@ -11,10 +11,18 @@ import Foundation
 /// `.failure(DaemonError.down)` for throwing calls, empty/default values for
 /// non-throwing ones) and every call is recorded so a test can assert what
 /// was actually sent, not just what came back.
-final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
+///
+/// Main-actor isolated: the models under test are @MainActor and await these
+/// methods, and the tests read the recorders on the main actor. Left
+/// nonisolated, each async method ran on the global executor and appended to
+/// a recorder while the test read it — a data race that crashed the test
+/// runner at random (double free in Array.append). The synchronous DaemonAPI
+/// requirements stay nonisolated and touch only values set before the test runs.
+@MainActor
+final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI {
     // MARK: - DaemonAPI
 
-    var baseURLResult: URL? = URL(string: "http://127.0.0.1:59999")
+    nonisolated(unsafe) var baseURLResult: URL? = URL(string: "http://127.0.0.1:59999")
     var stateResult: Result<DaemonState, Error> = .failure(DaemonError.down)
     var switchResult: Result<Void, Error> = .failure(DaemonError.down)
     var detectResult: Result<[DetectedDir], Error> = .success([])
@@ -23,7 +31,7 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
     var reportMarkerResult: Result<Void, Error> = .success(())
     var startLoginResult: Result<LoginStart, Error> = .failure(DaemonError.down)
     var completeLoginResult: Result<Void, Error> = .failure(DaemonError.down)
-    var eventsResult: Result<DaemonState, Error> = .failure(DaemonError.down)
+    nonisolated(unsafe) var eventsResult: Result<DaemonState, Error> = .failure(DaemonError.down)
 
     private(set) var switchedTo: [String] = []
     private(set) var adopted: [String] = []
@@ -31,7 +39,7 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
     private(set) var startedLogins = 0
     private(set) var completedLogins: [(code: String, state: String)] = []
 
-    func baseURL() -> URL? { baseURLResult }
+    nonisolated func baseURL() -> URL? { baseURLResult }
     func state() async throws -> DaemonState { try stateResult.get() }
 
     func switchAccount(to id: String) async throws {
@@ -63,7 +71,7 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI, @unchecked Sendable {
         try completeLoginResult.get()
     }
 
-    func events() -> AsyncThrowingStream<DaemonState, Error> {
+    nonisolated func events() -> AsyncThrowingStream<DaemonState, Error> {
         AsyncThrowingStream { continuation in
             switch eventsResult {
             case let .success(s): continuation.yield(s)

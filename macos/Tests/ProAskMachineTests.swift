@@ -459,10 +459,11 @@ final class ProAskMachineTests: XCTestCase {
     // ends the ladder permanently.
 
     private func priceScreenAsk(
-        winback: WinbackModel, api: StubCockpitAPI = StubCockpitAPI(), guided: Bool = true,
+        winback: WinbackModel, api: StubCockpitAPI? = nil, guided: Bool = true,
         quote: LadderQuote? = nil, status: String = "none", active: Bool = false,
         onDismiss: @escaping () -> Void = {}
     ) -> AskMachine {
+        let api = api ?? StubCockpitAPI() // a default argument would build it off the main actor
         let ask = AskMachine(
             license: license(status: status, active: active), quote: quote ?? fourDayQuote,
             guided: guided, locale: "en-GB", winback: winback, api: api, onDismiss: onDismiss)
