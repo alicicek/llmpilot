@@ -161,4 +161,5 @@ test("quote route: CORS opens for exactly the site origins", async () => {
     ctx,
   );
   assert.equal(foreign.headers.get("access-control-allow-origin"), null);
+  assert.equal(foreign.headers.get("vary"), "origin");
 });

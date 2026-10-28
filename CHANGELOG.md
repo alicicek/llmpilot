@@ -4,7 +4,7 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.1] - 2026-10-07
+## [1.4.1] - 2026-10-08
 
 A security fix: other user accounts on the same Mac can no longer read
 your llmpilot data from the daemon. No price, trial length, offer, or
@@ -17,15 +17,16 @@ account-data changes.
   folders, project activity, and the statusline's line — including any
   commands it runs — now need the same session token in `~/.llmpilot` that
   every change already needed. The app, the CLI, the statusline, and
-  `llmpilot open` send it for you. If you installed llmpilot with Homebrew,
-  run `brew update && brew upgrade llmpilot`: an older CLI cannot read from
-  an updated daemon. If your daemon runs from Homebrew, restart it with
-  `launchctl kickstart -k gui/$(id -u)/dev.llmpilot.daemon` — the app never
-  restarts a Homebrew daemon, and a running one serves the old way until it
-  restarts. A cockpit browser tab
-  opened without its session token, for example by pasting its address
-  into a new tab, now says the token is missing instead of showing your
-  data: run `llmpilot open` to reopen it.
+  `llmpilot open` send it for you. If you installed the CLI with Homebrew,
+  run `brew update && brew upgrade --formula alicicek/tap/llmpilot`: an
+  older CLI cannot read from an updated daemon. Then, whether or not you
+  also use the app, restart the daemon with
+  `launchctl kickstart -k gui/$(id -u)/dev.llmpilot.daemon` — the app may
+  not restart a daemon that Homebrew started, and a running one serves the
+  old way until it restarts. A cockpit browser tab opened without its
+  session token, for example by pasting its address into a new tab, now
+  says the token is missing instead of showing your data: run
+  `llmpilot open` to reopen it.
 
 ## [1.4.0] - 2026-10-06
 

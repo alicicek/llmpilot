@@ -5,6 +5,9 @@
   "compatibility_date": "2026-07-12",
   // nodejs_compat: the Stripe SDK touches Node built-ins.
   "compatibility_flags": ["nodejs_compat"],
+  // wrangler 4.150 started uploading source maps by default; keep deploys
+  // shipping what they always have unless that is chosen on purpose.
+  "upload_source_maps": false,
   "observability": {
     "enabled": true,
     "logs": { "head_sampling_rate": 1 },
