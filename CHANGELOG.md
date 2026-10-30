@@ -4,7 +4,7 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.0] - 2026-10-30
 
 Adding an account now signs in through Claude Code itself, so it works the
 same way Claude Code's own sign-in does. No price, trial length, offer, or
@@ -39,6 +39,8 @@ account-data changes.
 - **Signing in again to a watched account keeps it watched.** The fresh
   sign-in goes into the account's own folder, so the terminal that uses that
   folder works again, instead of the account turning switchable.
+- Signing in again to an account keeps the MCP server sign-ins Claude Code
+  stores alongside it, instead of signing you out of those servers.
 - If the browser approves a different account than the one you asked to sign
   in again, or an account you already added, the sheet says so instead of
   reporting success.
@@ -709,7 +711,7 @@ Initial public release: live usage for every account, lock-first switching,
 window scheduling, the cockpit, the menu bar app, the statusline, and the
 one-time Pro autopilot.
 
-[Unreleased]: https://github.com/alicicek/llmpilot/compare/v1.4.1...HEAD
+[1.5.0]: https://github.com/alicicek/llmpilot/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/alicicek/llmpilot/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/alicicek/llmpilot/compare/v1.3.6...v1.4.0
 [1.3.6]: https://github.com/alicicek/llmpilot/compare/v1.3.5...v1.3.6
