@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -303,6 +304,9 @@ func TestRemoveRefusesAnythingButAStagingFolder(t *testing.T) {
 }
 
 func TestSweepStopsLeftoverSignInAndRemovesIt(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("telling a leftover sign-in from a recycled pid uses macOS's ps and lsof")
+	}
 	h := newHarness(t, "hang", "")
 	root := filepath.Join(h.home, stagingRoot)
 	if err := os.MkdirAll(root, 0o700); err != nil {
