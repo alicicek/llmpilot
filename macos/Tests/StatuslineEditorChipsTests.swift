@@ -45,7 +45,7 @@ final class StatuslineEditorChipsTests: XCTestCase {
         api.statuslineConfigResult = .success(Fixtures.config)
         api.statuslinePreviewResult = .success(StatuslinePreviewResponse(line: "FULL", plain: "FULL", width: 120, tier: "truecolor"))
         api.statuslineSegmentPreviewByID = [
-            "account": StatuslinePreviewResponse(line: "[acct 2/4 | rin@ashgrove.io]", plain: "", width: 0, tier: "truecolor"),
+            "account": StatuslinePreviewResponse(line: "[acct 2/4 | rin@ashgrove.example]", plain: "", width: 0, tier: "truecolor"),
             "usage": StatuslinePreviewResponse(line: "5h:44%(03:41) wk:37%", plain: "", width: 0, tier: "truecolor"),
             "context": StatuslinePreviewResponse(line: "ctx:34%", plain: "", width: 0, tier: "truecolor"),
         ]
@@ -105,7 +105,7 @@ final class StatuslineEditorChipsTests: XCTestCase {
     func testEveryChipGetsTheRenderersBytesForItsSegment() async {
         let api = StubCockpitAPI()
         let model = await loadedModel(api)
-        XCTAssertEqual(model.segmentPreview(id: "account", options: nil)?.line, "[acct 2/4 | rin@ashgrove.io]")
+        XCTAssertEqual(model.segmentPreview(id: "account", options: nil)?.line, "[acct 2/4 | rin@ashgrove.example]")
         XCTAssertEqual(model.segmentPreview(id: "usage", options: nil)?.line, "5h:44%(03:41) wk:37%")
         XCTAssertEqual(model.segmentPreview(id: "context", options: nil)?.line, "ctx:34%", "tray chips render with defaults")
         // Every per-segment request was a ONE-segment config at the daemon.
@@ -526,10 +526,10 @@ final class StatuslineDragHostingTests: XCTestCase {
         api.statuslineConfigResult = .success(try! JSONDecoder().decode(StatuslineConfigResponse.self, from: Data(
             #"{"config":{"version":1,"preset":"","segments":[\#(segs)]},"load_error":""}"#.utf8)))
         let esc = "\u{1B}"
-        let full = previewBytes ?? "\(esc)[36m[acct 2/4 | rin@ashgrove.io]\(esc)[0m \(esc)[32m5h:44%\(esc)[0m(03:41) wk:37% ~/Dev/llmpilot (main) Opus 5.5"
+        let full = previewBytes ?? "\(esc)[36m[acct 2/4 | rin@ashgrove.example]\(esc)[0m \(esc)[32m5h:44%\(esc)[0m(03:41) wk:37% ~/Dev/llmpilot (main) Opus 5.5"
         api.statuslinePreviewResult = .success(StatuslinePreviewResponse(line: full, plain: full, width: 120, tier: "truecolor"))
         let bytes: [String: String] = [
-            "account": "\(esc)[36m[acct 2/4 | rin@ashgrove.io]\(esc)[0m",
+            "account": "\(esc)[36m[acct 2/4 | rin@ashgrove.example]\(esc)[0m",
             "usage": "\(esc)[32m5h:44%\(esc)[0m(03:41) wk:\(esc)[33m37%\(esc)[0m",
             "burn": "burn ok till 19:05",
             "context": "ctx:34%",
@@ -816,7 +816,7 @@ final class StatuslineDragHostingTests: XCTestCase {
     /// `TEST_RUNNER_LLMPILOT_SHOT_DIR`).
     func testAutoWidthPreviewAtEightyTwoHundredAndDefault() async throws {
         let esc = "\u{1B}"
-        let row1 = "\(esc)[36m[acct 2/4 | rin@ashgrove.io]\(esc)[0m \(esc)[32m5h:44%\(esc)[0m(03:41) wk:\(esc)[33m37%\(esc)[0m"
+        let row1 = "\(esc)[36m[acct 2/4 | rin@ashgrove.example]\(esc)[0m \(esc)[32m5h:44%\(esc)[0m(03:41) wk:\(esc)[33m37%\(esc)[0m"
         let longRow2 = "\(esc)[34m~/Dev/llmpilot (main)\(esc)[0m Opus 5.5 ctx:34% $1.82 " +
             "\(esc)[2m" + String(repeating: "· session sample field ", count: 4) + "\(esc)[0m tail-end-of-a-long-row"
         let wideRow2 = "\(esc)[34m~/Dev/llmpilot (main)\(esc)[0m Opus 5.5 ctx:34% $1.82 " +

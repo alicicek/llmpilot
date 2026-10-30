@@ -148,3 +148,28 @@ func TestCredFingerprint(t *testing.T) {
 		t.Error("fingerprint must not embed the token")
 	}
 }
+
+func TestReplaceOAuthBlockKeepsOtherSignIns(t *testing.T) {
+	existing := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"r-old","expiresAt":1},"mcpOAuth":{"github":{"token":"keep-me"}}}`)
+	fresh := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"r-new","expiresAt":4102444800000}}`)
+	out, err := ReplaceOAuthBlock(existing, fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := ParseOAuthCred(out)
+	if err != nil || c.AccessToken != "new" || c.RefreshToken != "r-new" {
+		t.Fatalf("parsed = %+v, %v", c, err)
+	}
+	if !strings.Contains(string(out), "keep-me") {
+		t.Fatalf("the MCP sign-in was dropped: %s", out)
+	}
+	for _, bad := range [][2]string{
+		{`not json`, string(fresh)},
+		{`{"mcpOAuth":{}}`, `{"nope":1}`},
+		{`{"mcpOAuth":{}}`, `{"claudeAiOauth":{"accessToken":""}}`},
+	} {
+		if _, err := ReplaceOAuthBlock([]byte(bad[0]), []byte(bad[1])); err == nil {
+			t.Errorf("ReplaceOAuthBlock(%s, %s) succeeded", bad[0], bad[1])
+		}
+	}
+}

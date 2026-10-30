@@ -82,8 +82,6 @@ private struct PreviewStubAPI: CockpitDaemonAPI {
     func adopt(configDir: String) async throws { try await failVoid() }
     func config() async throws -> DaemonConfig { try await fail() }
     func reportMarker(present: Bool) async throws { try await failVoid() }
-    func startLogin() async throws -> LoginStart { try await fail() }
-    func completeLogin(code: String, state: String) async throws { try await failVoid() }
     func events() -> AsyncThrowingStream<DaemonState, Error> {
         AsyncThrowingStream { $0.finish() }
     }
@@ -113,8 +111,10 @@ private struct PreviewStubAPI: CockpitDaemonAPI {
     func adoptMove(configDir: String, label: String?) async throws -> AdoptMoveResult { try await fail() }
     func cockpitConfig() async throws -> CockpitConfig { try await fail() }
     func putConfig(_ cfg: CockpitConfig) async throws -> CockpitConfig { try await fail() }
-    func startBrowserLogin() async throws -> BrowserLoginStart { try await fail() }
+    func startBrowserLogin(email: String?) async throws -> BrowserLoginStart { try await fail() }
     func browserLoginStatus(attempt: String) async throws -> BrowserLoginStatus { try await fail() }
+    func submitLoginCode(attempt: String, code: String) async throws { try await failVoid() }
+    func cancelBrowserLogin(attempt: String) async throws { try await failVoid() }
 }
 
 /// A throwaway win-back ladder for previews — its own suite, wiped at every
@@ -272,7 +272,7 @@ private func previewPausedAsk() -> AskMachine {
         PaywallActiveScreen(
             ask: previewActiveAsk(), dots: nil, locale: "en-GB",
             watchOnly: [
-                WatchOnlyLane(configDir: "/Users/you/.claude-work", email: "you@acme-corp.dev"),
+                WatchOnlyLane(configDir: "/Users/you/.claude-work", email: "you@acme-corp.example"),
                 WatchOnlyLane(configDir: "/Users/you/.claude-side", email: "side@example.dev"),
             ],
             move: ActivationMoveModel(api: PreviewStubAPI()))

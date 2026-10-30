@@ -267,6 +267,10 @@ func (s *Switcher) Swap(ctx context.Context, target store.Account) error {
 type loginInstall struct {
 	cred         json.RawMessage
 	oauthAccount json.RawMessage
+	// onlyOver, when set, is the one email the install may replace: Claude
+	// Code's slot must be empty or signed in as it, checked under the swap's
+	// own locks (ErrSlotChanged otherwise, with nothing written).
+	onlyOver string
 }
 
 // swapTo is Swap's core. When login is non-nil the target's credential comes
@@ -345,6 +349,17 @@ func (s *Switcher) swapTo(ctx context.Context, target store.Account, login *logi
 	}
 	curEmail := oauthEmail(curOAuth)
 	s.logf("current identity: %s, credential %s", orUnknown(curEmail), redact(curCred))
+
+	// A guarded sign-in install re-asks "empty, or this account?" now that
+	// nothing can change the slot under us: a switch that landed since the
+	// caller looked must not be undone by a sign-in to the account it left.
+	// A leftover journal means the identity may not describe the live
+	// credential, so it refuses too.
+	if login != nil && login.onlyOver != "" {
+		if j, jerr := s.readJournal(ctx); jerr != nil || j != nil || !s.slotTakes(ctx, login.onlyOver) {
+			return ErrSlotChanged
+		}
+	}
 
 	// Recovery: a leftover journal means a previous swap died mid-mutation,
 	// so the config identity may not describe the live credential. Attribute
@@ -445,11 +460,20 @@ func (s *Switcher) swapTo(ctx context.Context, target store.Account, login *logi
 	// install a dead refresh-token lineage.
 	var targetCred, targetOAuth json.RawMessage
 	if login != nil {
-		if err := s.SaveBackup(ctx, target.ID, login.cred, login.oauthAccount); err != nil {
+		fresh := login.cred
+		// A fresh sign-in to the account already in the slot replaces only
+		// its Claude sign-in: the rest of the payload (MCP server sign-ins)
+		// is that same account's and must survive.
+		if curID == target.ID && len(curCred) > 0 {
+			if merged, err := anthropic.ReplaceOAuthBlock(curCred, login.cred); err == nil {
+				fresh = merged
+			}
+		}
+		if err := s.SaveBackup(ctx, target.ID, fresh, login.oauthAccount); err != nil {
 			return fmt.Errorf("persisting the fresh sign-in credential: %w", err)
 		}
-		s.logf("fresh sign-in credential persisted: %s/%s (%s)", BackupService, target.ID, redact(login.cred))
-		targetCred, targetOAuth = login.cred, login.oauthAccount
+		s.logf("fresh sign-in credential persisted: %s/%s (%s)", BackupService, target.ID, redact(fresh))
+		targetCred, targetOAuth = fresh, login.oauthAccount
 	} else {
 		targetCred, targetOAuth, err = s.LoadBackup(ctx, target.ID)
 		if err != nil {

@@ -141,12 +141,17 @@ protocol CockpitDaemonAPI: DaemonAPI {
     // handleConfigPut; the autopilot settings decide unattended switches).
     func putConfig(_ cfg: CockpitConfig) async throws -> CockpitConfig
 
-    // POST /v1/login/browser — requires the Bearer install token
-    // (login.go:64,234-276, requireAuth at 235).
-    func startBrowserLogin() async throws -> BrowserLoginStart
-    // GET /v1/login/browser/status — requires the Bearer install token
-    // (login.go:65,280-299, requireAuth at 281).
+    // POST /v1/login/browser — requires the Bearer install token. Starts
+    // Claude Code's own sign-in, which opens the browser itself; `email`
+    // pre-fills the sign-in page (login.go handleLoginBrowser).
+    func startBrowserLogin(email: String?) async throws -> BrowserLoginStart
+    // GET /v1/login/browser/status — requires the Bearer install token.
     func browserLoginStatus(attempt: String) async throws -> BrowserLoginStatus
+    // POST /v1/login/browser/code — requires the Bearer install token. Hands
+    // the code the sign-in page showed to Claude Code.
+    func submitLoginCode(attempt: String, code: String) async throws
+    // POST /v1/login/browser/cancel — requires the Bearer install token.
+    func cancelBrowserLogin(attempt: String) async throws
 }
 
 extension HTTPDaemonClient: CockpitDaemonAPI {
@@ -438,10 +443,32 @@ extension HTTPDaemonClient: CockpitDaemonAPI {
 
     // MARK: zero-paste browser sign-in
 
-    func startBrowserLogin() async throws -> BrowserLoginStart {
-        struct Empty: Encodable {}
-        let data = try await cPost("v1/login/browser", body: Empty())
+    func startBrowserLogin(email: String?) async throws -> BrowserLoginStart {
+        struct Body: Encodable { var email: String? }
+        // The first sign-in looks Claude Code up through the login shell —
+        // a couple of seconds on a slow profile.
+        let data = try await cPost("v1/login/browser", body: Body(email: email), timeout: 30)
         return try DaemonDates.decoder().decode(BrowserLoginStart.self, from: data)
+    }
+
+    func submitLoginCode(attempt: String, code: String) async throws {
+        struct Body: Encodable {
+            var attemptID: String
+            var code: String
+            enum CodingKeys: String, CodingKey {
+                case attemptID = "attempt_id"
+                case code
+            }
+        }
+        _ = try await cPost("v1/login/browser/code", body: Body(attemptID: attempt, code: code))
+    }
+
+    func cancelBrowserLogin(attempt: String) async throws {
+        struct Body: Encodable {
+            var attemptID: String
+            enum CodingKeys: String, CodingKey { case attemptID = "attempt_id" }
+        }
+        _ = try await cPost("v1/login/browser/cancel", body: Body(attemptID: attempt))
     }
 
     func browserLoginStatus(attempt: String) async throws -> BrowserLoginStatus {

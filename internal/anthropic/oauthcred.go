@@ -51,6 +51,39 @@ func ParseOAuthCred(blob []byte) (OAuthCred, error) {
 	return c, nil
 }
 
+// ReplaceOAuthBlock puts fresh's claudeAiOauth block into existing and
+// keeps every other top-level key of existing — Claude Code keeps more than
+// the Claude sign-in in one payload (MCP server sign-ins sit beside it), and
+// a new sign-in must not sign the user out of those. The result is
+// re-parsed before it is returned.
+func ReplaceOAuthBlock(existing, fresh []byte) ([]byte, error) {
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal(existing, &outer); err != nil || outer == nil {
+		return nil, errors.New("credential payload: not a JSON object")
+	}
+	var src map[string]json.RawMessage
+	if err := json.Unmarshal(fresh, &src); err != nil {
+		return nil, errors.New("fresh credential: not a JSON object")
+	}
+	block, ok := src["claudeAiOauth"]
+	if !ok {
+		return nil, errors.New("fresh credential: no claudeAiOauth block")
+	}
+	outer["claudeAiOauth"] = block
+	out, err := json.Marshal(outer)
+	if err != nil {
+		return nil, err
+	}
+	c, err := ParseOAuthCred(out)
+	if err != nil {
+		return nil, err
+	}
+	if c.AccessToken == "" || c.RefreshToken == "" {
+		return nil, errors.New("fresh credential: no tokens in its claudeAiOauth block")
+	}
+	return out, nil
+}
+
 // SpliceOAuthCred writes a refresh result into a credential payload,
 // preserving every unknown key at both levels. An empty res.RefreshToken
 // keeps the stored one (the server does not always rotate); empty Scopes

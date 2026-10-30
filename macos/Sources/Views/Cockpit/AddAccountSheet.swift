@@ -1,61 +1,65 @@
 import AppKit
 import SwiftUI
 
-// Native port of web/src/shell/AddAccountDialog.tsx — three zero-terminal
-// "Sign in with Claude" paths (zero-paste browser, in-app window, terminal
-// fallback) plus the "already signed in on this Mac" detected-dirs section
-// (adopt-as-watched / move-into-fleet, two-click confirm).
-//
-// Native ALWAYS has the in-app login bridge (LoginWindowController's own
-// WKWebView) — the web's plain-browser fallback for "Sign in in this
-// window" (the hosted-callback + paste-code phases, AddAccountDialog.tsx:
-// 321-340) exists only for a browser tab with no native bridge, so it is
-// deliberately NOT ported here: `windowSignIn()` always takes the bridge
-// branch (close the sheet, open the in-app window).
+// The "Add account" surface, shared by the cockpit sheet and the standalone
+// sign-in window (LoginWindow.swift). Sign-in runs through Claude Code
+// itself: the daemon starts `claude auth login`, Claude Code opens the
+// browser, and the account joins the fleet when the user approves. The
+// "already signed in on this Mac" section below lists folders llmpilot can
+// adopt or move without signing in at all.
 
-/// Copy pinned verbatim against AddAccountDialog.tsx so a future edit to
-/// either side is a one-line diff, not a silent drift.
+/// Every string the sheet shows, in one place.
 enum AddAccountCopy {
-    // MARK: sheet chrome (AddAccountDialog.tsx:368, 434-458)
     static let title = "Add account"
-    static let intro = "Sign in with your Claude account and it joins the fleet — no terminal needed."
-    // "(faster)" carries what the deleted helper paragraph used to say
-    // (owner 2026-08-12: the explainer read as noise; the label states the
-    // one fact that matters).
-    static let browserButton = "Sign in with your browser (faster)"
-    static let browserButtonStarting = "Starting…"
-    static let windowButton = "Sign in in this window"
-
-    // MARK: browserWait (AddAccountDialog.tsx:382-401)
-    static let browserWaitBody =
-        "Finish signing in in your browser — your password manager works there. This updates " +
-        "on its own the moment you're done."
-    static let reopenBrowser = "Reopen browser"
-    static let cancel = "Cancel"
-
-    // MARK: done (AddAccountDialog.tsx:378-381)
-    static let done = "Signed in — the account is joining your fleet now."
-
-    // MARK: errors (AddAccountDialog.tsx:284, 295)
-    static let signInFailedFallback = "Sign-in failed — try again."
-    static let pollTimeout = "Didn't detect a completed sign-in — finish it in your browser, or try again."
-    // F8 (2026-08-16 fresh-user audit): the token-endpoint 429 on sign-in
-    // start read as an unrecoverable dead end — same primary button, no
-    // stated wait. States what happened and how long to wait. P2 copy fix
-    // (wave S12): also states that the retry is a FRESH sign-in — the
-    // failed exchange consumed this attempt's code, replaying it can never
-    // work, and copy implying "wait and the same sign-in resumes" misled.
-    static let rateLimitedSignIn =
-        "The sign-in server is rate-limited — wait a minute, then try again. That starts a fresh sign-in; this attempt's code won't work again."
-    // VOICE.md: verb+object — replaces the default browser-button label
-    // while a rate-limited error is showing, so the retry path is explicit.
+    static let intro =
+        "Sign in with your Claude account. Your browser opens, and the account joins the fleet " +
+        "when you approve — adding an account never switches Claude Code."
+    static let signInButton = "Sign in with Claude"
+    static let starting = "Starting…"
+    // VOICE.md: verb+object — replaces the sign-in label after a failure.
     static let tryAgain = "Try again"
 
-    // (The "Prefer the terminal?" fallback block was removed 2026-08-12 —
-    // owner: users should never be pointed at the CLI, and its disclosure
-    // chevron was the sheet's confusing third Tab stop.)
+    static let waitBody = "Finish signing in in your browser. This updates on its own the moment you approve."
+    static let cancel = "Cancel"
+    static let noBrowser = "Browser didn't open?"
+    static let openSignInPage = "Open the sign-in page"
+    static let pasteHint = "Approve there, then paste the code the page shows."
+    static let pastePlaceholder = "Paste code"
+    static let submitCode = "Add account"
+    static let submitting = "Adding…"
 
-    // MARK: detected section (AddAccountDialog.tsx:121-224)
+    static func doneMessage(outcome: String?, email: String?) -> String {
+        let who = (email?.isEmpty == false) ? email! : "The account"
+        switch outcome {
+        case "active": return "\(who) is signed in — Claude Code is using it."
+        case "updated": return "\(who) is signed in again."
+        default: return "\(who) joined your fleet — switch to it any time."
+        }
+    }
+
+    /// "Sign in again" asked for one account and the browser approved another.
+    static func wrongAccount(landed: String, requested: String) -> String {
+        "You approved as \(landed), not \(requested). \(landed) is signed in; to fix \(requested), " +
+            "sign in again and pick that account in your browser."
+    }
+
+    /// Add account landed on an account the fleet already has — usually the
+    /// browser was still signed in to it.
+    static func alreadyInFleet(_ email: String) -> String {
+        "\(email) is already in your fleet — its sign-in is fresh now. To add a different account, " +
+            "sign out of claude.ai in your browser first, then sign in again."
+    }
+
+    static let signInFailedFallback = "Sign-in didn't finish — try again."
+    static let attemptGone = "This sign-in ended when llmpilot restarted — start it again."
+    static let pollTimeout = "The sign-in timed out — start it again."
+    static let daemonDown = "The llmpilot daemon isn't reachable — open the menu bar app, then try again."
+    static let claudeMissing =
+        "llmpilot signs you in through Claude Code, which isn't installed on this Mac. Install it, then try again."
+    static let getClaudeCode = "Install Claude Code"
+    static let claudeCodeSetupURL = URL(string: "https://code.claude.com/docs/en/setup")!
+
+    // MARK: detected section
     static let detectedHeader = "Already signed in on this Mac"
     static let moved = "Already moved into the fleet."
     static let registeredElsewhere =
@@ -85,26 +89,23 @@ enum AddAccountCopy {
     }
 }
 
-/// Per-row classification (AddAccountDialog.tsx:130-201), pulled out as a
-/// pure function so it is independently testable against a classification
-/// table. Order matters: `moved` wins over everything, then the confirmed-
-/// empty (`signed_in == false`) branch, then the normal adopt/move branch.
+/// Per-row classification, pulled out as a pure function so it is
+/// independently testable against a classification table. Order matters:
+/// `moved` wins over everything, then the confirmed-empty
+/// (`signed_in == false`) branch, then the normal adopt/move branch.
 enum DetectedRowClass: Equatable {
     case moved
     /// signed_in == false AND the account is already watched from another
     /// folder — telling this folder to "sign in again" would be wrong, the
-    /// account is live elsewhere (AddAccountDialog.tsx:146-150).
+    /// account is live elsewhere.
     case registeredElsewhere
     /// signed_in == false and the account is not watched anywhere else.
     case signedOut
     case unregistered
-    /// Registered (pinned) but not yet moved — keeps the migration verb
-    /// only (AddAccountDialog.tsx:161-163, 166).
+    /// Registered (pinned) but not yet moved — keeps the migration verb only.
     case registered
 }
 
-/// Native port of AddAccountDialog.tsx's Phase — "awaiting"/"completing"
-/// never apply here (see the file header): native always has the bridge.
 enum AddAccountPhase: Equatable {
     case idle
     case starting
@@ -122,55 +123,58 @@ final class AddAccountModel: ObservableObject {
 
     @Published private(set) var phase: AddAccountPhase = .idle
     @Published var error: String?
-    /// F8: set alongside `error` when the current `error` is specifically
-    /// the sign-in server's 429 — drives `browserButtonTitle`'s retry copy
-    /// while (and only while) that error is showing.
-    @Published private(set) var signInRateLimited = false
+    /// Set with `error` when Claude Code isn't installed — the sheet then
+    /// offers the install page instead of a plain retry.
+    @Published private(set) var claudeMissing = false
+    /// The sign-in link for a browser that didn't open (from the daemon).
+    @Published private(set) var manualURL: URL?
+    /// "Browser didn't open?" disclosure state.
+    @Published var showPaste = false
+    @Published var pasteInput = ""
+    @Published private(set) var pasteBusy = false
+    @Published private(set) var pasteError: String?
+    @Published private(set) var doneMessage = ""
+    /// The finished sign-in is not what was asked for (see doneMessage):
+    /// shown as a warning, and the sheet stays open.
+    @Published private(set) var doneIsWarning = false
+    /// A follow-up the user needs (e.g. open Claude Code once) — shown under
+    /// the done line, and the sheet stays open so it can be read.
+    @Published private(set) var doneNote = ""
     @Published private(set) var detected: [DetectedDir] = []
     @Published private(set) var rowBusy: RowBusy?
     @Published var rowError: String?
     @Published private(set) var confirmMove: String?
     @Published private(set) var moveNotes: [String: String] = [:]
 
-    /// The fleet's own config dir — never listed (AddAccountDialog.tsx:78)
-    /// — and every email the fleet already watches. Set by the integrator
-    /// from the live daemon state before/while the sheet is open.
+    /// The fleet's own config dir — never listed — and every email the fleet
+    /// already watches. Set by the integrator from the live daemon state.
     var fleetDir: String
     var fleetEmails: [String]
 
     private let api: CockpitDaemonAPI & DaemonAPI
 
-    // MARK: - injectable seams (tests: virtual clock, no real webview/pasteboard)
+    // MARK: - injectable seams (tests: virtual clock, no real browser)
 
-    /// Wall clock for the poll-loop timeout; a test fake drives it without
-    /// real waits.
     var now: () -> Date = Date.init
-    /// Sleeps `seconds`; the default really sleeps. A test fake can advance
-    /// a virtual clock and return instantly.
     var sleep: (TimeInterval) async -> Void = { seconds in
         try? await Task.sleep(nanoseconds: UInt64(max(seconds, 0) * 1_000_000_000))
     }
     var openExternal: (URL) -> Void = { NSWorkspace.shared.open($0) }
-    /// Wired by the integrator to `LoginWindowController.shared.open()`.
-    var openLoginWindow: () -> Void = {}
-    /// Wired by the integrator to flip the sheet's `open` binding to false.
+    /// Wired by the integrator to close the sheet or window.
     var onRequestClose: () -> Void = {}
 
-    /// Poll every 2s (AddAccountDialog.tsx:293,299).
-    var pollInterval: TimeInterval = 2
-    /// Self-timeout at 5 minutes — deliberately shorter than the daemon's
-    /// 10-minute attempt TTL (AddAccountDialog.tsx:292; internal/daemon/
-    /// login.go loginAttemptTTL).
-    var pollTimeout: TimeInterval = 5 * 60
-    /// Linger on "done" before auto-closing (AddAccountDialog.tsx:280).
-    var doneLingerDelay: TimeInterval = 1.2
-    /// Move-confirm auto-disarm — same precedent as StashPanelModel's
-    /// discard confirm (native analog of the web's onBlur reset).
+    var pollInterval: TimeInterval = 1.5
+    /// A little past the daemon's own 10-minute attempt limit, which reports
+    /// a timed-out sign-in first; this only catches a daemon that went quiet.
+    var pollTimeout: TimeInterval = 11 * 60
+    /// Linger on "done" before auto-closing.
+    var doneLingerDelay: TimeInterval = 1.8
+    /// Move-confirm auto-disarm.
     var confirmResetDelay: TimeInterval = 3
     private var attemptID = ""
-    private var authorizeURL: URL?
-    /// The cancellable browser sign-in + poll sequence — cancelling this is
-    /// what "closing/Cancel stops the poll" means.
+    /// The email the current sign-in was started for ("Sign in again").
+    private var requestedEmail: String?
+    /// The cancellable sign-in + poll sequence.
     private var signInTask: Task<Void, Never>?
     private var confirmResetTask: Task<Void, Never>?
 
@@ -182,45 +186,42 @@ final class AddAccountModel: ObservableObject {
 
     // MARK: - lifecycle (sheet open/close)
 
-    /// Call when the sheet's `open` binding flips to true — the web
-    /// refetches detected dirs on every open (AddAccountDialog.tsx:260-262,
-    /// a shipped bug fix for a list that only ever loaded once).
+    /// Call when the sheet appears — refetches detected dirs on every open.
     func opened() {
         Task { await self.refreshDetected() }
     }
 
-    /// Call when the sheet's `open` binding flips to false. Mirrors
-    /// AddAccountDialog.tsx's `reset()` (phase/url/error) PLUS the
-    /// detected-row local state: in the web, DetectedSection is a child
-    /// component that unmounts with the rest of the dialog tree when Radix
-    /// Dialog.Content stops rendering, discarding its `useState` — a
-    /// persistent native model must clear that state explicitly to match.
+    /// Call when the sheet goes away. Stops watching the sign-in but leaves
+    /// it running: approving in the browser after closing the sheet still
+    /// adds the account. Cancel is the explicit stop.
     func closed() {
         signInTask?.cancel()
         signInTask = nil
         reset()
+        requestedEmail = nil
         clearDetectedRowState()
-        // The web's DetectedSection unmounts with the dialog, so a re-open
-        // starts EMPTY until the refetch lands — a persistent native model
-        // must drop the old rows too, or the first frame renders stale rows
-        // against the next open's fleetDir/fleetEmails snapshot.
         detected = []
     }
 
     private func reset() {
         phase = .idle
-        authorizeURL = nil
+        attemptID = ""
         error = nil
-        signInRateLimited = false
+        claudeMissing = false
+        manualURL = nil
+        showPaste = false
+        pasteInput = ""
+        pasteBusy = false
+        pasteError = nil
+        doneMessage = ""
+        doneIsWarning = false
+        doneNote = ""
     }
 
-    /// F8: the primary browser sign-in button's title — a pure function of
-    /// phase plus whether the error currently showing is a rate-limited
-    /// sign-in, mirroring `PriceBottomControl.resolve`'s style (pulled out
-    /// so it's testable without rendering).
-    var browserButtonTitle: String {
-        if phase == .starting { return AddAccountCopy.browserButtonStarting }
-        return signInRateLimited ? AddAccountCopy.tryAgain : AddAccountCopy.browserButton
+    /// The primary button's title.
+    var signInButtonTitle: String {
+        if phase == .starting { return AddAccountCopy.starting }
+        return error != nil ? AddAccountCopy.tryAgain : AddAccountCopy.signInButton
     }
 
     private func clearDetectedRowState() {
@@ -232,19 +233,19 @@ final class AddAccountModel: ObservableObject {
         moveNotes = [:]
     }
 
-    // MARK: - detected dirs (AddAccountDialog.tsx:50-225)
+    // MARK: - detected dirs
 
     func refreshDetected() async {
         detected = (try? await api.detect()) ?? []
     }
 
-    /// AddAccountDialog.tsx:78 — every folder except the fleet's own slot.
+    /// Every folder except the fleet's own slot.
     var candidates: [DetectedDir] {
         detected.filter { $0.configDir != fleetDir }
     }
 
-    /// AddAccountDialog.tsx:83 — the section (and its outcome notes) only
-    /// disappears once there is nothing left to show.
+    /// The section (and its outcome notes) only disappears once there is
+    /// nothing left to show.
     var isDetectedSectionEmpty: Bool {
         candidates.isEmpty && moveNotes.isEmpty
     }
@@ -253,16 +254,14 @@ final class AddAccountModel: ObservableObject {
         if d.moved { return .moved }
         if d.signedIn == false {
             // Case-folded: .claude.json can hold "Alex@Example.dev" for an
-            // account the fleet knows as "alex@example.dev"
-            // (AddAccountDialog.tsx:142-145).
+            // account the fleet knows as "alex@example.dev".
             let inFleet = fleetEmails.contains { $0.caseInsensitiveCompare(d.email) == .orderedSame }
             return inFleet ? .registeredElsewhere : .signedOut
         }
         return d.registered ? .registered : .unregistered
     }
 
-    /// AddAccountDialog.tsx:85-92 `runAdopt` — `disabled={busy !== null}`
-    /// blocks EVERY row while any one row's action is in flight.
+    /// Blocks EVERY row while any one row's action is in flight.
     func adoptRow(_ dir: String) {
         guard rowBusy == nil else { return }
         rowBusy = RowBusy(dir: dir, action: .adopt)
@@ -278,9 +277,8 @@ final class AddAccountModel: ObservableObject {
         }
     }
 
-    /// The two-click confirm (AddAccountDialog.tsx:175-192): first click
-    /// arms it, second click (while still armed for THIS dir) fires the
-    /// move.
+    /// The two-click confirm: first click arms it, second click (while
+    /// still armed for THIS dir) fires the move.
     func requestMove(_ dir: String) {
         guard rowBusy == nil else { return }
         if confirmMove == dir {
@@ -293,10 +291,7 @@ final class AddAccountModel: ObservableObject {
         }
     }
 
-    /// Disarms an armed move confirm — the timeout below calls this in
-    /// production; tests call it directly for the web's `onBlur` equivalent
-    /// (AddAccountDialog.tsx:184, StashPanelModel's `resetConfirm`
-    /// precedent).
+    /// Disarms an armed move confirm.
     func resetMoveConfirm(for dir: String) {
         guard confirmMove == dir else { return }
         confirmResetTask?.cancel()
@@ -322,9 +317,8 @@ final class AddAccountModel: ObservableObject {
                 if res.outcome == "clone_suspect" {
                     self.moveNotes[dir] = res.note.isEmpty ? AddAccountCopy.cloneSuspectFallback : res.note
                 } else {
-                    // A later clean move of the same dir resolves the
-                    // earlier warning — a note that is no longer true must
-                    // not linger (AddAccountDialog.tsx:106-109).
+                    // A later clean move of the same dir resolves the earlier
+                    // warning — a note that is no longer true must not linger.
                     self.moveNotes.removeValue(forKey: dir)
                 }
                 await self.refreshDetected()
@@ -335,63 +329,53 @@ final class AddAccountModel: ObservableObject {
         }
     }
 
-    // MARK: - sign-in paths
+    // MARK: - sign-in
 
-    /// Button-facing entry point for the zero-paste browser flow — launches
-    /// the cancellable sign-in + poll sequence. Tests call
-    /// `runBrowserSignIn()` directly for a single awaitable chain with no
-    /// detached Task (AddAccountDialog.tsx:306-319).
-    func browserSignIn() {
+    /// Button-facing entry point — launches the cancellable sign-in + poll
+    /// sequence. `email` pre-fills the sign-in page ("Sign in again").
+    /// Tests call `runBrowserSignIn(email:)` directly.
+    func browserSignIn(email: String? = nil) {
         guard phase == .idle else { return }
         signInTask?.cancel()
         signInTask = Task { [weak self] in
-            await self?.runBrowserSignIn()
+            await self?.runBrowserSignIn(email: email)
         }
     }
 
-    func runBrowserSignIn() async {
-        // closed() may have cancelled us before this body even ran (its
-        // reset() already put phase back to .idle) — don't resurrect
-        // .starting on a sign-in the user already abandoned.
+    /// The primary button: a fresh Add account — or, after a failure, the
+    /// same sign-in again, still for the account it was repairing.
+    func primarySignIn() {
+        browserSignIn(email: error != nil ? requestedEmail : nil)
+    }
+
+    func runBrowserSignIn(email: String? = nil) async {
+        // closed() may have cancelled us before this body even ran — don't
+        // resurrect .starting on a sign-in the user already abandoned.
         guard !Task.isCancelled else { return }
         clearDetectedRowState()
-        error = nil
-        signInRateLimited = false
+        reset()
+        requestedEmail = email
         phase = .starting
         do {
-            let s = try await api.startBrowserLogin()
-            // The sheet may have closed while the start call was in flight —
-            // opening a browser tab the user gave up on (and parking phase
-            // at .starting/.browserWait for the next open) would be pure
-            // confusion.
+            let s = try await api.startBrowserLogin(email: email)
             guard !Task.isCancelled else { phase = .idle; return }
             attemptID = s.attemptID
-            let url = URL(string: s.authorizeURL)
-            authorizeURL = url
-            if let url { openExternal(url) }
             phase = .browserWait
             await pollLoop(id: s.attemptID, startedAt: now())
         } catch {
             if Task.isCancelled { return }
-            self.error = message(for: error)
-            self.signInRateLimited = Self.isRateLimited(error)
             phase = .idle
+            if let e = error as? ApiError, e.code == "claude_missing" {
+                claudeMissing = true
+                self.error = AddAccountCopy.claudeMissing
+            } else {
+                self.error = message(for: error)
+            }
         }
     }
 
-    /// F8: true for the daemon's 429 on the sign-in start call itself; the
-    /// poll's "failed" status carries its own `code == "rate_limited"` for
-    /// the exchange 429 (the audit's actual case). A poll timeout or any
-    /// other failure resets the flag.
-    private static func isRateLimited(_ error: Error) -> Bool {
-        if let e = error as? DaemonError, case .http(429, _) = e { return true }
-        return false
-    }
-
-    /// Mirrors AddAccountDialog.tsx:268-304's polling effect: an initial
-    /// 2s delay, then fetch, then either schedule the next 2s tick or (past
-    /// the self-timeout) surface the timeout copy. Transient fetch errors
-    /// are swallowed — the poll keeps going.
+    /// Polls the attempt until it finishes. Transient fetch errors are
+    /// swallowed — the poll keeps going.
     private func pollLoop(id: String, startedAt: Date) async {
         while true {
             await sleep(pollInterval)
@@ -399,74 +383,119 @@ final class AddAccountModel: ObservableObject {
             do {
                 let s = try await api.browserLoginStatus(attempt: id)
                 if Task.isCancelled { return }
-                if s.status == "done" {
+                switch s.status {
+                case "done":
                     phase = .done
+                    pasteBusy = false
+                    let landed = s.email ?? ""
+                    if let want = requestedEmail, !want.isEmpty, !landed.isEmpty,
+                       want.caseInsensitiveCompare(landed) != .orderedSame {
+                        doneIsWarning = true
+                        doneMessage = AddAccountCopy.wrongAccount(landed: landed, requested: want)
+                        return
+                    }
+                    if (requestedEmail ?? "").isEmpty, s.existing == "true", !landed.isEmpty {
+                        doneIsWarning = true
+                        doneMessage = AddAccountCopy.alreadyInFleet(landed)
+                        return
+                    }
+                    doneMessage = AddAccountCopy.doneMessage(outcome: s.outcome, email: s.email)
+                    if let note = s.note, !note.isEmpty {
+                        doneNote = note
+                        return
+                    }
                     await sleep(doneLingerDelay)
                     if !Task.isCancelled { onRequestClose() }
                     return
-                }
-                if s.status == "failed" {
-                    let msg = s.error
-                    error = (msg?.isEmpty == false) ? msg! : AddAccountCopy.signInFailedFallback
-                    // The REAL exchange 429 arrives here, not on the start
-                    // call: /v1/login/browser succeeds, the code exchange
-                    // fails later, and the status poll carries the outcome
-                    // with a stable failure code (found in review —
-                    // this branch used to clear the flag unconditionally,
-                    // so Try again never showed for an actual 429).
-                    signInRateLimited = s.code == "rate_limited"
+                case "failed":
+                    let msg = s.error ?? ""
+                    error = msg.isEmpty ? AddAccountCopy.signInFailedFallback : Self.sentence(msg)
                     phase = .idle
+                    pasteBusy = false
+                    return
+                default:
+                    if manualURL == nil, let raw = s.manualURL, !raw.isEmpty {
+                        manualURL = URL(string: raw)
+                    }
+                }
+            } catch let e as DaemonError {
+                // The daemon restarted and forgot this attempt — waiting on
+                // it can only time out.
+                if case .http(404, _) = e {
+                    error = AddAccountCopy.attemptGone
+                    phase = .idle
+                    pasteBusy = false
                     return
                 }
+                // otherwise transient (daemon busy) — keep polling.
             } catch {
-                // transient (daemon busy) — keep polling.
+                // transient — keep polling.
             }
             if Task.isCancelled { return }
             if now().timeIntervalSince(startedAt) >= pollTimeout {
                 error = AddAccountCopy.pollTimeout
-                signInRateLimited = false
                 phase = .idle
                 return
             }
         }
     }
 
-    func reopenBrowser() {
-        guard let url = authorizeURL else { return }
+    /// Opens Claude Code's manual sign-in link (the page then shows a code).
+    func openSignInPage() {
+        guard let url = manualURL else { return }
         openExternal(url)
     }
 
-    /// Cancel button in browserWait (AddAccountDialog.tsx:396-400) — the
-    /// same `reset()` the dialog-close path uses.
+    /// Hands the pasted code to Claude Code; the poll reports the outcome.
+    func submitPastedCode() async {
+        let code = pasteInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard phase == .browserWait, !attemptID.isEmpty, !code.isEmpty, !pasteBusy else { return }
+        pasteBusy = true
+        pasteError = nil
+        do {
+            try await api.submitLoginCode(attempt: attemptID, code: code)
+        } catch {
+            pasteBusy = false
+            pasteError = message(for: error)
+        }
+    }
+
+    /// Cancel button while waiting: stops the sign-in on the daemon too.
     func cancelBrowserWait() {
         signInTask?.cancel()
         signInTask = nil
+        let id = attemptID
+        if !id.isEmpty {
+            Task { try? await self.api.cancelBrowserLogin(attempt: id) }
+        }
         reset()
     }
 
-    /// Native always has the in-app login bridge, so this is always the
-    /// "close the sheet + open the in-app window" branch
-    /// (AddAccountDialog.tsx:321-328). The web's non-bridge fallback (the
-    /// hosted-callback + paste flow, :329-340) never applies natively —
-    /// there is no plain-browser cockpit surface to fall back through.
-    func windowSignIn() {
-        clearDetectedRowState()
-        openLoginWindow()
-        onRequestClose()
+    /// "Sign in again" from a finished-but-not-what-was-asked state.
+    func signInAgainFromDone() {
+        let email = requestedEmail
+        signInTask?.cancel()
+        reset()
+        browserSignIn(email: email)
+    }
+
+    func openClaudeCodeSetup() {
+        openExternal(AddAccountCopy.claudeCodeSetupURL)
     }
 
     private func message(for error: Error) -> String {
-        if let e = error as? DaemonError {
-            if case .down = e {
-                return "The llmpilot daemon isn't reachable — open the menu bar app, then try again."
-            }
-            // F8: states what happened and the wait, instead of whatever
-            // raw text rode the 429 up from the token endpoint.
-            if case .http(429, _) = e {
-                return AddAccountCopy.rateLimitedSignIn
-            }
+        if let e = error as? DaemonError, case .down = e {
+            return AddAccountCopy.daemonDown
         }
-        return error.localizedDescription
+        return Self.sentence(error.localizedDescription)
+    }
+
+    /// Daemon messages are lowercase clauses; the sheet shows sentences.
+    static func sentence(_ s: String) -> String {
+        guard let first = s.first else { return s }
+        var out = first.uppercased() + s.dropFirst()
+        if let last = out.last, !".?…".contains(last) { out += "." }
+        return out
     }
 }
 
@@ -474,6 +503,7 @@ final class AddAccountModel: ObservableObject {
 
 struct AddAccountSheet: View {
     @ObservedObject var model: AddAccountModel
+    @FocusState private var pasteFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -485,14 +515,23 @@ struct AddAccountSheet: View {
             phaseBody
             if let error = model.error {
                 CockpitWarnBox {
-                    Text(error).font(.system(size: 11)).foregroundColor(CockpitTheme.warn)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(error)
+                            .font(.system(size: 11))
+                            .foregroundColor(CockpitTheme.warn)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if model.claudeMissing {
+                            Button(AddAccountCopy.getClaudeCode) { model.openClaudeCodeSetup() }
+                                .buttonStyle(.link)
+                                .font(.system(size: 11, weight: .semibold))
+                                .accessibilityIdentifier("add-account-get-claude-code")
+                        }
+                    }
                 }
             }
         }
-        // No root padding/frame: SheetChrome (NativeCockpitWindow.swift) is
-        // the single inset owner for every cockpit sheet — the old
-        // `.padding(20)` here inside the wrapper's own ring read 36pt on
-        // the top/left against 16pt under Close (owner 2026-08-13).
+        // No root padding/frame: SheetChrome (NativeCockpitWindow.swift) and
+        // the standalone window each own the inset.
         .onAppear { model.opened() }
         .onDisappear { model.closed() }
     }
@@ -501,75 +540,149 @@ struct AddAccountSheet: View {
     private var phaseBody: some View {
         switch model.phase {
         case .done:
-            Text(AddAccountCopy.done)
-                .font(.system(size: 12))
-                .foregroundColor(CockpitTheme.sec)
-        case .browserWait:
-            VStack(alignment: .leading, spacing: 8) {
-                Text(AddAccountCopy.browserWaitBody)
-                    .font(.system(size: 12))
-                    .foregroundColor(CockpitTheme.sec)
-                HStack(spacing: 8) {
-                    Button(AddAccountCopy.reopenBrowser) { model.reopenBrowser() }
-                        .buttonStyle(.plain)
-                        .foregroundColor(CockpitTheme.sec)
-                        .accessibilityIdentifier("add-account-reopen-browser")
-                        .accessibilityLabel(AddAccountCopy.reopenBrowser)
-                    Button(AddAccountCopy.cancel) { model.cancelBrowserWait() }
-                        .buttonStyle(.plain)
-                        .foregroundColor(CockpitTheme.ter)
-                        .accessibilityIdentifier("add-account-cancel")
-                        .accessibilityLabel(AddAccountCopy.cancel)
+            if model.doneIsWarning {
+                VStack(alignment: .leading, spacing: 10) {
+                    CockpitWarnBox {
+                        Text(model.doneMessage)
+                            .font(.system(size: 11))
+                            .foregroundColor(CockpitTheme.warn)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityIdentifier("add-account-done-warning")
+                    Button(AddAccountCopy.signInAgain) { model.signInAgainFromDone() }
+                        .accessibilityIdentifier("add-account-signin-again")
                 }
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(CockpitTheme.ok)
+                            .accessibilityHidden(true)
+                        Text(model.doneMessage)
+                            .font(.system(size: 12))
+                            .foregroundColor(CockpitTheme.sec)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !model.doneNote.isEmpty {
+                        Text(model.doneNote)
+                            .font(.system(size: 11))
+                            .foregroundColor(CockpitTheme.ter)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("add-account-done")
             }
+        case .browserWait:
+            waitBody
         case .idle, .starting:
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text(AddAccountCopy.intro)
                     .font(.system(size: 12))
                     .foregroundColor(CockpitTheme.sec)
-                VStack(alignment: .leading, spacing: 8) {
-                    Button(action: { model.browserSignIn() }) {
-                        Text(model.browserButtonTitle)
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            // actionFill, not accTx (owner 2026-08-12): accTx
-                            // is the light text-safe blue — white on it fails
-                            // contrast and it didn't match the corridor's
-                            // primary CTA, which moved to actionFill on
-                            // 2026-08-09. One blue for every primary action.
-                            .background(CockpitTheme.actionFill)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
-                    .buttonStyle(.plain)
-                    .opacity(model.phase == .starting ? 0.5 : 1)
-                    .disabled(model.phase == .starting)
-                    .accessibilityIdentifier("add-account-browser-signin")
-                    .accessibilityLabel(model.browserButtonTitle)
-
-                    Button(action: { model.windowSignIn() }) {
-                        Text(AddAccountCopy.windowButton)
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundColor(CockpitTheme.sec)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(CockpitTheme.hair, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                    .opacity(model.phase == .starting ? 0.5 : 1)
-                    .disabled(model.phase == .starting)
-                    .accessibilityIdentifier("add-account-window-signin")
-                    .accessibilityLabel(AddAccountCopy.windowButton)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(action: { model.primarySignIn() }) {
+                    Text(model.signInButtonTitle)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        // actionFill (owner 2026-08-12): one blue for every
+                        // primary action.
+                        .background(CockpitTheme.actionFill)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
+                .buttonStyle(.plain)
+                .opacity(model.phase == .starting ? 0.5 : 1)
+                .disabled(model.phase == .starting)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("add-account-browser-signin")
+                .accessibilityLabel(model.signInButtonTitle)
             }
         }
     }
 
+    private var waitBody: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityHidden(true)
+                Text(AddAccountCopy.waitBody)
+                    .font(.system(size: 12))
+                    .foregroundColor(CockpitTheme.sec)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 12) {
+                Button(AddAccountCopy.noBrowser) {
+                    model.showPaste.toggle()
+                    if model.showPaste { pasteFocused = true }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundColor(CockpitTheme.accTx)
+                .accessibilityIdentifier("add-account-no-browser")
+                Spacer()
+                Button(AddAccountCopy.cancel) { model.cancelBrowserWait() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundColor(CockpitTheme.ter)
+                    .accessibilityIdentifier("add-account-cancel")
+                    .accessibilityLabel(AddAccountCopy.cancel)
+            }
+            if model.showPaste {
+                pasteBox
+            }
+        }
+    }
+
+    private var pasteBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: { model.openSignInPage() }) {
+                Text(AddAccountCopy.openSignInPage)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(CockpitTheme.sec)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(CockpitTheme.hair, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(model.manualURL == nil)
+            .opacity(model.manualURL == nil ? 0.5 : 1)
+            .accessibilityIdentifier("add-account-open-signin-page")
+            Text(AddAccountCopy.pasteHint)
+                .font(.system(size: 11))
+                .foregroundColor(CockpitTheme.ter)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                TextField(AddAccountCopy.pastePlaceholder, text: $model.pasteInput)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .focused($pasteFocused)
+                    .disabled(model.pasteBusy)
+                    .onSubmit { Task { await model.submitPastedCode() } }
+                    .accessibilityIdentifier("add-account-paste-field")
+                Button(model.pasteBusy ? AddAccountCopy.submitting : AddAccountCopy.submitCode) {
+                    Task { await model.submitPastedCode() }
+                }
+                .disabled(model.pasteBusy || model.pasteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("add-account-submit-code")
+            }
+            if let err = model.pasteError {
+                Text(err)
+                    .font(.system(size: 11))
+                    .foregroundColor(CockpitTheme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .background(CockpitTheme.panel)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(CockpitTheme.hairSoft, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
 }
 
-/// AddAccountDialog.tsx:50-225's DetectedSection — the "already signed in
-/// on this Mac" list.
+/// The "already signed in on this Mac" list.
 private struct AddAccountDetectedSection: View {
     @ObservedObject var model: AddAccountModel
 
@@ -655,9 +768,8 @@ private struct AddAccountDetectedRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                 // The row's remedy, as a control (owner 2026-08-12: an
                 // un-pressable explanation left nothing to DO) — the
-                // sheet's own browser sign-in is the fix for a dead
-                // sign-in, same affordance the menu bar row offers.
-                Button(action: { model.browserSignIn() }) {
+                // sheet's own sign-in, pre-filled with this account.
+                Button(action: { model.browserSignIn(email: dir.email) }) {
                     Text(AddAccountCopy.signInAgain)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(CockpitTheme.sec)

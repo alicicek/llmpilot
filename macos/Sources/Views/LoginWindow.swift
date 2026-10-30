@@ -1,111 +1,84 @@
 import AppKit
 import SwiftUI
-import WebKit
 
-/// The in-app "Sign in with Claude" window: a WKWebView on the official
-/// authorize URL whose navigation delegate intercepts the hosted callback —
-/// the code rides the URL query, so it is captured before the page renders
-/// and the exchange runs in the daemon. A bare configuration, like the
-/// checkout window: no injected scripts on a login page, ever. If Anthropic
-/// blocks embedded webviews, the bottom bar falls back to browser + paste.
-final class LoginWindowController: NSWindowController, NSWindowDelegate, WKNavigationDelegate {
+/// The standalone "Add account" window — the menu bar's Add account, the
+/// doctor's remedy and onboarding's "Sign in again" open it. It hosts the
+/// same AddAccountSheet the cockpit shows: sign-in runs through Claude Code
+/// (the daemon starts `claude auth login`, which opens the browser), so
+/// there is no web page in here at all.
+final class LoginWindowController: NSWindowController, NSWindowDelegate {
     static let shared = LoginWindowController()
 
-    private var webView: WKWebView?
-    private var model: LoginFlowModel?
+    private var model: AddAccountModel?
 
-    func open(api: DaemonAPI = HTTPDaemonClient()) {
-        // Always build a FRESH window + webview per sign-in. A multi-account
-        // tool must let you add a second or third account cleanly: a
-        // NON-PERSISTENT (ephemeral) data store means each sign-in starts with
-        // no cookies, so it never inherits the previous account's login, never
-        // touches Safari's session, and leaves nothing on disk. Reusing one
-        // webview would carry the first account's cookies into the second add.
+    /// Opens (or brings forward) the window. `email` starts a sign-in
+    /// pre-filled with that account straight away; `state` lets the
+    /// "already signed in on this Mac" list leave out what the fleet has.
+    func open(
+        email: String? = nil, state: DaemonState? = nil,
+        api: CockpitDaemonAPI & DaemonAPI = HTTPDaemonClient()
+    ) {
+        if let win = window, win.isVisible, let model {
+            Self.apply(state, to: model)
+            if let email, model.phase == .idle { model.browserSignIn(email: email) }
+            present(win)
+            return
+        }
         window?.close()
-        // The Edit-menu key equivalents (⌘V etc.) are wired to NSApp.mainMenu
-        // by the LSUIElement app delegate, but this app's only Scene is the
-        // MenuBarExtra — SwiftUI's scene setup can own the main menu after
-        // the delegate runs, and menu equivalents only fire while the app is
-        // active. Rather than depend on that ordering, this window answers
-        // the standard editing key equivalents itself.
+        // EditableWindow: the paste field must answer ⌘V even though this
+        // LSUIElement app's main menu may belong to the MenuBarExtra scene.
         let win = EditableWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 680),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 240),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
-        win.title = "Sign in with Claude"
+        win.title = AddAccountCopy.title
         win.isReleasedWhenClosed = false
         win.delegate = self
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
-        let web = WKWebView(frame: .zero, configuration: config)
-        web.navigationDelegate = self
-        webView = web
-        let m = LoginFlowModel(api: api, openExternal: { NSWorkspace.shared.open($0) })
-        m.loadInWeb = { [weak web] url in web?.load(URLRequest(url: url)) }
-        m.onFinished = { [weak self, weak win] in
-            // Linger on the confirmation, then close; the fleet updates
-            // over SSE on its own. Close only the window THIS attempt owns —
-            // dereferencing self.window at fire time would close a newer
-            // attempt's replacement window opened during the linger.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                guard let self, let win, self.window === win else { return }
-                win.close()
-            }
+        let m = AddAccountModel(api: api)
+        Self.apply(state, to: m)
+        m.onRequestClose = { [weak self, weak win] in
+            // Close only the window THIS model belongs to — a newer one may
+            // have replaced it during the done linger.
+            guard let self, let win, self.window === win else { return }
+            win.close()
         }
         model = m
-        // Host SwiftUI as the contentVIEW (not contentViewController):
-        // a hosting controller shrinks the window to its fitting size, and
-        // the webview has no intrinsic size, so the window collapsed to a
-        // tiny blank frame. A pinned content view keeps the 500×680 size.
-        let hosting = NSHostingView(rootView: LoginView(model: m, webView: web))
-        hosting.frame = NSRect(x: 0, y: 0, width: 500, height: 680)
-        hosting.autoresizingMask = [.width, .height]
-        win.contentView = hosting
-        win.setContentSize(NSSize(width: 500, height: 680))
+        // A hosting CONTROLLER sizes the window to the content and follows
+        // it as the paste box opens and closes.
+        let hosting = NSHostingController(rootView: AddAccountSheet(model: m)
+            .padding(20)
+            .frame(width: 460, alignment: .topLeading))
+        hosting.sizingOptions = [.preferredContentSize]
+        win.contentViewController = hosting
         window = win
         win.center()
-        // Promote BEFORE activating. Activating while still ACCESSORY (the
-        // menu-bar-only state this window used to open in) leaves AppKit
-        // believing the app is active while the window server never made
-        // it frontmost; the cockpit's later accessory→regular promotion
-        // then finds isActive == YES, its activate no-ops, and the cockpit
-        // comes up behind the previous app with its menu bar (measured
-        // 2026-08-17, F18 diagnosis: popover → Add account → close →
-        // Open cockpit). A regular app during sign-in also gets the Dock
-        // presence the cockpit's own close guard already assumes.
+        present(win)
+        if let email { m.browserSignIn(email: email) }
+    }
+
+    private static func apply(_ state: DaemonState?, to model: AddAccountModel) {
+        guard let state else { return }
+        model.fleetEmails = state.accounts.map(\.email).filter { !$0.isEmpty }
+        model.fleetDir = state.accounts.first { !$0.pinned }?.configDir ?? ""
+    }
+
+    private func present(_ win: NSWindow) {
+        // Promote BEFORE activating: activating while still ACCESSORY leaves
+        // AppKit believing the app is active while the window server never
+        // made it frontmost, and the cockpit's later promotion then comes up
+        // behind the previous app (measured 2026-08-17, F18).
         if NSApp.activationPolicy() != .regular {
             NSApp.setActivationPolicy(.regular)
         }
         NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
-        Task { @MainActor in await m.start() }
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
-    ) {
-        guard let url = navigationAction.request.url, let model else {
-            decisionHandler(.allow)
-            return
-        }
-        if model.handleNavigation(url) == .intercept {
-            decisionHandler(.cancel)
-            Task { @MainActor in await model.completePending() }
-        } else {
-            decisionHandler(.allow)
-        }
+        win.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
-        webView?.stopLoading()
-        // Reciprocal half of the cockpit's own close guard (delta re-review
-        // 2026-08-08 Phase 6 P1): the cockpit declines to demote while THIS
-        // window is up, so if the cockpit closed first, this close is the
-        // app's last chance to drop back to accessory — without it a
-        // menu-bar-only app keeps a permanent Dock icon. Hosted tests never
-        // flip the policy (same guard as the cockpit's).
+        // Reciprocal half of the cockpit's own close guard: the cockpit
+        // declines to demote while THIS window is up, so if the cockpit
+        // closed first, this close is the app's last chance to drop back to
+        // accessory. Hosted tests never flip the policy.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         let cockpit = NativeCockpitWindowController.shared.window
         if !(cockpit?.isVisible == true || cockpit?.isMiniaturized == true) {
@@ -143,108 +116,5 @@ final class EditableWindow: NSWindow {
         case "z": return Selector(("undo:"))
         default: return nil
         }
-    }
-}
-
-/// Hosts the controller-owned webview inside the SwiftUI layout.
-private struct LoginWebView: NSViewRepresentable {
-    let webView: WKWebView
-    func makeNSView(context: Context) -> WKWebView { webView }
-    func updateNSView(_ nsView: WKWebView, context: Context) {}
-}
-
-struct LoginView: View {
-    @ObservedObject var model: LoginFlowModel
-    let webView: WKWebView
-    // The .web phase leaves focus in the WKWebView; when the phase flips to
-    // .paste that view drops out of the hierarchy and focus lands nowhere,
-    // so ⌘V has no field editor to act on. Driving focus explicitly also
-    // means the user lands ready to paste.
-    @FocusState private var pasteFieldFocused: Bool
-
-    var body: some View {
-        content
-            .frame(minWidth: 500, minHeight: 620)
-            .onChange(of: model.phase) { phase in
-                if case .paste = phase { pasteFieldFocused = true }
-            }
-            .task {
-                if case .paste = model.phase { pasteFieldFocused = true }
-            }
-    }
-
-    @ViewBuilder private var content: some View {
-        switch model.phase {
-        case .idle, .starting:
-            centered { ProgressView("Contacting Claude…") }
-        case .web:
-            VStack(spacing: 0) {
-                LoginWebView(webView: webView)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                Divider()
-                HStack {
-                    Text("Trouble signing in here?")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Open in browser instead") { model.openInBrowser() }
-                        .font(.system(size: 11))
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
-        case .paste:
-            centered {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Approve the sign-in in your browser, then paste the code it shows you.")
-                        .font(.system(size: 12))
-                    HStack {
-                        TextField("Paste code here", text: $model.pasteInput)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12, design: .monospaced))
-                            .focused($pasteFieldFocused)
-                            .onSubmit { Task { await model.submitPaste() } }
-                        Button("Add account") { Task { await model.submitPaste() } }
-                            .disabled(model.pasteInput.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                    if let err = model.pasteError {
-                        Text(err)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.orange)
-                    }
-                }
-                .frame(maxWidth: 380)
-            }
-        case .exchanging:
-            centered { ProgressView("Adding account…") }
-        case .done:
-            centered {
-                VStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle")
-                        .font(.system(size: 28))
-                    Text("Signed in — the account is joining your fleet.")
-                        .font(.system(size: 12))
-                }
-            }
-        case .failed(let message):
-            centered {
-                VStack(spacing: 10) {
-                    Text(message)
-                        .font(.system(size: 12))
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 380)
-                    HStack {
-                        Button("Try again") { Task { await model.retry() } }
-                        Button("Open in browser instead") { model.openInBrowser() }
-                    }
-                }
-            }
-        }
-    }
-
-    private func centered<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack { content() }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(20)
     }
 }

@@ -188,74 +188,73 @@ export async function discardStash(fingerprint: string): Promise<void> {
   }
 }
 
-export interface LoginStart {
-  authorize_url: string;
-  state: string;
-}
-
-/** Begin an in-app sign-in: the daemon mints PKCE+state and returns the
- *  approval URL. The verifier never reaches this page. */
-export async function startLogin(): Promise<LoginStart> {
-  const res = await fetch("/v1/login/start", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: "{}",
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error ?? `sign-in start: HTTP ${res.status}`);
-  }
-  return (await res.json()) as LoginStart;
-}
-
-/** Begin the zero-paste browser sign-in: the daemon starts a loopback
- *  listener and returns the approval URL to open in the real browser plus an
- *  attempt id. The daemon completes the exchange itself when the browser
- *  redirects back — the caller polls fetchBrowserLoginStatus for THIS attempt
- *  (fleet-size inference never completes on a re-login). */
-export async function startBrowserLogin(): Promise<{ authorize_url: string; attempt_id: string }> {
+/** Begin a sign-in: the daemon runs Claude Code's own `claude auth login`,
+ *  which opens the browser itself. Poll fetchBrowserLoginStatus for THIS
+ *  attempt. `email` pre-fills the sign-in page. */
+export async function startBrowserLogin(email?: string): Promise<{ attempt_id: string }> {
   const res = await fetch("/v1/login/browser", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: "{}",
+    body: JSON.stringify(email ? { email } : {}),
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error ?? `sign-in start: HTTP ${res.status}`);
+    const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+    throw new ApiError(body?.error ?? `sign-in start: HTTP ${res.status}`, body?.code);
   }
-  return (await res.json()) as { authorize_url: string; attempt_id: string };
+  return (await res.json()) as { attempt_id: string };
 }
 
 export interface BrowserLoginStatus {
   status: "pending" | "done" | "failed";
   error?: string;
+  code?: string;
   account_id?: string;
+  email?: string;
+  /** where a finished sign-in landed: active | added | updated */
+  outcome?: string;
+  /** "true" when the fleet already had the account before this sign-in */
+  existing?: string;
+  /** one more thing the user needs to know about the finished sign-in */
+  note?: string;
+  /** the sign-in link for a browser that didn't open; "" until known */
+  manual_url?: string;
 }
 
-/** One browser sign-in attempt's outcome. */
+/** One sign-in attempt's progress and outcome. */
 export async function fetchBrowserLoginStatus(attemptId: string): Promise<BrowserLoginStatus> {
   const res = await fetch(`/v1/login/browser/status?attempt=${encodeURIComponent(attemptId)}`, {
     headers: authHeaders(),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error ?? `sign-in status: HTTP ${res.status}`);
+    throw new ApiError(
+      body?.error ?? `sign-in status: HTTP ${res.status}`,
+      res.status === 404 ? "unknown_attempt" : undefined,
+    );
   }
   return (await res.json()) as BrowserLoginStatus;
 }
 
-/** Finish the sign-in with the code+state from the approval page. */
-export async function completeLogin(code: string, state: string): Promise<Account> {
-  const res = await fetch("/v1/login/complete", {
+/** Hand the code the sign-in page showed to the running sign-in. */
+export async function submitLoginCode(attemptId: string, code: string): Promise<void> {
+  const res = await fetch("/v1/login/browser/code", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ code, state }),
+    body: JSON.stringify({ attempt_id: attemptId, code }),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error ?? `sign-in: HTTP ${res.status}`);
+    throw new Error(body?.error ?? `sign-in code: HTTP ${res.status}`);
   }
-  return (await res.json()) as Account;
+}
+
+/** Stop a running sign-in. */
+export async function cancelBrowserLogin(attemptId: string): Promise<void> {
+  await fetch("/v1/login/browser/cancel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ attempt_id: attemptId }),
+  });
 }
 
 // Go marshals nil slices as null — normalize so the UI never guards.

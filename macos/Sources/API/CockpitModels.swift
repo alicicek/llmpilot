@@ -635,39 +635,56 @@ struct CockpitConfig: Codable, Equatable {
 
 // MARK: - browser sign-in (internal/daemon/login.go)
 
-/// POST /v1/login/browser response (login.go:274-276). No CSRF state rides
-/// this — the daemon's own loopback listener catches the callback.
+/// POST /v1/login/browser response: the attempt to poll. Claude Code opens
+/// the browser itself, so there is no URL to open here.
 struct BrowserLoginStart: Decodable, Equatable {
-    var authorizeURL: String
     var attemptID: String
 
     enum CodingKeys: String, CodingKey {
-        case authorizeURL = "authorize_url"
         case attemptID = "attempt_id"
     }
 }
 
-/// GET /v1/login/browser/status response (login.go:296-298). Every key is a
-/// Go `map[string]string` value, so `error`/`account_id` are always present
-/// (possibly ""), never omitted — decoded tolerantly anyway.
+/// GET /v1/login/browser/status response (login.go). Every key is a Go
+/// `map[string]string` value, so the strings are always present (possibly
+/// ""), never omitted — decoded tolerantly anyway.
 struct BrowserLoginStatus: Decodable, Equatable {
     var status: String // pending | done | failed
     var error: String?
-    /// Machine-readable failure class ("rate_limited" or "") — the sheet
-    /// keys its Try-again state off this, never off the prose in `error`.
+    /// Machine-readable failure class ("cancelled", "timed_out",
+    /// "replaced" or "") — clients key off this, never the prose in `error`.
     var code: String?
     var accountID: String?
+    var email: String?
+    /// Where a finished sign-in landed: "active" | "added" | "updated".
+    var outcome: String?
+    /// "true" when the fleet already had the account before this sign-in.
+    var existing: String?
+    /// One more thing the user needs to know about the finished sign-in.
+    var note: String?
+    /// The sign-in link for a browser that didn't open; "" until known.
+    var manualURL: String?
 
-    init(status: String, error: String? = nil, code: String? = nil, accountID: String? = nil) {
+    init(
+        status: String, error: String? = nil, code: String? = nil, accountID: String? = nil,
+        email: String? = nil, outcome: String? = nil, existing: String? = nil, note: String? = nil,
+        manualURL: String? = nil
+    ) {
         self.status = status
         self.error = error
         self.code = code
         self.accountID = accountID
+        self.email = email
+        self.outcome = outcome
+        self.existing = existing
+        self.note = note
+        self.manualURL = manualURL
     }
 
     enum CodingKeys: String, CodingKey {
-        case status, error, code
+        case status, error, code, email, outcome, existing, note
         case accountID = "account_id"
+        case manualURL = "manual_url"
     }
 }
 

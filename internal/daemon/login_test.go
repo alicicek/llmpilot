@@ -4,442 +4,438 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alicicek/llmpilot/internal/claudecfg"
 	"github.com/alicicek/llmpilot/internal/store"
+	"github.com/alicicek/llmpilot/internal/switcher"
 )
 
-type loginStub struct {
-	completes   atomic.Int32
-	failWith    error
-	mu          sync.Mutex
-	gotCode     string
-	gotVerif    string
-	gotRedirect string
-	lastURLReq  string // redirectURI passed to url()
+// fakeAttempt stands in for a running Claude Code sign-in.
+type fakeAttempt struct {
+	mu         sync.Mutex
+	manual     string
+	codes      []string
+	codeErr    error
+	done       chan struct{}
+	once       sync.Once
+	res        switcher.ImportResult
+	finishErr  error
+	finishGate chan struct{} // when set, Finish waits for it
+	finished   atomic.Int32
+	aborted    atomic.Int32
 }
 
-func (s *loginStub) mint() (string, string, string, error) {
-	return "st-1", "verif-SECRET", "chal-1", nil
-}
-
-func (s *loginStub) url(_ /*challenge*/, state, redirectURI string) (string, error) {
-	s.mu.Lock()
-	s.lastURLReq = redirectURI
-	s.mu.Unlock()
-	return "https://claude.com/cai/oauth/authorize?state=" + state, nil
-}
-
-func (s *loginStub) complete(_ context.Context, code, _ /*state*/, verifier, redirectURI string) (store.Account, error) {
-	s.completes.Add(1)
-	s.mu.Lock()
-	s.gotCode, s.gotVerif, s.gotRedirect = code, verifier, redirectURI
-	s.mu.Unlock()
-	if s.failWith != nil {
-		return store.Account{}, s.failWith
+func newFakeAttempt() *fakeAttempt {
+	return &fakeAttempt{
+		manual: "https://claude.com/cai/oauth/authorize?code=true",
+		done:   make(chan struct{}),
+		res: switcher.ImportResult{
+			Account: store.Account{ID: "acct-b", Label: "b", Email: "b@example.dev"},
+			Outcome: switcher.ImportAdded,
+		},
 	}
-	return store.Account{ID: "acct-new", Label: "new", Email: "new@example.dev"}, nil
 }
 
-func loginDaemon(t *testing.T, stub *loginStub, now *time.Time) *Daemon {
+func (f *fakeAttempt) ManualURL() string { return f.manual }
+func (f *fakeAttempt) SubmitCode(c string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.codeErr != nil {
+		return f.codeErr
+	}
+	f.codes = append(f.codes, c)
+	return nil
+}
+func (f *fakeAttempt) Done() <-chan struct{} { return f.done }
+func (f *fakeAttempt) exit()                 { f.once.Do(func() { close(f.done) }) }
+func (f *fakeAttempt) Finish(context.Context) (switcher.ImportResult, error) {
+	f.finished.Add(1)
+	if f.finishGate != nil {
+		<-f.finishGate
+	}
+	return f.res, f.finishErr
+}
+func (f *fakeAttempt) Abort() {
+	f.aborted.Add(1)
+	f.exit()
+}
+
+type signInHarness struct {
+	d        *Daemon
+	srv      *httptest.Server
+	mu       sync.Mutex
+	emails   []string
+	attempts []*fakeAttempt
+	startErr error
+}
+
+func newSignInHarness(t *testing.T) *signInHarness {
 	t.Helper()
-	d := &Daemon{Store: store.At(t.TempDir()), NowFn: func() time.Time { return *now }}
-	if stub != nil {
-		d.LoginMint = stub.mint
-		d.LoginURL = stub.url
-		d.LoginComplete = stub.complete
+	h := &signInHarness{}
+	h.d = &Daemon{Store: store.At(t.TempDir())}
+	h.d.SignIn = func(_ context.Context, email string) (SignInAttempt, error) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.startErr != nil {
+			return nil, h.startErr
+		}
+		h.emails = append(h.emails, email)
+		a := newFakeAttempt()
+		h.attempts = append(h.attempts, a)
+		return a, nil
 	}
-	return d
+	h.srv = httptest.NewServer(h.d.Handler())
+	t.Cleanup(h.srv.Close)
+	t.Cleanup(h.d.stopSignIn)
+	return h
 }
 
-func TestLoginStartAndCompleteHappyPath(t *testing.T) {
-	stub := &loginStub{}
-	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
-	d := loginDaemon(t, stub, &now)
-	srv := httptest.NewServer(d.Handler())
-	defer srv.Close()
+func (h *signInHarness) attempt(i int) *fakeAttempt {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.attempts[i]
+}
 
-	resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/start", `{}`, d.authToken)
+func (h *signInHarness) start(t *testing.T, body string) string {
+	t.Helper()
+	resp, raw := doAuthed(t, http.MethodPost, h.srv.URL+"/v1/login/browser", body, h.d.authToken)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("start = %d (%s)", resp.StatusCode, body)
+		t.Fatalf("start = %d (%s)", resp.StatusCode, raw)
 	}
-	var start map[string]string
-	if err := json.Unmarshal([]byte(body), &start); err != nil {
+	var out map[string]string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil || len(out["attempt_id"]) != 32 {
+		t.Fatalf("start body = %s", raw)
+	}
+	return out["attempt_id"]
+}
+
+func (h *signInHarness) status(t *testing.T, id string) map[string]string {
+	t.Helper()
+	resp, raw := doAuthed(t, http.MethodGet, h.srv.URL+"/v1/login/browser/status?attempt="+id, "", h.d.authToken)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d (%s)", resp.StatusCode, raw)
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(start["authorize_url"], "https://claude.com/cai/oauth/authorize") || start["state"] != "st-1" {
-		t.Fatalf("start body = %s", body)
-	}
-	// The hosted flow passes an empty redirect ("" = hosted) to LoginURL.
-	stub.mu.Lock()
-	hostedReq := stub.lastURLReq
-	stub.mu.Unlock()
-	if hostedReq != "" {
-		t.Fatalf("start passed redirect %q, want empty (hosted)", hostedReq)
-	}
-	// The PKCE verifier never leaves the daemon.
-	if strings.Contains(body, "verif-SECRET") {
-		t.Fatalf("start response leaked the verifier: %s", body)
-	}
+	return out
+}
 
-	resp, body = doAuthed(t, http.MethodPost, srv.URL+"/v1/login/complete",
-		`{"code":"the-code","state":"st-1"}`, d.authToken)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("complete = %d (%s)", resp.StatusCode, body)
-	}
-	if stub.gotCode != "the-code" || stub.gotVerif != "verif-SECRET" {
-		t.Fatalf("complete passed code=%q verifier=%q", stub.gotCode, stub.gotVerif)
-	}
-	if !strings.Contains(body, "acct-new") {
-		t.Fatalf("complete body = %s", body)
+func (h *signInHarness) waitStatus(t *testing.T, id, want string) map[string]string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s := h.status(t, id)
+		if s["status"] == want {
+			return s
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("status = %v, want %s", s, want)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
-func TestLoginCompleteUnknownStateFailsClosed(t *testing.T) {
-	stub := &loginStub{}
-	now := time.Now()
-	d := loginDaemon(t, stub, &now)
-	srv := httptest.NewServer(d.Handler())
-	defer srv.Close()
-
-	resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/complete",
-		`{"code":"c","state":"forged-state"}`, d.authToken)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("forged state = %d (%s), want 400", resp.StatusCode, body)
+func TestSignInHappyPath(t *testing.T) {
+	h := newSignInHarness(t)
+	id := h.start(t, `{}`)
+	s := h.status(t, id)
+	if s["status"] != "pending" || s["manual_url"] != "https://claude.com/cai/oauth/authorize?code=true" {
+		t.Fatalf("pending status = %v", s)
 	}
-	if stub.completes.Load() != 0 {
-		t.Fatal("exchange ran for a forged state")
+	h.attempt(0).exit() // Claude Code finished
+	s = h.waitStatus(t, id, "done")
+	if s["account_id"] != "acct-b" || s["email"] != "b@example.dev" || s["outcome"] != "added" || s["manual_url"] != "" {
+		t.Fatalf("done status = %v", s)
+	}
+	if n := h.attempt(0).finished.Load(); n != 1 {
+		t.Fatalf("Finish called %d times", n)
 	}
 }
 
-// TestLoginStateIsSingleUse pins the fail-closed replay rule: the state is
-// consumed on the FIRST complete — success or failure — so an again-clicked
-// code can never trigger a second exchange.
-func TestLoginStateIsSingleUse(t *testing.T) {
-	now := time.Now()
-	for _, failFirst := range []bool{false, true} {
-		stub := &loginStub{}
-		if failFirst {
-			stub.failWith = errors.New("code exchange returned HTTP 401")
-		}
-		d := loginDaemon(t, stub, &now)
-		srv := httptest.NewServer(d.Handler())
+func TestSignInPrefillsEmail(t *testing.T) {
+	h := newSignInHarness(t)
+	h.start(t, `{"email":" b@example.dev "}`)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.emails) != 1 || h.emails[0] != "b@example.dev" {
+		t.Fatalf("emails = %v", h.emails)
+	}
+}
 
-		if resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/start", `{}`, d.authToken); resp.StatusCode != http.StatusOK {
-			t.Fatalf("start = %d (%s)", resp.StatusCode, body)
-		}
-		resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/complete",
-			`{"code":"c","state":"st-1"}`, d.authToken)
-		wantFirst := http.StatusCreated
-		if failFirst {
-			wantFirst = http.StatusBadGateway
-		}
-		if resp.StatusCode != wantFirst {
-			t.Fatalf("first complete (failFirst=%v) = %d (%s)", failFirst, resp.StatusCode, body)
-		}
-		resp, body = doAuthed(t, http.MethodPost, srv.URL+"/v1/login/complete",
-			`{"code":"c","state":"st-1"}`, d.authToken)
+func TestSignInRefusesUnsafeEmail(t *testing.T) {
+	h := newSignInHarness(t)
+	for _, e := range []string{"--console", "-x@example.dev", "a b@example.dev", "a@example.dev, c@example.dev",
+		"<a@example.dev>", "Bob <a@example.dev>", "nobody", strings.Repeat("a", 250) + "@example.dev"} {
+		body, _ := json.Marshal(map[string]string{"email": e})
+		resp, raw := doAuthed(t, http.MethodPost, h.srv.URL+"/v1/login/browser", string(body), h.d.authToken)
 		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("replayed complete (failFirst=%v) = %d (%s), want 400", failFirst, resp.StatusCode, body)
+			t.Errorf("email %q = %d (%s), want 400", e, resp.StatusCode, raw)
 		}
-		if got := stub.completes.Load(); got != 1 {
-			t.Fatalf("exchange ran %d times (failFirst=%v), want exactly 1", got, failFirst)
-		}
-		srv.Close()
+	}
+	if len(h.attempts) != 0 {
+		t.Fatalf("Claude Code started for an unsafe email: %d", len(h.attempts))
 	}
 }
 
-func TestLoginAttemptExpires(t *testing.T) {
-	stub := &loginStub{}
-	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
-	d := loginDaemon(t, stub, &now)
-	srv := httptest.NewServer(d.Handler())
-	defer srv.Close()
-
-	if resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/start", `{}`, d.authToken); resp.StatusCode != http.StatusOK {
-		t.Fatalf("start = %d (%s)", resp.StatusCode, body)
+func TestSignInWithoutClaudeCode(t *testing.T) {
+	h := newSignInHarness(t)
+	h.startErr = claudecfg.ErrCLINotFound
+	resp, raw := doAuthed(t, http.MethodPost, h.srv.URL+"/v1/login/browser", `{}`, h.d.authToken)
+	var out map[string]string
+	_ = json.Unmarshal([]byte(raw), &out)
+	if resp.StatusCode != http.StatusConflict || out["code"] != LoginCodeClaudeMissing {
+		t.Fatalf("= %d %s, want 409 claude_missing", resp.StatusCode, raw)
 	}
-	now = now.Add(loginAttemptTTL + time.Minute)
-	resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/complete",
-		`{"code":"c","state":"st-1"}`, d.authToken)
+}
+
+func TestSignInPastedCode(t *testing.T) {
+	h := newSignInHarness(t)
+	id := h.start(t, `{}`)
+	resp, raw := doAuthed(t, http.MethodPost, h.srv.URL+"/v1/login/browser/code",
+		`{"attempt_id":"`+id+`","code":"abcdefgh#statestate"}`, h.d.authToken)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("code = %d (%s)", resp.StatusCode, raw)
+	}
+	a := h.attempt(0)
+	a.mu.Lock()
+	got := append([]string{}, a.codes...)
+	a.mu.Unlock()
+	if len(got) != 1 || got[0] != "abcdefgh#statestate" {
+		t.Fatalf("codes = %v", got)
+	}
+	// The code never comes back out of the status route.
+	if s := h.status(t, id); strings.Contains(strings.Join([]string{s["error"], s["manual_url"]}, " "), "statestate") {
+		t.Fatalf("status echoed the code: %v", s)
+	}
+
+	a.mu.Lock()
+	a.codeErr = claudecfg.ErrBadCode
+	a.mu.Unlock()
+	resp, _ = doAuthed(t, http.MethodPost, h.srv.URL+"/v1/login/browser/code",
+		`{"attempt_id":"`+id+`","code":"nope"}`, h.d.authToken)
 	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expired complete = %d (%s), want 400", resp.StatusCode, body)
+		t.Fatalf("bad code = %d, want 400", resp.StatusCode)
 	}
-	if stub.completes.Load() != 0 {
-		t.Fatal("exchange ran for an expired attempt")
+	resp, _ = doAuthed(t, http.MethodPost, h.srv.URL+"/v1/login/browser/code",
+		`{"attempt_id":"someone-elses","code":"abcdefgh#statestate"}`, h.d.authToken)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown attempt = %d, want 404", resp.StatusCode)
 	}
 }
 
-// TestLoginBrowserLoopbackCompletes drives the zero-paste flow end to end: the
-// daemon stands up a loopback listener, and a GET to /callback (as the browser
-// redirect would do) runs the one-shot exchange+install with the loopback
-// redirect — no paste, no code in the response, no state/verifier leaked.
-func TestLoginBrowserLoopbackCompletes(t *testing.T) {
-	stub := &loginStub{}
-	now := time.Now()
-	d := loginDaemon(t, stub, &now)
-	srv := httptest.NewServer(d.Handler())
-	defer srv.Close()
-
-	resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/browser", `{}`, d.authToken)
+func TestSignInCancel(t *testing.T) {
+	h := newSignInHarness(t)
+	id := h.start(t, `{}`)
+	resp, raw := doAuthed(t, http.MethodPost, h.srv.URL+"/v1/login/browser/cancel", `{"attempt_id":"`+id+`"}`, h.d.authToken)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("browser start = %d (%s)", resp.StatusCode, body)
+		t.Fatalf("cancel = %d (%s)", resp.StatusCode, raw)
 	}
-	// The authorize URL and the attempt id come back — never the verifier.
-	// attempt_id is the CSRF state, which already rides inside authorize_url
-	// to this same authenticated caller, so it exposes nothing new.
-	var br map[string]string
-	if err := json.Unmarshal([]byte(body), &br); err != nil {
-		t.Fatal(err)
+	s := h.waitStatus(t, id, "failed")
+	if s["code"] != LoginCodeCancelled {
+		t.Fatalf("status = %v", s)
 	}
-	if br["attempt_id"] == "" {
-		t.Fatalf("browser response missing attempt_id: %s", body)
+	a := h.attempt(0)
+	if a.aborted.Load() == 0 || a.finished.Load() != 0 {
+		t.Fatalf("aborted=%d finished=%d", a.aborted.Load(), a.finished.Load())
 	}
-	if strings.Contains(body, "verif-SECRET") {
-		t.Fatalf("browser response leaked the verifier: %s", body)
-	}
-	// Status is tied to THIS attempt: pending before the callback…
-	if resp, sb := doAuthed(t, http.MethodGet, srv.URL+"/v1/login/browser/status?attempt="+br["attempt_id"], "", d.authToken); resp.StatusCode != http.StatusOK || !strings.Contains(sb, `"pending"`) {
-		t.Fatalf("pre-callback status = %d (%s), want 200 pending", resp.StatusCode, sb)
-	}
-	stub.mu.Lock()
-	redirect := stub.lastURLReq
-	stub.mu.Unlock()
-	if !strings.HasPrefix(redirect, "http://localhost:") || !strings.HasSuffix(redirect, "/callback") {
-		t.Fatalf("loopback redirect = %q", redirect)
-	}
-	u, err := url.Parse(redirect)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cbResp, err := http.Get("http://127.0.0.1:" + u.Port() + "/callback?code=the-code&state=st-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cbBody, _ := io.ReadAll(cbResp.Body)
-	_ = cbResp.Body.Close()
-	if cbResp.StatusCode != http.StatusOK {
-		t.Fatalf("callback = %d (%s)", cbResp.StatusCode, cbBody)
-	}
-	if strings.Contains(string(cbBody), "the-code") {
-		t.Fatalf("callback page leaked the code")
-	}
-	if stub.completes.Load() != 1 || stub.gotCode != "the-code" {
-		t.Fatalf("exchange ran %d times, code=%q", stub.completes.Load(), stub.gotCode)
-	}
-	stub.mu.Lock()
-	gotRedirect := stub.gotRedirect
-	stub.mu.Unlock()
-	if gotRedirect != redirect {
-		t.Fatalf("exchange redirect = %q, want the loopback %q", gotRedirect, redirect)
-	}
-	// …and done (with the account) after it — the completion signal the
-	// dialog polls, so a re-login to an EXISTING account still completes.
-	if resp, sb := doAuthed(t, http.MethodGet, srv.URL+"/v1/login/browser/status?attempt="+br["attempt_id"], "", d.authToken); resp.StatusCode != http.StatusOK || !strings.Contains(sb, `"done"`) || !strings.Contains(sb, "acct-new") {
-		t.Fatalf("post-callback status = %d (%s), want 200 done + account id", resp.StatusCode, sb)
-	}
-}
-
-// TestLoginBrowserStatusFailedOnExchangeError: an exchange failure surfaces as
-// a terminal "failed" status with the sanitized reason — the dialog stops
-// polling and shows it instead of timing out blind.
-func TestLoginBrowserStatusFailedOnExchangeError(t *testing.T) {
-	stub := &loginStub{failWith: ErrSignInRateLimited}
-	now := time.Now()
-	d := loginDaemon(t, stub, &now)
-	srv := httptest.NewServer(d.Handler())
-	defer srv.Close()
-
-	resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/browser", `{}`, d.authToken)
+	// Cancelling again is harmless.
+	resp, _ = doAuthed(t, http.MethodPost, h.srv.URL+"/v1/login/browser/cancel", `{"attempt_id":"`+id+`"}`, h.d.authToken)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("browser start = %d (%s)", resp.StatusCode, body)
-	}
-	var br map[string]string
-	if err := json.Unmarshal([]byte(body), &br); err != nil {
-		t.Fatal(err)
-	}
-	stub.mu.Lock()
-	redirect := stub.lastURLReq
-	stub.mu.Unlock()
-	u, err := url.Parse(redirect)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cbResp, err := http.Get("http://127.0.0.1:" + u.Port() + "/callback?code=the-code&state=st-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pageBytes, _ := io.ReadAll(cbResp.Body)
-	_ = cbResp.Body.Close()
-	// F8 (fresh-user audit 2026-08-16): the tab is a dead end after a 429 —
-	// it must say what happened, name the retry in the app, and release the
-	// tab; the doubled "try again … and try again" copy is gone.
-	page := string(pageBytes)
-	// ("won't" arrives HTML-escaped, so the pin stops at "work again".)
-	for _, want := range []string{"rate-limited", "Try again in llmpilot", "You can close this tab", "fresh sign-in", "work again"} {
-		if !strings.Contains(page, want) {
-			t.Errorf("429 callback page lacks %q:\n%s", want, page)
-		}
-	}
-	if strings.Contains(page, "Return to llmpilot and try again") {
-		t.Errorf("429 callback page still carries the doubled retry copy:\n%s", page)
-	}
-	if resp, sb := doAuthed(t, http.MethodGet, srv.URL+"/v1/login/browser/status?attempt="+br["attempt_id"], "", d.authToken); resp.StatusCode != http.StatusOK || !strings.Contains(sb, `"failed"`) || !strings.Contains(sb, "rate-limited") || !strings.Contains(sb, `"code":"rate_limited"`) {
-		t.Fatalf("failed-exchange status = %d (%s), want 200 failed + reason + code rate_limited", resp.StatusCode, sb)
+		t.Fatalf("second cancel = %d", resp.StatusCode)
 	}
 }
 
-// TestLoginBrowserCallbackPageOtherErrorReleasesTab: a non-429 exchange
-// failure keeps its own reason and still tells the user the tab can go.
-func TestLoginBrowserCallbackPageOtherErrorReleasesTab(t *testing.T) {
-	stub := &loginStub{failWith: errors.New("the sign-in came back with a code the server rejected")}
-	now := time.Now()
-	d := loginDaemon(t, stub, &now)
-	srv := httptest.NewServer(d.Handler())
-	defer srv.Close()
-	resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/browser", `{}`, d.authToken)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("browser start = %d (%s)", resp.StatusCode, body)
+func TestSignInNewerReplacesOlder(t *testing.T) {
+	h := newSignInHarness(t)
+	first := h.start(t, `{}`)
+	second := h.start(t, `{}`)
+	if s := h.waitStatus(t, first, "failed"); s["code"] != LoginCodeReplaced {
+		t.Fatalf("first = %v", s)
 	}
-	stub.mu.Lock()
-	redirect := stub.lastURLReq
-	stub.mu.Unlock()
-	u, err := url.Parse(redirect)
-	if err != nil {
-		t.Fatal(err)
+	if h.attempt(0).aborted.Load() == 0 {
+		t.Fatal("the replaced sign-in kept running")
 	}
-	cbResp, err := http.Get("http://127.0.0.1:" + u.Port() + "/callback?code=the-code&state=st-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pageBytes, _ := io.ReadAll(cbResp.Body)
-	_ = cbResp.Body.Close()
-	page := string(pageBytes)
-	if !strings.Contains(page, "code the server rejected") || !strings.Contains(page, "You can close this tab") || strings.Contains(page, "Try again in llmpilot") {
-		t.Errorf("non-429 callback page wrong:\n%s", page)
-	}
-	// FAIL CASE for the wire code: this non-429 failure carries an EMPTY
-	// code on the status endpoint — the sheet must not offer the
-	// rate-limited Try-again state for it.
-	var br map[string]string
-	if err := json.Unmarshal([]byte(body), &br); err != nil {
-		t.Fatal(err)
-	}
-	if resp, sb := doAuthed(t, http.MethodGet, srv.URL+"/v1/login/browser/status?attempt="+br["attempt_id"], "", d.authToken); resp.StatusCode != http.StatusOK || !strings.Contains(sb, `"status":"failed"`) || !strings.Contains(sb, `"code":""`) {
-		t.Errorf("non-429 failure must be failed with an empty code: %d (%s)", resp.StatusCode, sb)
+	if s := h.status(t, second); s["status"] != "pending" {
+		t.Fatalf("second = %v", s)
 	}
 }
 
-// TestLoginBrowserRejectsForgedState pins the CSRF guard on the loopback
-// listener: a callback whose state does not match fails closed with no
-// exchange.
-func TestLoginBrowserRejectsForgedState(t *testing.T) {
-	stub := &loginStub{}
-	now := time.Now()
-	d := loginDaemon(t, stub, &now)
-	srv := httptest.NewServer(d.Handler())
-	defer srv.Close()
-	// The forged hit correctly leaves the listener serving; cancel the
-	// attempt on the way out so the test doesn't strand the goroutine and
-	// port until the 10-minute TTL.
-	t.Cleanup(func() {
-		d.loginMu.Lock()
-		for s, a := range d.loginAttempts {
-			d.dropAttemptLocked(s, a)
-		}
-		d.loginMu.Unlock()
-	})
-
-	if resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/browser", `{}`, d.authToken); resp.StatusCode != http.StatusOK {
-		t.Fatalf("browser start = %d (%s)", resp.StatusCode, body)
+func TestSignInTimesOut(t *testing.T) {
+	old := loginAttemptTTL
+	loginAttemptTTL = 50 * time.Millisecond
+	t.Cleanup(func() { loginAttemptTTL = old })
+	h := newSignInHarness(t)
+	id := h.start(t, `{}`)
+	if s := h.waitStatus(t, id, "failed"); s["code"] != LoginCodeTimedOut {
+		t.Fatalf("status = %v", s)
 	}
-	stub.mu.Lock()
-	redirect := stub.lastURLReq
-	stub.mu.Unlock()
-	u, err := url.Parse(redirect)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cbResp, err := http.Get("http://127.0.0.1:" + u.Port() + "/callback?code=c&state=FORGED")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = cbResp.Body.Close()
-	if cbResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("forged-state callback = %d, want 400", cbResp.StatusCode)
-	}
-	if stub.completes.Load() != 0 {
-		t.Fatal("exchange ran for a forged loopback state")
+	if h.attempt(0).aborted.Load() == 0 {
+		t.Fatal("timed-out sign-in kept running")
 	}
 }
 
-// TestLoginBrowserStrayHitDoesNotKillListener pins the P1 fix: a foreign hit
-// to the loopback /callback (wrong state — a port scanner or hostile local
-// process) fails closed AND keeps the listener alive, so the real redirect
-// still completes the sign-in.
-func TestLoginBrowserStrayHitDoesNotKillListener(t *testing.T) {
-	stub := &loginStub{}
-	now := time.Now()
-	d := loginDaemon(t, stub, &now)
-	srv := httptest.NewServer(d.Handler())
-	defer srv.Close()
-
-	if resp, body := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/browser", `{}`, d.authToken); resp.StatusCode != http.StatusOK {
-		t.Fatalf("browser start = %d (%s)", resp.StatusCode, body)
-	}
-	stub.mu.Lock()
-	redirect := stub.lastURLReq
-	stub.mu.Unlock()
-	u, err := url.Parse(redirect)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := "http://127.0.0.1:" + u.Port() + "/callback"
-
-	// Foreign/stray hit (wrong state): fails closed, no exchange, no teardown.
-	strayResp, err := http.Get(base + "?code=x&state=WRONG")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = strayResp.Body.Close()
-	if strayResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("stray hit = %d, want 400", strayResp.StatusCode)
-	}
-	if stub.completes.Load() != 0 {
-		t.Fatal("stray hit triggered an exchange")
-	}
-
-	// The real redirect still completes — the stray hit did not kill it.
-	realResp, err := http.Get(base + "?code=the-code&state=st-1")
-	if err != nil {
-		t.Fatalf("listener died after a stray hit: %v", err)
-	}
-	_ = realResp.Body.Close()
-	if realResp.StatusCode != http.StatusOK {
-		t.Fatalf("real callback = %d, want 200", realResp.StatusCode)
-	}
-	if stub.completes.Load() != 1 || stub.gotCode != "the-code" {
-		t.Fatalf("real callback did not complete: completes=%d", stub.completes.Load())
+func TestSignInFinishFailure(t *testing.T) {
+	h := newSignInHarness(t)
+	id := h.start(t, `{}`)
+	a := h.attempt(0)
+	a.finishErr = errors.New("the Claude Code sign-in ended without finishing: OAuth error: access_denied")
+	a.exit()
+	s := h.waitStatus(t, id, "failed")
+	if !strings.Contains(s["error"], "access_denied") || s["account_id"] != "" {
+		t.Fatalf("status = %v", s)
 	}
 }
 
-func TestLoginUnwiredIs501WithAuth(t *testing.T) {
-	now := time.Now()
-	d := loginDaemon(t, nil, &now)
+func TestFreshSignInLiftsQuarantine(t *testing.T) {
+	h := newSignInHarness(t)
+	h.d.mu.Lock()
+	h.d.quarantine["acct-b"] = "sha256:dead"
+	h.d.tokenNotes["acct-b"] = deadLineageNote
+	h.d.nextPoll["acct-b"] = time.Now().Add(time.Hour)
+	h.d.mu.Unlock()
+	id := h.start(t, `{}`)
+	h.attempt(0).exit()
+	h.waitStatus(t, id, "done")
+	h.d.mu.Lock()
+	defer h.d.mu.Unlock()
+	if _, q := h.d.quarantine["acct-b"]; q || h.d.tokenNotes["acct-b"] != "" {
+		t.Fatal("a fresh sign-in left the account quarantined")
+	}
+	if !h.d.nextPoll["acct-b"].IsZero() {
+		t.Fatal("the account was not queued for an immediate poll")
+	}
+}
+
+func TestSignInDoneIsNeverRepainted(t *testing.T) {
+	h := newSignInHarness(t)
+	id := h.start(t, `{}`)
+	h.attempt(0).exit()
+	h.waitStatus(t, id, "done")
+	h.d.setLoginResult(id, loginResult{status: "failed", code: LoginCodeTimedOut})
+	if s := h.status(t, id); s["status"] != "done" {
+		t.Fatalf("status = %v", s)
+	}
+}
+
+func TestStopSignInAtShutdown(t *testing.T) {
+	h := newSignInHarness(t)
+	id := h.start(t, `{}`)
+	h.d.stopSignIn()
+	if h.attempt(0).aborted.Load() == 0 {
+		t.Fatal("shutdown left the sign-in running")
+	}
+	if s := h.waitStatus(t, id, "failed"); s["code"] != LoginCodeCancelled {
+		t.Fatalf("status = %v", s)
+	}
+}
+
+func TestSignInNotWired(t *testing.T) {
+	d := &Daemon{Store: store.At(t.TempDir())}
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	for _, path := range []string{"/v1/login/start", "/v1/login/complete", "/v1/login/browser"} {
-		resp, body := doAuthed(t, http.MethodPost, srv.URL+path, `{"code":"c","state":"s"}`, d.authToken)
-		if resp.StatusCode != http.StatusNotImplemented {
-			t.Errorf("%s unwired = %d (%s), want 501", path, resp.StatusCode, body)
-		}
+	resp, _ := doAuthed(t, http.MethodPost, srv.URL+"/v1/login/browser", `{}`, d.authToken)
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("= %d, want 501", resp.StatusCode)
+	}
+}
+
+func TestSignInUnknownStatus(t *testing.T) {
+	h := newSignInHarness(t)
+	resp, _ := doAuthed(t, http.MethodGet, h.srv.URL+"/v1/login/browser/status?attempt=nope", "", h.d.authToken)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("= %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestSignInReportsAnAccountTheFleetAlreadyHad(t *testing.T) {
+	h := newSignInHarness(t)
+	id := h.start(t, `{}`)
+	a := h.attempt(0)
+	a.res.Existed = true
+	a.res.Outcome = switcher.ImportUpdated
+	a.res.Note = "a note"
+	a.exit()
+	if s := h.waitStatus(t, id, "done"); s["existing"] != "true" || s["outcome"] != "updated" || s["note"] != "a note" {
+		t.Fatalf("status = %v", s)
+	}
+	id2 := h.start(t, `{}`)
+	h.attempt(1).exit()
+	if s := h.waitStatus(t, id2, "done"); s["existing"] != "" {
+		t.Fatalf("a new account reported as existing: %v", s)
+	}
+}
+
+func TestSignInRefusedOnceShuttingDown(t *testing.T) {
+	h := newSignInHarness(t)
+	h.d.stopSignIn()
+	resp, raw := doAuthed(t, http.MethodPost, h.srv.URL+"/v1/login/browser", `{}`, h.d.authToken)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("= %d (%s), want 503", resp.StatusCode, raw)
+	}
+	if h.attempt(0).aborted.Load() == 0 {
+		t.Fatal("a sign-in started during shutdown was left running")
+	}
+}
+
+func TestStopSignInWaitsForAnImportUnderWay(t *testing.T) {
+	h := newSignInHarness(t)
+	id := h.start(t, `{}`)
+	a := h.attempt(0)
+	a.finishGate = make(chan struct{})
+	a.exit()
+	for a.finished.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	stopped := make(chan struct{})
+	go func() { h.d.stopSignIn(); close(stopped) }()
+	select {
+	case <-stopped:
+		t.Fatal("shutdown did not wait for the import")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(a.finishGate)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown never returned")
+	}
+	if s := h.status(t, id); s["status"] != "done" {
+		t.Fatalf("the import under way was not allowed to land: %v", s)
+	}
+}
+
+// A sign-in replaced by a newer one may already be importing; shutdown must
+// wait for it too, not only for the newest attempt.
+func TestStopSignInWaitsForAReplacedImportStillRunning(t *testing.T) {
+	h := newSignInHarness(t)
+	h.start(t, `{}`)
+	first := h.attempt(0)
+	first.finishGate = make(chan struct{})
+	first.exit()
+	for first.finished.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	h.start(t, `{}`) // replaces the first while it imports
+	stopped := make(chan struct{})
+	go func() { h.d.stopSignIn(); close(stopped) }()
+	select {
+	case <-stopped:
+		t.Fatal("shutdown left a replaced import running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(first.finishGate)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown never returned")
 	}
 }

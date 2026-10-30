@@ -24,6 +24,17 @@ import (
 // it later. oauthAccount must carry the account's identity (emailAddress at
 // minimum) — the fleet label derives from it.
 func (s *Switcher) InstallLogin(ctx context.Context, cred, oauthAccount json.RawMessage) (store.Account, error) {
+	return s.installLogin(ctx, cred, oauthAccount, false)
+}
+
+// installSignIn is InstallLogin for a sign-in that may only take an empty
+// slot or replace its own account's: the check runs under the swap's locks
+// and fails with ErrSlotChanged, writing nothing to Claude Code's slot.
+func (s *Switcher) installSignIn(ctx context.Context, cred, oauthAccount json.RawMessage) (store.Account, error) {
+	return s.installLogin(ctx, cred, oauthAccount, true)
+}
+
+func (s *Switcher) installLogin(ctx context.Context, cred, oauthAccount json.RawMessage, guarded bool) (store.Account, error) {
 	if s.Dir.Path() == "" {
 		return store.Account{}, errors.New("switcher: no config dir")
 	}
@@ -43,24 +54,25 @@ func (s *Switcher) InstallLogin(ctx context.Context, cred, oauthAccount json.Raw
 	// A re-login must land on the account already registered for this email —
 	// a fresh ID would fork the registry entry AND the backup key, letting a
 	// concurrent keep-warm of the old key outlive the new lineage.
-	id, label := "", labelFromEmail(email)
-	if s.Registry != nil {
-		accs, err := s.Registry.Accounts()
-		if err != nil {
-			return store.Account{}, err
+	// Case-insensitive like every other identity match here: an email that
+	// differs only in case is the same account.
+	id, label := s.matchAccountID(email), labelFromEmail(email)
+	if id != "" {
+		if a := s.lookupAccount(id); a != nil && a.Label != "" {
+			label = a.Label
 		}
-		for _, a := range accs {
-			if a.Email == email {
-				id = a.ID
-				if a.Label != "" {
-					label = a.Label
-				}
-				break
+	} else {
+		id = "acct-" + sanitizeID(strings.ToLower(email))
+		// Two emails can sanitize to one ID ("c+1@" and "c_1@"): never take
+		// over another account's row or its only stored sign-in.
+		if a := s.lookupAccount(id); a != nil && !strings.EqualFold(a.Email, email) {
+			return store.Account{}, fmt.Errorf("%w: account %q already belongs to %s", ErrStashConflict, id, a.Email)
+		}
+		if _, prior, err := s.LoadBackup(ctx, id); err == nil {
+			if pe := oauthEmail(prior); pe != "" && !strings.EqualFold(pe, email) {
+				return store.Account{}, fmt.Errorf("%w: account %q already stores a sign-in for %s", ErrStashConflict, id, pe)
 			}
 		}
-	}
-	if id == "" {
-		id = "acct-" + sanitizeID(strings.ToLower(email))
 	}
 	acct := store.Account{
 		ID:              id,
@@ -76,7 +88,11 @@ func (s *Switcher) InstallLogin(ctx context.Context, cred, oauthAccount json.Raw
 	if err := s.registerAccount(acct); err != nil {
 		return store.Account{}, err
 	}
-	if err := s.swapTo(ctx, acct, &loginInstall{cred: cred, oauthAccount: oauthAccount}); err != nil {
+	install := &loginInstall{cred: cred, oauthAccount: oauthAccount}
+	if guarded {
+		install.onlyOver = email
+	}
+	if err := s.swapTo(ctx, acct, install); err != nil {
 		return store.Account{}, err
 	}
 	// ONLY now, with the fresh grant durably persisted, is the old duplicate

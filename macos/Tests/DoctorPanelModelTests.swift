@@ -250,6 +250,35 @@ final class DoctorPanelModelTests: XCTestCase {
         XCTAssertEqual(model.headline, "No problems found — all 1 checks ran.")
     }
 
+    // MARK: - sign-in-again verb: pre-fills the account
+
+    func testSignInAgainWithTargetOpensThatAccountsSignIn() async {
+        let api = StubCockpitAPI()
+        api.doctorResult = .success(report(
+            clean: false, problems: 1, findings: [finding(id: "f1", verb: "sign_in_again", target: "acct-b")],
+            checks: [check(state: "finding")]))
+        var signedIn: [String] = []
+        var added = 0
+        let model = DoctorPanelModel(
+            api: api, onAddAccount: { added += 1 }, onSignInAgain: { signedIn.append($0) }, onReviewStash: {})
+        await model.load()
+        let action = model.remedyAction(for: model.report!.findings[0])
+        XCTAssertEqual(action, .signInAgain(accountID: "acct-b"))
+        model.run(action)
+        XCTAssertEqual(signedIn, ["acct-b"])
+        XCTAssertEqual(added, 0)
+    }
+
+    func testSignInAgainWithoutTargetFallsBackToAddAccount() async {
+        let api = StubCockpitAPI()
+        api.doctorResult = .success(report(
+            clean: false, problems: 1, findings: [finding(id: "f1", verb: "sign_in_again", target: nil)],
+            checks: [check(state: "finding")]))
+        let model = makeModel(api)
+        await model.load()
+        XCTAssertEqual(model.remedyAction(for: model.report!.findings[0]), .addAccount)
+    }
+
     // MARK: - reload-key change detection
 
     private func state(

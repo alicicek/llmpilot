@@ -126,6 +126,7 @@ struct NativeToolbarRow: View {
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(CockpitTheme.hair, lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("cockpit-add-account")
     }
 
     private var settingsButton: some View {

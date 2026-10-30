@@ -377,14 +377,11 @@ struct OnboardingAccountsStepView: View {
     let continueLabel: String
     var onAddAccount: () -> Void = {}
     var onContinue: () -> Void = {}
-    /// F1: the acknowledged signed-out row's remedy — the SAME path
-    /// AddAccountSheet's own "Sign in again" row uses
-    /// (AddAccountSheet.swift's `openLoginWindow`, wired by the integrator
-    /// to `LoginWindowController.shared.open()`), not the add-account sheet
-    /// itself: a stranger who already knows which account is dead should
-    /// land straight on the sign-in window, not a second screen naming it
-    /// again.
-    var onSignInAgain: () -> Void = { LoginWindowController.shared.open() }
+    /// F1: the acknowledged signed-out row's remedy — the sign-in window,
+    /// started straight away and pre-filled with the row's account: a
+    /// stranger who already knows which account is dead should land on the
+    /// sign-in itself, not a second screen naming it again.
+    var onSignInAgain: (String) -> Void = { LoginWindowController.shared.open(email: $0) }
     /// Adopt every DETECTED-but-unregistered config dir (owner 2026-08-11:
     /// "can't we make this an automatic detection thing"). Detection was
     /// already automatic — this screen has always LISTED what it found —
@@ -625,7 +622,7 @@ struct OnboardingAccountsStepView: View {
                 }
             }
             Spacer()
-            Button(AddAccountCopy.signInAgain, action: onSignInAgain)
+            Button(AddAccountCopy.signInAgain) { onSignInAgain(g.email) }
                 .onboardingSecondary()
                 .accessibilityIdentifier("onboarding-signin-again-\(g.email)")
         }
@@ -713,7 +710,7 @@ struct OnboardingAccountsStepView: View {
                         Text(OnboardingAccountsCopy.rowFailedHint)
                             .font(CockpitTheme.Onboarding.annotation)
                             .foregroundColor(CockpitTheme.ter)
-                        Button(AddAccountCopy.signInAgain, action: onSignInAgain)
+                        Button(AddAccountCopy.signInAgain) { onSignInAgain(g.email) }
                             .onboardingSecondary()
                             .accessibilityIdentifier("onboarding-adopt-failed-signin-\(g.email)")
                     }

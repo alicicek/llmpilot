@@ -18,15 +18,10 @@ final class StubAPI: DaemonAPI {
     var detectResult: [DetectedDir] = []
     var configResult = DaemonConfig(autopilot: nil)
     nonisolated(unsafe) var base: URL? = URL(string: "http://127.0.0.1:59999")
-    var startLoginResult: Result<LoginStart, Error> =
-        .success(LoginStart(authorizeURL: "https://claude.com/cai/oauth/authorize?state=st-1", state: "st-1"))
-    var completeLoginResult: Result<Void, Error> = .success(())
 
     private(set) var switchedTo: [String] = []
     private(set) var adopted: [String] = []
     private(set) var markerReports: [Bool] = []
-    private(set) var startedLogins = 0
-    private(set) var completedLogins: [(code: String, state: String)] = []
     /// Applied to stateResult after a successful switch, so refresh() sees it.
     var stateAfterSwitch: DaemonState?
 
@@ -47,16 +42,6 @@ final class StubAPI: DaemonAPI {
     func config() async throws -> DaemonConfig { configResult }
 
     func reportMarker(present: Bool) async throws { markerReports.append(present) }
-
-    func startLogin() async throws -> LoginStart {
-        startedLogins += 1
-        return try startLoginResult.get()
-    }
-
-    func completeLogin(code: String, state: String) async throws {
-        completedLogins.append((code, state))
-        try completeLoginResult.get()
-    }
 
     nonisolated func events() -> AsyncThrowingStream<DaemonState, Error> {
         AsyncThrowingStream { $0.finish(throwing: DaemonError.down) }

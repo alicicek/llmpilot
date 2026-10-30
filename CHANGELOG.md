@@ -4,6 +4,49 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Adding an account now signs in through Claude Code itself, so it works the
+same way Claude Code's own sign-in does. No price, trial length, offer, or
+account-data changes.
+
+### Changed
+
+- **Add account signs in through Claude Code.** Sign in with Claude starts
+  Claude Code's own sign-in: your browser opens on Claude's page, and the
+  account joins the fleet when you approve. llmpilot no longer runs a
+  sign-in of its own, so the "rate-limited" and "unknown, expired, or
+  already used" errors are gone. If the browser doesn't open, **Browser
+  didn't open?** gives you the sign-in link and a box for the code the page
+  shows. This needs Claude Code installed; if it isn't, the sheet says so
+  and links to the install guide.
+- **Adding an account never switches Claude Code.** A new account is stored
+  ready to switch to, and the account Claude Code is using stays put.
+  Signing in to the account Claude Code already uses, or when Claude Code
+  has no sign-in at all, makes that account the active one.
+- **Sign in again starts straight away with the account filled in**, from
+  the doctor, the menu bar, onboarding, and the Add account sheet. A fresh
+  sign-in also clears an account's "sign in again" warning without having
+  to switch to it.
+
+### Removed
+
+- **Sign in in this window.** Signing in always happens in your browser,
+  where your password manager works.
+
+### Fixed
+
+- **Signing in again to a watched account keeps it watched.** The fresh
+  sign-in goes into the account's own folder, so the terminal that uses that
+  folder works again, instead of the account turning switchable.
+- If the browser approves a different account than the one you asked to sign
+  in again, or an account you already added, the sheet says so instead of
+  reporting success.
+- Signing in to an account whose email differs only in letter case from one
+  already in the fleet no longer adds it a second time.
+- Example accounts in onboarding and screenshots use reserved example
+  addresses that can't reach a real person.
+
 ## [1.4.1] - 2026-10-08
 
 A security fix: other user accounts on the same Mac can no longer read
@@ -666,6 +709,7 @@ Initial public release: live usage for every account, lock-first switching,
 window scheduling, the cockpit, the menu bar app, the statusline, and the
 one-time Pro autopilot.
 
+[Unreleased]: https://github.com/alicicek/llmpilot/compare/v1.4.1...HEAD
 [1.4.1]: https://github.com/alicicek/llmpilot/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/alicicek/llmpilot/compare/v1.3.6...v1.4.0
 [1.3.6]: https://github.com/alicicek/llmpilot/compare/v1.3.5...v1.3.6

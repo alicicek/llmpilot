@@ -20,10 +20,10 @@ func at(t time.Time) *time.Time { return &t }
 // render always looks fresh. Identities are invented; no owner data appears.
 func DemoFleet(now time.Time) (accounts []store.Account, snapshots []*store.UsageSnapshot, schedules []store.Schedule, events []store.Event, activeID string) {
 	accounts = []store.Account{
-		{ID: "kai", Label: "kai", Email: "kai@studioloop.dev"},
-		{ID: "rin", Label: "rin", Email: "rin@ashgrove.io"},
-		{ID: "mara", Label: "mara", Email: "mara@driftwork.co", Pinned: true},
-		{ID: "theo", Label: "theo", Email: "theo@northpad.dev"},
+		{ID: "kai", Label: "kai", Email: "kai@studioloop.example"},
+		{ID: "rin", Label: "rin", Email: "rin@ashgrove.example"},
+		{ID: "mara", Label: "mara", Email: "mara@driftwork.example", Pinned: true},
+		{ID: "theo", Label: "theo", Email: "theo@northpad.example"},
 	}
 	snapshots = []*store.UsageSnapshot{
 		{AccountID: "kai", AsOf: now, Buckets: []store.Bucket{

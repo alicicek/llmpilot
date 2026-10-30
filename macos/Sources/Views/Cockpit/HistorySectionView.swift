@@ -469,8 +469,6 @@ private final class PreviewHistoryAPI: CockpitDaemonAPI & DaemonAPI, @unchecked 
     func adopt(configDir: String) async throws {}
     func config() async throws -> DaemonConfig { DaemonConfig(autopilot: nil) }
     func reportMarker(present: Bool) async throws {}
-    func startLogin() async throws -> LoginStart { throw DaemonError.down }
-    func completeLogin(code: String, state: String) async throws {}
     func events() -> AsyncThrowingStream<DaemonState, Error> { .init { $0.finish(throwing: DaemonError.down) } }
 
     func schedules() async throws -> [ScheduleRecord] { [] }
@@ -506,8 +504,10 @@ private final class PreviewHistoryAPI: CockpitDaemonAPI & DaemonAPI, @unchecked 
     func adoptMove(configDir: String, label: String?) async throws -> AdoptMoveResult { throw DaemonError.down }
     func cockpitConfig() async throws -> CockpitConfig { throw DaemonError.down }
     func putConfig(_ cfg: CockpitConfig) async throws -> CockpitConfig { throw DaemonError.down }
-    func startBrowserLogin() async throws -> BrowserLoginStart { throw DaemonError.down }
+    func startBrowserLogin(email: String?) async throws -> BrowserLoginStart { throw DaemonError.down }
     func browserLoginStatus(attempt: String) async throws -> BrowserLoginStatus { throw DaemonError.down }
+    func submitLoginCode(attempt: String, code: String) async throws { throw DaemonError.down }
+    func cancelBrowserLogin(attempt: String) async throws {}
 }
 
 private func previewCell(_ accountID: String, _ project: String, _ model: String, _ day: String, outMTok: Double) -> AnalyticsCell {

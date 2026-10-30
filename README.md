@@ -52,8 +52,8 @@ a 4-day free trial, then one charge of £9.99 / $12.99, not a subscription.
   accounts already signed in on your Mac. A sign-in living in its own folder
   (`CLAUDE_CONFIG_DIR`) can be adopted as a watched account, or moved into the
   fleet — backed up first, then made switchable — from the cockpit or the menu
-  bar. You can also sign in to a new account from inside the app, on
-  Anthropic's own page.
+  bar. You can also add a new account from inside the app: it runs Claude
+  Code's own sign-in, and adding an account never switches Claude Code.
 - **Diagnose it honestly.** `llmpilot doctor` checks the fleet — duplicate
   sign-ins, frozen logins, the refresh budget, unproven migrations, the
   install — and names what is wrong, what it could not check, and the one
@@ -90,8 +90,7 @@ budget. Nothing is duplicated, nothing disagrees.
 
 llmpilot never runs a background token-refresh loop. It refreshes a login only
 when something needs it: about 10 minutes before a switch (yours or the
-autopilot's), when the autopilot revives a stale account, or when you sign in
-from the app. Refreshes
+autopilot's), or when the autopilot revives a stale account. Refreshes
 are capped at 2 attempts per account per rolling 24 hours, and one rate-limit
 answer from the token endpoint pauses all refreshes for 24 hours. A login that
 goes stale anyway is shown stale — last-known numbers, marked — until a

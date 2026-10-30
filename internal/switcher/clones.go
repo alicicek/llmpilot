@@ -156,6 +156,19 @@ func (s *Switcher) lineageLiveElsewhere(ctx context.Context, acct store.Account)
 		if s.retiredAndStillEmpty(ctx, f.Dir) {
 			continue
 		}
+		// A folder that holds no credential at all keeps only the email of
+		// an account signed out of it — no copy there to collide with. This
+		// is the folder a "Sign in again" from llmpilot leaves behind: the
+		// fresh grant lives in the fleet, and refusing to keep it warm would
+		// let it die idle. dirIsSignedOut is confident-yes only, so doubt
+		// still blocks the rotation. It finds the folder's item by the
+		// service name derived from this spelling of the path; a terminal
+		// that reached the folder by another spelling would hide its item
+		// here. Real clones come from partial moves, which the clone-suspect
+		// mark above catches first.
+		if s.dirIsSignedOut(ctx, claudecfg.DirAt(f.Dir)) {
+			continue
+		}
 		return ReasonLineageElsewhere + " " + f.Dir, true
 	}
 	return "", false

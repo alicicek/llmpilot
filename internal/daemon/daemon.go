@@ -270,12 +270,13 @@ type Daemon struct {
 	// over a missing probe).
 	SignedInDirs func(ctx context.Context, ds []detect.Detected) map[string]bool
 
-	// LoginMint/LoginURL/LoginComplete wire the in-app sign-in (POST
-	// /v1/login/*; all nil = 501). See login.go — the PKCE verifier lives only
-	// in this process, keyed by CSRF state in loginAttempts.
-	LoginMint     LoginMintFn
-	LoginURL      LoginURLFn
-	LoginComplete LoginCompleteFn
+	// SignIn starts Claude Code's own sign-in for the in-app "Add account"
+	// (POST /v1/login/browser; nil = 501). See login.go.
+	SignIn SignInStartFn
+	// SignInSweep clears sign-in leftovers from a daemon that died mid-
+	// attempt. Serve runs it once, after taking the single-instance lock
+	// and before the API is up, so it can never touch a live attempt.
+	SignInSweep func(ctx context.Context)
 
 	// PollInterval is clamped up to DefaultPollInterval unless AllowFastPoll
 	// (tests only) is set.
@@ -338,17 +339,17 @@ type Daemon struct {
 	// honestly empty sparkline, never a fabricated one.
 	history map[string][]HistorySample
 
-	// loginResults tracks each browser-flow attempt's outcome (keyed by the
-	// same CSRF state the attempt table uses — the client already receives
-	// it inside authorize_url, so returning it as the attempt id exposes
-	// nothing new). GET /v1/login/browser/status reads it, so the cockpit
-	// ties completion to ITS attempt instead of inferring from fleet size.
+	// loginResults tracks each sign-in attempt's outcome by attempt id, so
+	// the cockpit ties completion to ITS attempt instead of inferring from
+	// fleet size. GET /v1/login/browser/status reads it.
 	loginResults map[string]loginResult
 
-	// loginMu guards loginAttempts (state → pending sign-in), separate from
-	// mu — a login mutation must never contend with the poll path.
-	loginMu       sync.Mutex
-	loginAttempts map[string]loginAttempt
+	// loginMu guards loginRun (the one live sign-in) and loginResults,
+	// separate from mu — a sign-in must never contend with the poll path.
+	loginMu      sync.Mutex
+	loginRun     *signInRun
+	loginClosing bool           // set at shutdown: no new sign-in may start
+	loginWG      sync.WaitGroup // one per supervisor still at work
 
 	events       *broadcaster
 	notices      *noticeBus
@@ -380,7 +381,6 @@ func (d *Daemon) init() {
 		d.stale = map[string]time.Time{}
 		d.lastWatchOnly = map[string]time.Time{}
 		d.cooldown = map[string]coolState{}
-		d.loginAttempts = map[string]loginAttempt{}
 		d.loginResults = map[string]loginResult{}
 		d.history = map[string][]HistorySample{}
 		d.events = newBroadcaster()

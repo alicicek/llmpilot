@@ -131,15 +131,17 @@ struct NativeCockpitRootView: View {
         self.onFlowModeChange = onFlowModeChange
         let doctor = DoctorPanelModel(
             api: api,
-            onAddAccount: { LoginWindowController.shared.open() },
+            onAddAccount: { [weak fleet] in LoginWindowController.shared.open(state: fleet?.state) },
+            onSignInAgain: { [weak fleet] id in
+                let email = fleet?.state?.accounts.first { $0.id == id }?.email
+                LoginWindowController.shared.open(email: email, state: fleet?.state)
+            },
             onReviewStash: {})
         _doctorModel = StateObject(wrappedValue: doctor)
         _stashModel = StateObject(wrappedValue: StashPanelModel(api: api))
         _historyModel = StateObject(wrappedValue: HistorySectionModel(
             cockpit: cockpit))
-        let add = AddAccountModel(api: api)
-        add.openLoginWindow = { LoginWindowController.shared.open() }
-        _addModel = StateObject(wrappedValue: add)
+        _addModel = StateObject(wrappedValue: AddAccountModel(api: api))
         // An install from Settings re-runs the doctor too, so the "not
         // showing your runway" note does not outlive the fix.
         _settingsModel = StateObject(wrappedValue: SettingsModel(api: api, onStatuslineInstalled: {
@@ -228,9 +230,9 @@ struct NativeCockpitRootView: View {
             }
             .onAppear {
                 // The in-fleet classification needs the CURRENT fleet emails
-                // (empty ones filtered, App.tsx:605), the fleet's own dir so
-                // it never lists itself with a move verb (App.tsx:604), and
-                // the close seam so done/window-sign-in can dismiss.
+                // (empty ones filtered), the fleet's own dir so it never
+                // lists itself with a move verb, and the close seam so a
+                // finished sign-in can dismiss.
                 // (The sheet's own onAppear already calls opened() — no
                 // duplicate detect() here.)
                 addModel.fleetEmails = state.accounts.map(\.email).filter { !$0.isEmpty }

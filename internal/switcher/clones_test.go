@@ -32,10 +32,16 @@ func TestKeepWarmSkipsLineageLiveElsewhere(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(foreign, ".claude.json"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Live: the folder's own sign-in is stored too (a folder with only the
+	// identity is signed out, and holds nothing to collide with).
+	if err := fk.keychain().Set(ctx, claudecfg.DirAt(foreign).KeychainService(), "tester", credJSON("token-b-FOREIGN")); err != nil {
+		t.Fatal(err)
+	}
 	sw.ScanDirs = func() ([]string, error) { return []string{foreign}, nil }
 
-	// A Keychain that FAILS the test on any read outside the fleet's own two
-	// services: llmpilot's backups and the fleet dir's own item.
+	// A Keychain that FAILS the test on any secret read outside the fleet's
+	// own two services: llmpilot's backups and the fleet dir's own item.
+	// Attribute-only enumeration (dump-keychain, no -s) stays allowed.
 	ours := map[string]bool{BackupService: true, dir.KeychainService(): true}
 	sw.Keychain = &Keychain{File: fk.keychain().File, Run: func(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
 		if svc := flagVal(args, "-s"); svc != "" && !ours[svc] {
@@ -64,6 +70,10 @@ func TestKeepWarmSkipsLineageLiveElsewhere(t *testing.T) {
 	}
 
 	// A dir a MOVE retired is proven empty — it must not trigger the skip.
+	// The move deleted the folder's own item.
+	if err := fk.keychain().Delete(ctx, claudecfg.DirAt(foreign).KeychainService(), "tester"); err != nil {
+		t.Fatal(err)
+	}
 	if err := sw.Registry.RecordRetirement(store.RetiredDir{
 		ConfigDir: foreign, Email: "b@example.dev", AccountID: acctB.ID, Complete: true,
 	}); err != nil {
@@ -201,6 +211,9 @@ func TestCorruptRetirementRecordSelfHealsAndTheScanStillGuards(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(leftover, ".claude.json"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := sw.Keychain.Set(ctx, claudecfg.DirAt(leftover).KeychainService(), "tester", credJSON("token-b-LEFTOVER")); err != nil {
+		t.Fatal(err)
+	}
 	sw.ScanDirs = func() ([]string, error) { return []string{leftover}, nil }
 
 	var calls []string
@@ -228,5 +241,52 @@ func TestCorruptRetirementRecordSelfHealsAndTheScanStillGuards(t *testing.T) {
 	res, err = sw.KeepWarm(ctx, acctB, nearExpiryOpts(now, &calls))
 	if err != nil || !res.Rotated || len(calls) != 1 {
 		t.Fatalf("a corrupt record froze an unrelated account: %+v err=%v calls=%v", res, err, calls)
+	}
+}
+
+// TestKeepWarmIgnoresSignedOutFolderWithSameEmail is the folder "Sign in
+// again" leaves behind: it still names the account but holds no sign-in, so
+// it cannot hold a second copy — refusing to keep the fresh grant warm would
+// let it die idle. A folder whose state is in doubt still blocks.
+func TestKeepWarmIgnoresSignedOutFolderWithSameEmail(t *testing.T) {
+	sw, _, dir, _ := sandbox(t)
+	ctx := context.Background()
+	now := time.Now()
+	gone := filepath.Join(t.TempDir(), "claude-signed-out")
+	if err := os.MkdirAll(gone, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := fmt.Sprintf(`{"oauthAccount":%s}`, oauthJSON("b@example.dev"))
+	if err := os.WriteFile(filepath.Join(gone, ".claude.json"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sw.ScanDirs = func() ([]string, error) { return []string{gone}, nil }
+	acctB := store.Account{ID: "acct-b", Email: "b@example.dev", ConfigDir: dir.Path()}
+	if err := sw.SaveBackup(ctx, acctB.ID, credWithExpiry("token-b", now.Add(20*time.Minute)), oauthJSON("b@example.dev")); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	res, err := sw.KeepWarm(ctx, acctB, nearExpiryOpts(now, &calls))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Rotated {
+		t.Fatalf("a signed-out folder blocked the refresh: %+v", res)
+	}
+
+	// Doubt blocks: an unparseable credentials file may hold a sign-in.
+	if err := os.WriteFile(claudecfg.DirAt(gone).CredentialsFilePath(), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := sw.SaveBackup(ctx, acctB.ID, credWithExpiry("token-b2", now.Add(20*time.Minute)), oauthJSON("b@example.dev")); err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	res, err = sw.KeepWarm(ctx, acctB, nearExpiryOpts(now, &calls))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rotated || !strings.Contains(res.Skipped, ReasonLineageElsewhere) {
+		t.Fatalf("a folder in doubt did not block: %+v", res)
 	}
 }

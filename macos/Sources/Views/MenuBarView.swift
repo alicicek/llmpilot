@@ -391,7 +391,7 @@ struct MenuBarView: View {
                                 .font(.system(size: 10))
                                 .foregroundStyle(.tertiary)
                             Button("Sign in") {
-                                LoginWindowController.shared.open()
+                                LoginWindowController.shared.open(email: d.email, state: model.state)
                             }
                             .controlSize(.small)
                         } else {
@@ -424,7 +424,7 @@ struct MenuBarView: View {
             }
             .keyboardShortcut("o")
             Button {
-                LoginWindowController.shared.open()
+                LoginWindowController.shared.open(state: model.state)
                 dismiss()
             } label: {
                 Label("Add account", systemImage: "person.badge.plus")

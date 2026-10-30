@@ -1,303 +1,287 @@
 package daemon
 
-// In-app sign-in endpoints. The daemon owns the whole OAuth attempt: the PKCE
-// code_verifier never leaves this process, and the daemon's state table is the
-// CSRF check — an unknown, expired, or already-used state fails closed with no
-// exchange and no write. Three flows share that machinery:
+// In-app sign-in, run by Claude Code itself. llmpilot never handles a
+// password, an authorization code exchange or a sign-in page of its own:
+// the daemon starts `claude auth login` in a private staging folder (see
+// internal/signin), Claude Code opens the browser and finishes the sign-in
+// the way it always does, and the daemon files the result into the fleet.
 //
-//   - /v1/login/start + /v1/login/complete — HOSTED-callback flow. The client
-//     opens the authorize URL (in-app webview or browser), grabs code+state
-//     from the intercepted callback URL or the pasted "<code>#<state>", and
-//     posts them back to /complete.
-//   - /v1/login/browser — ZERO-PASTE browser flow. The daemon starts an
-//     ephemeral loopback listener, hands the client an authorize URL whose
-//     redirect is that listener, and completes the exchange+install itself
-//     when the browser redirects back. No paste, no code copying; the client
-//     just opens the URL and watches the fleet for the new account.
+//	POST /v1/login/browser          {"email"?}            → {"attempt_id"}
+//	GET  /v1/login/browser/status   ?attempt=<id>          → status, outcome, manual_url
+//	POST /v1/login/browser/code     {"attempt_id","code"}  → hands a pasted code to Claude Code
+//	POST /v1/login/browser/cancel   {"attempt_id"}         → stops the sign-in
 //
-// The JSON routes require the install token (auth.go). The loopback /callback
-// is unauthenticated by necessity (a browser redirect carries no token) but is
-// bound to 127.0.0.1, single-use, and gated by the 256-bit CSRF state that
-// only ever rode the authorize URL — the RFC 8252 loopback model.
+// One sign-in runs at a time: starting another stops the first. Every route
+// requires the install token (auth.go).
 
 import (
 	"context"
-	"crypto/subtle"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"html"
-	"net"
+	"io"
 	"net/http"
-	"sync"
+	"net/mail"
+	"strings"
 	"time"
 
-	"github.com/alicicek/llmpilot/internal/store"
+	"github.com/alicicek/llmpilot/internal/claudecfg"
+	"github.com/alicicek/llmpilot/internal/switcher"
 )
 
-// LoginMintFn mints one attempt's PKCE + CSRF state; the verifier never leaves
-// the daemon. nil = login not wired.
-type LoginMintFn func() (state, verifier, challenge string, err error)
-
-// LoginURLFn builds the authorize URL for (challenge, state) against
-// redirectURI. An empty redirectURI means the hosted callback (webview /
-// browser+paste); a loopback URI is the zero-paste browser flow.
-type LoginURLFn func(challenge, state, redirectURI string) (string, error)
-
-// LoginCompleteFn exchanges the code and installs the credential (exchange →
-// identity fetch → lock-first install + registration). redirectURI MUST match
-// the one the authorize URL used (empty = hosted). Exactly one exchange POST;
-// a timed-out exchange is surfaced, never retried in-pass (the rotation
-// hazard).
-type LoginCompleteFn func(ctx context.Context, code, state, verifier, redirectURI string) (store.Account, error)
-
-// loginAttemptTTL bounds how long a started sign-in stays completable;
-// authorization codes are short-lived anyway.
-const loginAttemptTTL = 10 * time.Minute
-
-// loginAttemptCap bounds the pending table; the oldest attempt is evicted over
-// the cap. Sixteen concurrent sign-ins on one machine is already absurd.
-const loginAttemptCap = 16
-
-type loginAttempt struct {
-	verifier    string
-	redirectURI string // "" = hosted callback; else the loopback URI
-	started     time.Time
-	cancel      context.CancelFunc // browser flow: stops the listener on eviction/expiry; nil otherwise
+// SignInAttempt is one running Claude Code sign-in (internal/signin).
+type SignInAttempt interface {
+	// ManualURL is the sign-in link for a browser that didn't open; "" until
+	// Claude Code prints it.
+	ManualURL() string
+	// SubmitCode hands Claude Code the code the sign-in page showed.
+	SubmitCode(code string) error
+	// Done is closed when the sign-in process exits.
+	Done() <-chan struct{}
+	// Finish files a finished sign-in into the fleet; call after Done. The
+	// staging copy is removed whatever the outcome.
+	Finish(ctx context.Context) (switcher.ImportResult, error)
+	// Abort stops the sign-in and removes the staging copy. Idempotent.
+	Abort()
 }
 
-// loginResult is one browser-flow attempt's outcome, served by
-// GET /v1/login/browser/status so the client ties completion to ITS attempt
-// (fleet-size inference never completes on a re-login and false-positives on
-// a concurrent add). Never carries a code, token, or verifier.
+// SignInStartFn starts Claude Code's sign-in; email pre-fills the page.
+type SignInStartFn func(ctx context.Context, email string) (SignInAttempt, error)
+
+// loginAttemptTTL bounds one sign-in: a browser left open longer than this
+// is an abandoned attempt, and its process is stopped.
+var loginAttemptTTL = 10 * time.Minute
+
+// Failure codes on the wire. Clients key behavior off these, never the prose.
+const (
+	LoginCodeClaudeMissing = "claude_missing" // Claude Code isn't installed
+	LoginCodeTimedOut      = "timed_out"
+	LoginCodeCancelled     = "cancelled"
+	LoginCodeReplaced      = "replaced" // a newer sign-in took over
+)
+
+// loginResult is one attempt's outcome for the status route. Never carries
+// a code or a token.
 type loginResult struct {
 	status    string // "pending" | "done" | "failed"
-	errText   string // sanitized human copy on failed, "" otherwise
-	code      string // machine-readable failure class ("rate_limited" or ""); clients match THIS, never the prose
-	accountID string // set on done
+	errText   string
+	code      string
+	accountID string
+	email     string
+	outcome   string // switcher.ImportOutcome on done
+	existing  bool   // the fleet already had this account before the sign-in
+	note      string // one more thing the user needs to know, "" when nothing
 	at        time.Time
 }
 
-// LoginCodeRateLimited is the stable failure code for a rate-limited code
-// exchange (ErrSignInRateLimited). The status endpoint serves it so the
-// sign-in sheet can key its explicit Try-again state off a constant instead
-// of the human sentence (copy changes must not silently break clients).
-const LoginCodeRateLimited = "rate_limited"
+// signInRun is the one live attempt.
+type signInRun struct {
+	id   string
+	att  SignInAttempt
+	stop chan string // receives the failure code that ends the attempt
+}
 
-// loginFailureCode classifies a terminal login failure for the wire.
-func loginFailureCode(err error) string {
-	if errors.Is(err, ErrSignInRateLimited) {
-		return LoginCodeRateLimited
+var errUnknownAttempt = errors.New("this sign-in is unknown or already finished — start it again")
+
+func newAttemptID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
 	}
-	return ""
+	return hex.EncodeToString(b), nil
 }
 
-// setLoginResult records an attempt's outcome. A terminal outcome (done or
-// failed) never regresses to pending or gets overwritten by a later failure —
-// the TTL cleanup races the success path and must not repaint it.
-func (d *Daemon) setLoginResult(id, status, errText, accountID string) {
-	d.setLoginResultCoded(id, status, errText, "", accountID)
-}
-
-// setLoginResultCoded is setLoginResult with a machine-readable failure
-// class (loginFailureCode) riding along for the status endpoint.
-func (d *Daemon) setLoginResultCoded(id, status, errText, code, accountID string) {
+// setLoginResult records an attempt's outcome. A finished outcome is never
+// overwritten — the timeout and cancel paths race the success path.
+func (d *Daemon) setLoginResult(id string, r loginResult) {
 	d.loginMu.Lock()
 	defer d.loginMu.Unlock()
 	if cur, ok := d.loginResults[id]; ok && cur.status != "pending" {
 		return
 	}
-	d.loginResults[id] = loginResult{status: status, errText: errText, code: code, accountID: accountID, at: d.now()}
+	r.at = d.now()
+	d.loginResults[id] = r
 }
 
-// pruneLoginResultsLocked drops results older than the attempt TTL (a client
-// that hasn't polled in 10 minutes abandoned the dialog). Caller holds loginMu.
+// pruneLoginResultsLocked drops results nobody has asked about for a whole
+// attempt lifetime. Caller holds loginMu.
 func (d *Daemon) pruneLoginResultsLocked(now time.Time) {
 	for id, r := range d.loginResults {
-		if now.Sub(r.at) > loginAttemptTTL {
+		if r.status != "pending" && now.Sub(r.at) > loginAttemptTTL {
 			delete(d.loginResults, id)
 		}
 	}
 }
 
-var (
-	errLoginNotWired   = errors.New("in-app sign-in not wired")
-	errUnknownAttempt  = errors.New("this sign-in attempt is unknown, expired, or already used — start the sign-in again")
-	errLoginBadRequest = errors.New(`body must be {"code": "<code>", "state": "<state>"}`)
-)
-
-func (d *Daemon) loginWired() bool {
-	return d.LoginMint != nil && d.LoginURL != nil && d.LoginComplete != nil
+// validSignInEmail accepts a plain address to pre-fill — it becomes an
+// argument to Claude Code, so nothing that could read as a flag or carry
+// more than one address gets through.
+func validSignInEmail(e string) bool {
+	if e == "" {
+		return true
+	}
+	if len(e) > 254 || strings.HasPrefix(e, "-") || strings.ContainsAny(e, " \t\r\n<>,;\"") {
+		return false
+	}
+	a, err := mail.ParseAddress(e)
+	return err == nil && a.Address == e
 }
 
-// recordAttempt stores a started attempt, evicting expired entries and, over
-// the cap, the oldest.
-func (d *Daemon) recordAttempt(state string, att loginAttempt) {
-	now := d.now()
-	d.loginMu.Lock()
-	defer d.loginMu.Unlock()
-	for s, a := range d.loginAttempts {
-		if now.Sub(a.started) > loginAttemptTTL {
-			d.dropAttemptLocked(s, a)
-		}
-	}
-	for len(d.loginAttempts) >= loginAttemptCap {
-		// Seed from the first ranged key so a real key is always chosen — a
-		// now-seeded comparison would leave oldest=="" under a backward clock
-		// jump with a full table, making delete a no-op and this loop spin.
-		oldest := ""
-		var oldestAt time.Time
-		for s, a := range d.loginAttempts {
-			if oldest == "" || a.started.Before(oldestAt) {
-				oldest, oldestAt = s, a.started
-			}
-		}
-		d.dropAttemptLocked(oldest, d.loginAttempts[oldest])
-	}
-	d.loginAttempts[state] = att
-}
-
-// dropAttemptLocked removes an attempt and, for a browser flow, stops its
-// loopback listener (so an evicted/expired attempt can't strand a live port +
-// goroutine). Caller holds loginMu. cancel is idempotent, so a later consume/
-// TTL that also cancels is safe.
-func (d *Daemon) dropAttemptLocked(state string, att loginAttempt) {
-	delete(d.loginAttempts, state)
-	if att.cancel != nil {
-		att.cancel()
-	}
-}
-
-// consumeAttempt removes and returns the attempt for state (single-use). ok is
-// false when unknown or expired — so a replayed callback can never re-exchange.
-func (d *Daemon) consumeAttempt(state string) (loginAttempt, bool) {
-	d.loginMu.Lock()
-	att, ok := d.loginAttempts[state]
-	delete(d.loginAttempts, state)
-	d.loginMu.Unlock()
-	if !ok || d.now().Sub(att.started) > loginAttemptTTL {
-		return loginAttempt{}, false
-	}
-	return att, true
-}
-
-// finishLogin consumes the attempt for state (single-use, fail-closed) and
-// runs the one-shot exchange+install. Shared by the paste handler and the
-// loopback callback so both get identical CSRF + rotation guarantees.
-func (d *Daemon) finishLogin(ctx context.Context, code, state string) (store.Account, error) {
-	att, ok := d.consumeAttempt(state)
-	if !ok {
-		return store.Account{}, errUnknownAttempt
-	}
-	return d.LoginComplete(ctx, code, state, att.verifier, att.redirectURI)
-}
-
-func (d *Daemon) handleLoginStart(w http.ResponseWriter, r *http.Request) {
+func (d *Daemon) handleLoginBrowser(w http.ResponseWriter, r *http.Request) {
 	if !d.requireAuth(w, r) {
 		return
 	}
-	if !d.loginWired() {
-		httpError(w, http.StatusNotImplemented, errLoginNotWired)
-		return
-	}
-	if !requireJSON(w, r) {
-		return
-	}
-	state, verifier, challenge, err := d.LoginMint()
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return
-	}
-	authURL, err := d.LoginURL(challenge, state, "") // "" = hosted callback
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return
-	}
-	d.recordAttempt(state, loginAttempt{verifier: verifier, started: d.now()})
-	writeJSON(w, http.StatusOK, map[string]string{"authorize_url": authURL, "state": state})
-}
-
-func (d *Daemon) handleLoginComplete(w http.ResponseWriter, r *http.Request) {
-	if !d.requireAuth(w, r) {
-		return
-	}
-	if !d.loginWired() {
-		httpError(w, http.StatusNotImplemented, errLoginNotWired)
+	if d.SignIn == nil {
+		httpError(w, http.StatusNotImplemented, errors.New("in-app sign-in not wired"))
 		return
 	}
 	if !requireJSON(w, r) {
 		return
 	}
 	var req struct {
-		Code  string `json:"code"`
-		State string `json:"state"`
+		Email string `json:"email"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" || req.State == "" {
-		httpError(w, http.StatusBadRequest, errLoginBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		httpError(w, http.StatusBadRequest, errors.New(`body must be {} or {"email": "<address>"}`))
 		return
 	}
-	acct, err := d.finishLogin(r.Context(), req.Code, req.State)
-	if errors.Is(err, errUnknownAttempt) {
-		httpError(w, http.StatusBadRequest, err)
+	req.Email = strings.TrimSpace(req.Email)
+	if !validSignInEmail(req.Email) {
+		httpError(w, http.StatusBadRequest, errors.New("that email address can't be used to start a sign-in"))
 		return
 	}
-	if err != nil {
-		httpError(w, http.StatusBadGateway, err)
-		return
-	}
-	d.notify(r.Context())
-	writeJSON(w, http.StatusCreated, acct)
-}
-
-// handleLoginBrowser begins the zero-paste browser flow. It returns only the
-// authorize URL — no state to the client, because the daemon's own loopback
-// listener is the one that catches the callback.
-func (d *Daemon) handleLoginBrowser(w http.ResponseWriter, r *http.Request) {
-	if !d.requireAuth(w, r) {
-		return
-	}
-	if !d.loginWired() {
-		httpError(w, http.StatusNotImplemented, errLoginNotWired)
-		return
-	}
-	if !requireJSON(w, r) {
-		return
-	}
-	state, verifier, challenge, err := d.LoginMint()
+	id, err := newAttemptID()
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	// Ephemeral loopback listener: localhost-only, one sign-in, then closed.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	// Finding Claude Code can take a moment the first time; a client that
+	// hangs up must not leave a half-started process behind.
+	att, err := d.SignIn(context.WithoutCancel(r.Context()), req.Email)
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, fmt.Errorf("loopback listener: %w", err))
+		if errors.Is(err, claudecfg.ErrCLINotFound) {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "llmpilot signs you in through Claude Code, and Claude Code isn't installed on this Mac. Install it, then try again.",
+				"code":  LoginCodeClaudeMissing,
+			})
+			return
+		}
+		d.Log.Warn("sign-in: could not start Claude Code", "err", err)
+		httpError(w, http.StatusInternalServerError, errors.New("the Claude Code sign-in couldn't start — try again"))
 		return
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	redirectURI := fmt.Sprintf("http://localhost:%d/callback", port)
-	authURL, err := d.LoginURL(challenge, state, redirectURI)
-	if err != nil {
-		_ = ln.Close()
-		httpError(w, http.StatusInternalServerError, err)
-		return
-	}
-	// The listener's lifetime is the attempt's: the TTL bounds an abandoned
-	// sign-in, and eviction (dropAttemptLocked) cancels it early.
-	ctx, cancel := context.WithTimeout(context.Background(), loginAttemptTTL)
-	d.recordAttempt(state, loginAttempt{verifier: verifier, redirectURI: redirectURI, started: d.now(), cancel: cancel})
+	run := &signInRun{id: id, att: att, stop: make(chan string, 1)}
 	d.loginMu.Lock()
+	if d.loginClosing {
+		// The daemon began shutting down while Claude Code was starting.
+		d.loginMu.Unlock()
+		att.Abort()
+		httpError(w, http.StatusServiceUnavailable, errors.New("llmpilot is restarting — try again in a moment"))
+		return
+	}
 	d.pruneLoginResultsLocked(d.now())
-	d.loginResults[state] = loginResult{status: "pending", at: d.now()}
+	prev := d.loginRun
+	d.loginRun = run
+	// Counted while the lock still excludes stopSignIn, so shutdown waits
+	// for this supervisor — and for a replaced one still importing.
+	d.loginWG.Add(1)
+	d.loginResults[id] = loginResult{status: "pending", at: d.now()}
 	d.loginMu.Unlock()
-	go d.serveLoginCallback(ctx, cancel, ln, state)
-	// attempt_id is the CSRF state — already visible to this authenticated
-	// caller inside authorize_url, so this exposes nothing new.
-	writeJSON(w, http.StatusOK, map[string]string{"authorize_url": authURL, "attempt_id": state})
+	if prev != nil {
+		prev.end(LoginCodeReplaced)
+	}
+	go d.superviseSignIn(run)
+	writeJSON(w, http.StatusOK, map[string]string{"attempt_id": id})
 }
 
-// handleLoginBrowserStatus reports one browser-flow attempt's outcome so the
-// client completes on ITS attempt, not on fleet-size inference.
+// end asks the supervisor to stop this attempt (first reason wins).
+func (r *signInRun) end(code string) {
+	select {
+	case r.stop <- code:
+	default:
+	}
+}
+
+var failureText = map[string]string{
+	LoginCodeTimedOut:  "the sign-in timed out — start it again",
+	LoginCodeCancelled: "sign-in cancelled",
+	LoginCodeReplaced:  "a newer sign-in took over",
+}
+
+// superviseSignIn owns one attempt from start to cleanup.
+func (d *Daemon) superviseSignIn(run *signInRun) {
+	defer d.loginWG.Done()
+	timer := time.NewTimer(loginAttemptTTL)
+	defer timer.Stop()
+	defer func() {
+		d.loginMu.Lock()
+		if d.loginRun == run {
+			d.loginRun = nil
+		}
+		d.loginMu.Unlock()
+	}()
+	select {
+	case <-run.att.Done():
+	case code := <-run.stop:
+		run.att.Abort()
+		d.setLoginResult(run.id, loginResult{status: "failed", errText: failureText[code], code: code})
+		return
+	case <-timer.C:
+		run.att.Abort()
+		d.setLoginResult(run.id, loginResult{status: "failed", errText: failureText[LoginCodeTimedOut], code: LoginCodeTimedOut})
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	res, err := run.att.Finish(ctx)
+	if err != nil {
+		d.Log.Warn("sign-in did not finish", "err", err)
+		d.setLoginResult(run.id, loginResult{status: "failed", errText: signInFailureText(err)})
+		return
+	}
+	d.freshSignIn(ctx, res.Account.ID)
+	d.setLoginResult(run.id, loginResult{
+		status: "done", accountID: res.Account.ID, email: res.Account.Email,
+		outcome: string(res.Outcome), existing: res.Existed, note: res.Note,
+	})
+	d.notify(ctx)
+}
+
+// signInFailureText is what the sign-in sheet shows: Claude Code's own
+// reason when it gave one, the fleet's refusal when filing failed.
+func signInFailureText(err error) string {
+	if errors.Is(err, switcher.ErrSignInIncomplete) || errors.Is(err, switcher.ErrStashConflict) {
+		return err.Error()
+	}
+	msg := err.Error()
+	if strings.HasPrefix(msg, "the Claude Code sign-in") {
+		return msg
+	}
+	return "the sign-in finished, but llmpilot couldn't add the account: " + msg
+}
+
+// freshSignIn clears what a dead sign-in left on an account: a fresh grant
+// is a new lineage, so the dead-lineage quarantine no longer applies, and
+// the account is polled right away instead of on its old schedule.
+func (d *Daemon) freshSignIn(ctx context.Context, accountID string) {
+	if accountID == "" {
+		return
+	}
+	d.mu.Lock()
+	_, wasQuarantined := d.quarantine[accountID]
+	delete(d.quarantine, accountID)
+	if wasQuarantined && d.tokenNotes[accountID] == deadLineageNote {
+		delete(d.tokenNotes, accountID)
+	}
+	delete(d.nextPoll, accountID)
+	d.mu.Unlock()
+	if wasQuarantined {
+		d.persistQuarantine()
+	}
+}
+
+// handleLoginBrowserStatus reports one attempt's progress and outcome.
 func (d *Daemon) handleLoginBrowserStatus(w http.ResponseWriter, r *http.Request) {
 	if !d.requireAuth(w, r) {
 		return
@@ -309,116 +293,119 @@ func (d *Daemon) handleLoginBrowserStatus(w http.ResponseWriter, r *http.Request
 	}
 	d.loginMu.Lock()
 	res, ok := d.loginResults[id]
+	var att SignInAttempt
+	if d.loginRun != nil && d.loginRun.id == id {
+		att = d.loginRun.att
+	}
 	d.loginMu.Unlock()
 	if !ok {
 		httpError(w, http.StatusNotFound, errUnknownAttempt)
 		return
 	}
+	manual := ""
+	if att != nil && res.status == "pending" {
+		manual = att.ManualURL()
+	}
+	existing := ""
+	if res.existing {
+		existing = "true"
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"status": res.status, "error": res.errText, "code": res.code, "account_id": res.accountID,
+		"status":     res.status,
+		"error":      res.errText,
+		"code":       res.code,
+		"account_id": res.accountID,
+		"email":      res.email,
+		"outcome":    res.outcome,
+		"existing":   existing,
+		"note":       res.note,
+		"manual_url": manual,
 	})
 }
 
-// serveLoginCallback runs the ephemeral loopback server for one browser sign-
-// in. It stays up — despite stray probes of its localhost port — until OUR
-// redirect (a state-matched request) is handled, or the attempt is evicted /
-// times out (ctx). A request whose state does NOT match is a foreign hit
-// (port scanner, browser prefetch, a hostile local process): it gets a
-// neutral page and the listener KEEPS SERVING, so it cannot DoS the sign-in.
-func (d *Daemon) serveLoginCallback(ctx context.Context, cancel context.CancelFunc, ln net.Listener, state string) {
-	defer cancel() // release the TTL timer once we exit
-	handled := make(chan struct{})
-	var once sync.Once
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		// Constant-time state check FIRST: only our own redirect may end the
-		// listener, and comparing in constant time keeps the 256-bit state off
-		// any timing oracle now that a bad hit no longer tears the server down.
-		if subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(state)) != 1 {
-			loginCallbackPage(w, false, "This sign-in link is invalid or has expired. You can close this tab.")
-			return
-		}
-		// This is our callback — tear the listener down once the handler returns.
-		defer once.Do(func() { close(handled) })
-		if e := q.Get("error"); e != "" {
-			d.setLoginResult(state, "failed", "Claude declined the sign-in — try again", "")
-			loginCallbackPage(w, false, "Claude declined the sign-in. You can close this tab and try again in llmpilot.")
-			return
-		}
-		code := q.Get("code")
-		if code == "" {
-			d.setLoginResult(state, "failed", "the sign-in came back without a code — try again", "")
-			loginCallbackPage(w, false, "The sign-in came back without a code. You can close this tab and try again.")
-			return
-		}
-		ectx, ecancel := context.WithTimeout(context.Background(), 90*time.Second)
-		defer ecancel()
-		acct, err := d.finishLogin(ectx, code, state)
-		if err != nil {
-			// Login errors never carry secrets (sanitized OAuth code + HTTP
-			// status only), so surface the reason — a 429 is a transient rate
-			// limit worth retrying, not a broken flow.
-			d.Log.Warn("browser login: exchange/install failed", "err", err)
-			d.setLoginResultCoded(state, "failed", err.Error(), loginFailureCode(err), "")
-			// The tab is a dead end after this — say what happened, what to
-			// do next in ONE place (the app), and that the tab can go
-			// (fresh-user audit 2026-08-16, F8).
-			if errors.Is(err, ErrSignInRateLimited) {
-				loginCallbackPage(w, false, "The sign-in server is rate-limited right now. Wait a minute, then press Try again in llmpilot — that starts a fresh sign-in; this tab's code is used and won't work again. You can close this tab.")
-			} else {
-				loginCallbackPage(w, false, "Sign-in couldn't be completed: "+err.Error()+". Try again from llmpilot. You can close this tab.")
-			}
-			return
-		}
-		d.setLoginResult(state, "done", "", acct.ID)
-		loginCallbackPage(w, true, "You're signed in. You can close this tab — llmpilot is adding your account.")
-		d.notify(context.Background())
-	})
-
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = srv.Serve(ln) }()
-	select {
-	case <-handled:
-	case <-ctx.Done(): // TTL fired or the attempt was evicted
-	}
-	// Clean up a still-pending attempt (the TTL/evict path; a completed sign-in
-	// already consumed it under the lock — delete is idempotent). A result
-	// still pending here means the sign-in never finished: say so honestly
-	// (setLoginResult never repaints a terminal outcome).
-	d.setLoginResult(state, "failed", "the sign-in timed out — try again", "")
+// liveRun returns the running attempt with this id, or nil.
+func (d *Daemon) liveRun(id string) *signInRun {
 	d.loginMu.Lock()
-	delete(d.loginAttempts, state)
-	d.loginMu.Unlock()
-	shutCtx, shutCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutCancel()
-	_ = srv.Shutdown(shutCtx)
+	defer d.loginMu.Unlock()
+	if d.loginRun != nil && d.loginRun.id == id {
+		return d.loginRun
+	}
+	return nil
 }
 
-// ErrSignInRateLimited is the token endpoint rate-limiting the code
-// exchange (HTTP 429): transient, not a bad code — but the code from THIS
-// attempt was consumed by the failed exchange, so the retry is a fresh
-// sign-in, never a replay (P2 copy fix, wave S12). The daemon's login
-// wiring returns it so the browser page and the login result can say so
-// instead of a raw status. The text is what the sign-in sheet shows
-// verbatim — keep it a plain sentence.
-var ErrSignInRateLimited = errors.New("the sign-in server is rate-limited right now — wait a minute, then start a fresh sign-in; this attempt's code is used and won't work again")
-
-// loginCallbackPage renders the minimal page the browser lands on after the
-// redirect. It carries no code or token — only a human status line.
-func loginCallbackPage(w http.ResponseWriter, ok bool, message string) {
-	// Headers must be set BEFORE WriteHeader commits them.
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	title := "Signed in"
-	if !ok {
-		w.WriteHeader(http.StatusBadRequest)
-		title = "Sign-in problem"
+// handleLoginBrowserCode hands a code pasted from the sign-in page to the
+// running Claude Code sign-in.
+func (d *Daemon) handleLoginBrowserCode(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
 	}
-	fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><title>%s</title>`+
-		`<style>body{font:15px -apple-system,system-ui,sans-serif;background:#0b0b0b;color:#e8e8e8;`+
-		`display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}`+
-		`div{max-width:420px;text-align:center;padding:24px}h1{font-size:17px;margin:0 0 8px}`+
-		`p{color:#9a9a9a;line-height:1.5}</style></head><body><div><h1>%s</h1><p>%s</p></div></body></html>`,
-		html.EscapeString(title), html.EscapeString(title), html.EscapeString(message))
+	if !requireJSON(w, r) {
+		return
+	}
+	var req struct {
+		AttemptID string `json:"attempt_id"`
+		Code      string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.AttemptID == "" || req.Code == "" {
+		httpError(w, http.StatusBadRequest, errors.New(`body must be {"attempt_id": "<id>", "code": "<code>"}`))
+		return
+	}
+	run := d.liveRun(req.AttemptID)
+	if run == nil {
+		httpError(w, http.StatusNotFound, errUnknownAttempt)
+		return
+	}
+	if err := run.att.SubmitCode(req.Code); err != nil {
+		if errors.Is(err, claudecfg.ErrBadCode) {
+			httpError(w, http.StatusBadRequest, err)
+			return
+		}
+		httpError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
+}
+
+// handleLoginBrowserCancel stops a running sign-in. Cancelling one that
+// already ended is not an error.
+func (d *Daemon) handleLoginBrowserCancel(w http.ResponseWriter, r *http.Request) {
+	if !d.requireAuth(w, r) {
+		return
+	}
+	if !requireJSON(w, r) {
+		return
+	}
+	var req struct {
+		AttemptID string `json:"attempt_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.AttemptID == "" {
+		httpError(w, http.StatusBadRequest, errors.New(`body must be {"attempt_id": "<id>"}`))
+		return
+	}
+	if run := d.liveRun(req.AttemptID); run != nil {
+		run.end(LoginCodeCancelled)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
+// stopSignIn ends a running sign-in at daemon shutdown and waits for every
+// supervisor still at work — the current attempt's cleanup, and an import
+// under way for any attempt, including one a newer sign-in replaced — so no
+// Claude Code process, staging copy or half-done credential write outlives
+// the daemon. A sign-in that starts after this is refused (loginClosing).
+func (d *Daemon) stopSignIn() {
+	d.loginMu.Lock()
+	d.loginClosing = true
+	run := d.loginRun
+	d.loginMu.Unlock()
+	if run != nil {
+		run.end(LoginCodeCancelled)
+	}
+	finished := make(chan struct{})
+	go func() { d.loginWG.Wait(); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Minute):
+		d.Log.Warn("sign-in: still finishing at shutdown — leaving it to the next start's sweep")
+	}
 }

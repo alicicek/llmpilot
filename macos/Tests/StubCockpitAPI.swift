@@ -29,15 +29,11 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI {
     var adoptResult: Result<Void, Error> = .failure(DaemonError.down)
     var configResult: Result<DaemonConfig, Error> = .success(DaemonConfig(autopilot: nil))
     var reportMarkerResult: Result<Void, Error> = .success(())
-    var startLoginResult: Result<LoginStart, Error> = .failure(DaemonError.down)
-    var completeLoginResult: Result<Void, Error> = .failure(DaemonError.down)
     nonisolated(unsafe) var eventsResult: Result<DaemonState, Error> = .failure(DaemonError.down)
 
     private(set) var switchedTo: [String] = []
     private(set) var adopted: [String] = []
     private(set) var markerReports: [Bool] = []
-    private(set) var startedLogins = 0
-    private(set) var completedLogins: [(code: String, state: String)] = []
 
     nonisolated func baseURL() -> URL? { baseURLResult }
     func state() async throws -> DaemonState { try stateResult.get() }
@@ -59,16 +55,6 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI {
     func reportMarker(present: Bool) async throws {
         markerReports.append(present)
         try reportMarkerResult.get()
-    }
-
-    func startLogin() async throws -> LoginStart {
-        startedLogins += 1
-        return try startLoginResult.get()
-    }
-
-    func completeLogin(code: String, state: String) async throws {
-        completedLogins.append((code, state))
-        try completeLoginResult.get()
     }
 
     nonisolated func events() -> AsyncThrowingStream<DaemonState, Error> {
@@ -294,22 +280,38 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI {
         return try putConfigResult.get()
     }
 
-    // MARK: - zero-paste browser sign-in
+    // MARK: - Claude Code sign-in
 
     var startBrowserLoginResult: Result<BrowserLoginStart, Error> = .failure(DaemonError.down)
     var browserLoginStatusResult: Result<BrowserLoginStatus, Error> = .failure(DaemonError.down)
+    var submitLoginCodeResult: Result<Void, Error> = .success(())
+    var cancelBrowserLoginResult: Result<Void, Error> = .success(())
 
     private(set) var startedBrowserLogins = 0
+    private(set) var startedLoginEmails: [String?] = []
     private(set) var browserLoginStatusRequests: [String] = []
+    private(set) var submittedLoginCodes: [(attempt: String, code: String)] = []
+    private(set) var cancelledLogins: [String] = []
 
-    func startBrowserLogin() async throws -> BrowserLoginStart {
+    func startBrowserLogin(email: String?) async throws -> BrowserLoginStart {
         startedBrowserLogins += 1
+        startedLoginEmails.append(email)
         return try startBrowserLoginResult.get()
     }
 
     func browserLoginStatus(attempt: String) async throws -> BrowserLoginStatus {
         browserLoginStatusRequests.append(attempt)
         return try browserLoginStatusResult.get()
+    }
+
+    func submitLoginCode(attempt: String, code: String) async throws {
+        submittedLoginCodes.append((attempt, code))
+        try submitLoginCodeResult.get()
+    }
+
+    func cancelBrowserLogin(attempt: String) async throws {
+        cancelledLogins.append(attempt)
+        try cancelBrowserLoginResult.get()
     }
 }
 

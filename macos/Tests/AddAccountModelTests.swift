@@ -1,15 +1,14 @@
 import XCTest
 
 // The start-race guard's fail case: the sheet closes while POST
-// /v1/login/browser is in flight — a browser tab must NOT open for a
-// sign-in the user gave up on, and phase must not park at .browserWait.
+// /v1/login/browser is in flight — phase must not park at .browserWait for a
+// sign-in the user gave up on, and no poll may start.
 @MainActor
 final class AddAccountStartRaceTests: XCTestCase {
-    func testCloseDuringStartNeverOpensBrowser() async throws {
+    func testCloseDuringStartNeverStartsPolling() async throws {
         let api = StubCockpitAPI()
         api.startBrowserLoginResult = .success(try DaemonDates.decoder().decode(
-            BrowserLoginStart.self,
-            from: Data(#"{"authorize_url":"https://claude.ai/x","attempt_id":"a1"}"#.utf8)))
+            BrowserLoginStart.self, from: Data(#"{"attempt_id":"a1"}"#.utf8)))
         let model = AddAccountModel(api: api)
         var opened = 0
         model.openExternal = { _ in opened += 1 }
@@ -18,8 +17,9 @@ final class AddAccountStartRaceTests: XCTestCase {
         model.closed() // cancel lands before the task body's post-start guard
 
         try? await Task.sleep(nanoseconds: 100_000_000)
-        XCTAssertEqual(opened, 0, "a cancelled start must never open a browser tab")
+        XCTAssertEqual(opened, 0, "llmpilot never opens a browser itself — Claude Code does")
         XCTAssertEqual(model.phase, .idle, "phase must not park at browserWait")
+        XCTAssertTrue(api.browserLoginStatusRequests.isEmpty)
     }
 }
 @testable import llmpilot
@@ -56,21 +56,25 @@ final class AddAccountModelTests: XCTestCase {
         }
     }
 
-    // MARK: - copy strings, pinned against AddAccountDialog.tsx
+    // MARK: - copy
 
-    func testCopyStringsMatchTheWebSource() {
-        XCTAssertEqual(AddAccountCopy.intro, "Sign in with your Claude account and it joins the fleet — no terminal needed.")
-        XCTAssertEqual(AddAccountCopy.browserButton, "Sign in with your browser (faster)")
-        XCTAssertEqual(AddAccountCopy.windowButton, "Sign in in this window")
+    func testCopy() {
+        XCTAssertEqual(AddAccountCopy.signInButton, "Sign in with Claude")
         XCTAssertEqual(
-            AddAccountCopy.browserWaitBody,
-            "Finish signing in in your browser — your password manager works there. This updates " +
-                "on its own the moment you're done.")
-        XCTAssertEqual(AddAccountCopy.done, "Signed in — the account is joining your fleet now.")
-        XCTAssertEqual(AddAccountCopy.signInFailedFallback, "Sign-in failed — try again.")
+            AddAccountCopy.waitBody,
+            "Finish signing in in your browser. This updates on its own the moment you approve.")
         XCTAssertEqual(
-            AddAccountCopy.pollTimeout,
-            "Didn't detect a completed sign-in — finish it in your browser, or try again.")
+            AddAccountCopy.doneMessage(outcome: "added", email: "b@example.dev"),
+            "b@example.dev joined your fleet — switch to it any time.")
+        XCTAssertEqual(
+            AddAccountCopy.doneMessage(outcome: "updated", email: "b@example.dev"),
+            "b@example.dev is signed in again.")
+        XCTAssertEqual(
+            AddAccountCopy.doneMessage(outcome: "active", email: "b@example.dev"),
+            "b@example.dev is signed in — Claude Code is using it.")
+        XCTAssertEqual(
+            AddAccountCopy.doneMessage(outcome: nil, email: nil),
+            "The account joined your fleet — switch to it any time.")
         XCTAssertEqual(AddAccountCopy.moved, "Already moved into the fleet.")
         XCTAssertEqual(
             AddAccountCopy.registeredElsewhere,
@@ -88,6 +92,13 @@ final class AddAccountModelTests: XCTestCase {
         XCTAssertEqual(
             AddAccountCopy.moveWarning("/Users/mira/.claude"),
             "The sign-in leaves /Users/mira/.claude — a terminal using that folder will need to sign in again.")
+        XCTAssertEqual(AddAccountCopy.claudeCodeSetupURL.absoluteString, "https://code.claude.com/docs/en/setup")
+    }
+
+    func testDaemonClausesBecomeSentences() {
+        XCTAssertEqual(AddAccountModel.sentence("the sign-in timed out — start it again"), "The sign-in timed out — start it again.")
+        XCTAssertEqual(AddAccountModel.sentence("Already a sentence."), "Already a sentence.")
+        XCTAssertEqual(AddAccountModel.sentence(""), "")
     }
 
     // MARK: - detected-row classification table (AddAccountDialog.tsx:130-201)
@@ -320,7 +331,7 @@ final class AddAccountModelTests: XCTestCase {
         XCTAssertNil(model.moveNotes["/a"], "a note that is no longer true must not linger")
     }
 
-    // MARK: - browser poll loop: done / failed / transient-swallow / self-timeout
+    // MARK: - sign-in: start, poll, outcomes
 
     private func pollModel(_ api: StubCockpitAPI, clock: VirtualClock) -> AddAccountModel {
         let model = AddAccountModel(api: api)
@@ -330,10 +341,11 @@ final class AddAccountModelTests: XCTestCase {
         return model
     }
 
-    func testPollDoneTransitionsAndAutoClosesAfterLinger() async {
+    func testDoneShowsWhereTheAccountLandedAndAutoCloses() async {
         let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://claude.example/auth", attemptID: "att-1"))
-        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "done", error: nil, accountID: "acc-1"))
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-1"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(
+            status: "done", accountID: "acct-b", email: "b@example.dev", outcome: "added"))
         let clock = VirtualClock()
         let model = pollModel(api, clock: clock)
         var opened: [URL] = []
@@ -344,211 +356,310 @@ final class AddAccountModelTests: XCTestCase {
         await model.runBrowserSignIn()
 
         XCTAssertEqual(model.phase, .done)
+        XCTAssertEqual(model.doneMessage, "b@example.dev joined your fleet — switch to it any time.")
         XCTAssertEqual(closes, 1)
-        XCTAssertEqual(opened.map(\.absoluteString), ["https://claude.example/auth"])
-        XCTAssertEqual(api.startedBrowserLogins, 1)
+        XCTAssertTrue(opened.isEmpty, "Claude Code opens the browser, never the app")
+        XCTAssertEqual(api.startedLoginEmails, [nil])
         XCTAssertEqual(api.browserLoginStatusRequests, ["att-1"])
     }
 
-    func testPollFailedSurfacesServerErrorAndReturnsToIdle() async {
+    func testSignInAgainPassesTheEmail() async {
         let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-2"))
-        api.browserLoginStatusResult = .success(
-            BrowserLoginStatus(status: "failed", error: "Claude declined the sign-in — try again", accountID: nil))
-        let clock = VirtualClock()
-        let model = pollModel(api, clock: clock)
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-1"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "done", outcome: "updated"))
+        let model = pollModel(api, clock: VirtualClock())
 
-        await model.runBrowserSignIn()
+        await model.runBrowserSignIn(email: "b@example.dev")
 
-        XCTAssertEqual(model.phase, .idle)
-        XCTAssertEqual(model.error, "Claude declined the sign-in — try again")
+        XCTAssertEqual(api.startedLoginEmails, ["b@example.dev"])
     }
 
-    /// Found in review (both reviewers, confirmed): the REAL exchange
-    /// 429 arrives via the STATUS poll — /v1/login/browser succeeds, the
-    /// code exchange fails later, and the poll's "failed" carries
-    /// code == "rate_limited". The sheet must offer Try again there, not
-    /// only for a 429 on the start call.
-    func testPollFailedWithRateLimitCodeOffersTryAgain() async {
+    func testFailedSurfacesServerErrorAsASentenceAndOffersTryAgain() async {
         let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-rl"))
-        api.browserLoginStatusResult = .success(
-            BrowserLoginStatus(
-                status: "failed",
-                error: "the sign-in server is rate-limited right now — wait a minute and try again",
-                code: "rate_limited"))
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-2"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(
+            status: "failed", error: "the Claude Code sign-in ended without finishing: OAuth error: access_denied"))
         let model = pollModel(api, clock: VirtualClock())
 
         await model.runBrowserSignIn()
 
         XCTAssertEqual(model.phase, .idle)
-        XCTAssertTrue(model.signInRateLimited, "an exchange 429 must arm the Try-again state")
-        XCTAssertEqual(model.browserButtonTitle, AddAccountCopy.tryAgain)
+        XCTAssertEqual(model.error, "The Claude Code sign-in ended without finishing: OAuth error: access_denied.")
+        XCTAssertEqual(model.signInButtonTitle, AddAccountCopy.tryAgain)
     }
 
-    /// FAIL CASE: a failed poll WITHOUT the rate-limited code (or with any
-    /// other code) must not arm Try again — the flag keys off the stable
-    /// code, never off the prose.
-    func testPollFailedWithoutRateLimitCodeDoesNotOfferTryAgain() async {
+    func testFailedWithoutServerMessageUsesFallback() async {
         let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-nrl"))
-        api.browserLoginStatusResult = .success(
-            BrowserLoginStatus(status: "failed", error: "rate-limited words in prose only", code: ""))
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-3"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "failed", error: ""))
         let model = pollModel(api, clock: VirtualClock())
 
         await model.runBrowserSignIn()
 
-        XCTAssertEqual(model.phase, .idle)
-        XCTAssertFalse(model.signInRateLimited, "prose mentioning rate limits must not arm Try again without the code")
-    }
-
-    func testPollFailedWithoutServerMessageUsesVerbatimFallback() async {
-        let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-3"))
-        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "failed", error: "", accountID: nil))
-        let clock = VirtualClock()
-        let model = pollModel(api, clock: clock)
-
-        await model.runBrowserSignIn()
-
-        XCTAssertEqual(model.phase, .idle)
         XCTAssertEqual(model.error, AddAccountCopy.signInFailedFallback)
     }
 
-    func testTransientPollErrorsAreSwallowedThenSelfTimesOutAtFiveMinutes() async {
+    func testPendingPicksUpTheManualLinkForTheNoBrowserPath() async {
         let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-4"))
-        api.browserLoginStatusResult = .failure(DaemonError.down) // every poll "fails transiently"
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-4"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(
+            status: "pending", manualURL: "https://claude.com/cai/oauth/authorize?code=true"))
+        let model = AddAccountModel(api: api)
+        model.sleep = { _ in try? await Task.sleep(nanoseconds: 1_000_000) }
+        var opened: [URL] = []
+        model.openExternal = { opened.append($0) }
+
+        let task = Task { await model.runBrowserSignIn() }
+        await waitUntil(model.manualURL != nil)
+        XCTAssertEqual(model.phase, .browserWait)
+        model.openSignInPage()
+        XCTAssertEqual(opened.map(\.absoluteString), ["https://claude.com/cai/oauth/authorize?code=true"])
+        task.cancel()
+    }
+
+    func testPastedCodeGoesToTheRunningAttempt() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-5"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "pending"))
+        let model = AddAccountModel(api: api)
+        model.sleep = { _ in try? await Task.sleep(nanoseconds: 1_000_000) }
+        let task = Task { await model.runBrowserSignIn() }
+        await waitUntil(model.phase == .browserWait)
+
+        model.pasteInput = "  abcdefgh#statestate \n"
+        await model.submitPastedCode()
+
+        XCTAssertEqual(api.submittedLoginCodes.map(\.attempt), ["att-5"])
+        XCTAssertEqual(api.submittedLoginCodes.map(\.code), ["abcdefgh#statestate"])
+        XCTAssertTrue(model.pasteBusy, "busy until the poll reports the outcome")
+        task.cancel()
+    }
+
+    func testRejectedCodeSaysSoAndAllowsAnotherTry() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-6"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "pending"))
+        api.submitLoginCodeResult = .failure(ApiError(
+            status: 400, code: nil, message: "that doesn't look like the code from the sign-in page — copy it again"))
+        let model = AddAccountModel(api: api)
+        model.sleep = { _ in try? await Task.sleep(nanoseconds: 1_000_000) }
+        let task = Task { await model.runBrowserSignIn() }
+        await waitUntil(model.phase == .browserWait)
+
+        model.pasteInput = "nope"
+        await model.submitPastedCode()
+
+        XCTAssertFalse(model.pasteBusy)
+        XCTAssertEqual(model.pasteError, "That doesn't look like the code from the sign-in page — copy it again.")
+        XCTAssertEqual(model.phase, .browserWait)
+        task.cancel()
+    }
+
+    func testEmptyPasteSendsNothing() async {
+        let api = StubCockpitAPI()
+        let model = AddAccountModel(api: api)
+        model.pasteInput = "   "
+        await model.submitPastedCode()
+        XCTAssertTrue(api.submittedLoginCodes.isEmpty)
+    }
+
+    func testClaudeCodeMissingOffersTheInstallPage() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .failure(ApiError(
+            status: 409, code: "claude_missing", message: "server text"))
+        let model = pollModel(api, clock: VirtualClock())
+        var opened: [URL] = []
+        model.openExternal = { opened.append($0) }
+
+        await model.runBrowserSignIn()
+
+        XCTAssertEqual(model.phase, .idle)
+        XCTAssertTrue(model.claudeMissing)
+        XCTAssertEqual(model.error, AddAccountCopy.claudeMissing)
+        XCTAssertTrue(api.browserLoginStatusRequests.isEmpty)
+        model.openClaudeCodeSetup()
+        XCTAssertEqual(opened, [AddAccountCopy.claudeCodeSetupURL])
+    }
+
+    func testDaemonDownOnStart() async {
+        let api = StubCockpitAPI() // startBrowserLoginResult defaults to .down
+        let model = pollModel(api, clock: VirtualClock())
+
+        await model.runBrowserSignIn()
+
+        XCTAssertEqual(model.error, AddAccountCopy.daemonDown)
+        XCTAssertFalse(model.claudeMissing)
+    }
+
+    func testTransientPollErrorsAreSwallowedThenSelfTimesOut() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-8"))
+        api.browserLoginStatusResult = .failure(DaemonError.down)
         let clock = VirtualClock()
         let model = pollModel(api, clock: clock)
-
-        // Exercise the REAL production constants, not shortened test values
-        // — the self-timeout is deliberately shorter than the daemon's
-        // 10-minute attempt TTL (internal/daemon/login.go loginAttemptTTL).
-        XCTAssertEqual(model.pollInterval, 2)
-        XCTAssertEqual(model.pollTimeout, 5 * 60)
 
         await model.runBrowserSignIn()
 
         XCTAssertEqual(model.phase, .idle)
         XCTAssertEqual(model.error, AddAccountCopy.pollTimeout)
-        // floor(300/2) = 150 ticks before the self-timeout fires, and no poll
-        // fetch ever threw the error INTO `error` (it must be the timeout
-        // copy, proving every failure really was swallowed).
-        XCTAssertEqual(api.browserLoginStatusRequests.count, 150)
+        XCTAssertGreaterThan(api.browserLoginStatusRequests.count, 100, "transient errors must not end the poll early")
+        XCTAssertGreaterThanOrEqual(clock.current.timeIntervalSince1970, model.pollTimeout)
     }
 
-    func testStartBrowserLoginFailureReturnsToIdleWithoutPolling() async {
+    func testSignInAgainLandingOnAnotherAccountWarnsAndStaysOpen() async {
         let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .failure(DaemonError.http(500, "boom"))
-        let clock = VirtualClock()
-        let model = pollModel(api, clock: clock)
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-11"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(
+            status: "done", email: "a@example.dev", outcome: "active", existing: "true"))
+        let model = pollModel(api, clock: VirtualClock())
+        var closes = 0
+        model.onRequestClose = { closes += 1 }
+
+        await model.runBrowserSignIn(email: "B@example.dev")
+
+        XCTAssertTrue(model.doneIsWarning)
+        XCTAssertEqual(model.doneMessage, AddAccountCopy.wrongAccount(landed: "a@example.dev", requested: "B@example.dev"))
+        XCTAssertEqual(closes, 0, "a warning must stay on screen")
+
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "pending"))
+        model.signInAgainFromDone()
+        await waitUntil(api.startedLoginEmails.count == 2)
+        XCTAssertEqual(api.startedLoginEmails.last, "B@example.dev", "the retry asks for the same account")
+        model.closed()
+    }
+
+    func testSignInAgainLandingOnTheSameAccountDifferentCaseIsSuccess() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-12"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(
+            status: "done", email: "b@example.dev", outcome: "updated", existing: "true"))
+        let model = pollModel(api, clock: VirtualClock())
+        var closes = 0
+        model.onRequestClose = { closes += 1 }
+
+        await model.runBrowserSignIn(email: "B@Example.dev")
+
+        XCTAssertFalse(model.doneIsWarning)
+        XCTAssertEqual(model.doneMessage, "b@example.dev is signed in again.")
+        XCTAssertEqual(closes, 1)
+    }
+
+    func testAddLandingOnAnAccountAlreadyInTheFleetSaysSo() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-13"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(
+            status: "done", email: "a@example.dev", outcome: "active", existing: "true"))
+        let model = pollModel(api, clock: VirtualClock())
+        var closes = 0
+        model.onRequestClose = { closes += 1 }
+
+        await model.runBrowserSignIn()
+
+        XCTAssertTrue(model.doneIsWarning)
+        XCTAssertEqual(model.doneMessage, AddAccountCopy.alreadyInFleet("a@example.dev"))
+        XCTAssertEqual(closes, 0)
+    }
+
+    func testFirstAccountOnAnEmptyClaudeCodeIsSuccess() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-14"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(
+            status: "done", email: "a@example.dev", outcome: "active", existing: ""))
+        let model = pollModel(api, clock: VirtualClock())
+
+        await model.runBrowserSignIn()
+
+        XCTAssertFalse(model.doneIsWarning)
+        XCTAssertEqual(model.doneMessage, "a@example.dev is signed in — Claude Code is using it.")
+    }
+
+    func testDoneWithANoteStaysOpenToBeRead() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-16"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(
+            status: "done", email: "c@example.dev", outcome: "added", existing: "",
+            note: "Open Claude Code once on this Mac, then you can switch to this account."))
+        let model = pollModel(api, clock: VirtualClock())
+        var closes = 0
+        model.onRequestClose = { closes += 1 }
+
+        await model.runBrowserSignIn()
+
+        XCTAssertFalse(model.doneIsWarning)
+        XCTAssertEqual(model.doneNote, "Open Claude Code once on this Mac, then you can switch to this account.")
+        XCTAssertEqual(closes, 0)
+    }
+
+    func testTryAgainAfterAFailedSignInAgainKeepsTheAccount() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-17"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "failed", error: "access denied"))
+        let model = pollModel(api, clock: VirtualClock())
+
+        await model.runBrowserSignIn(email: "b@example.dev")
+        XCTAssertEqual(model.signInButtonTitle, AddAccountCopy.tryAgain)
+        model.primarySignIn()
+        await waitUntil(api.startedLoginEmails.count == 2)
+        XCTAssertEqual(api.startedLoginEmails, ["b@example.dev", "b@example.dev"])
+
+        // A fresh open is a plain Add account again.
+        model.closed()
+        await waitUntil(model.phase == .idle)
+        model.primarySignIn()
+        await waitUntil(api.startedLoginEmails.count == 3)
+        XCTAssertEqual(api.startedLoginEmails.last, .some(nil))
+        model.closed()
+    }
+
+    func testDaemonRestartEndsTheWaitAtOnce() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-15"))
+        api.browserLoginStatusResult = .failure(DaemonError.http(404, "this sign-in is unknown or already finished — start it again"))
+        let model = pollModel(api, clock: VirtualClock())
 
         await model.runBrowserSignIn()
 
         XCTAssertEqual(model.phase, .idle)
-        XCTAssertEqual(model.error, "boom")
-        XCTAssertFalse(model.signInRateLimited, "a plain 500 is not the rate-limited case")
-        XCTAssertEqual(model.browserButtonTitle, AddAccountCopy.browserButton, "an ordinary error keeps the default label")
-        XCTAssertTrue(api.browserLoginStatusRequests.isEmpty)
+        XCTAssertEqual(model.error, AddAccountCopy.attemptGone)
+        XCTAssertEqual(api.browserLoginStatusRequests.count, 1)
     }
 
-    // MARK: - F8 (2026-08-16 fresh-user audit): sign-in 429 states what
-    // happened + the wait, and swaps the primary button to an explicit retry.
+    // MARK: - cancel / close
 
-    func testStartBrowserLoginRateLimitedStatesWhatHappenedAndOffersRetry() async {
+    func testCancelStopsPollingAndCancelsOnTheDaemon() async {
         let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .failure(DaemonError.http(429, "rate limited"))
-        let clock = VirtualClock()
-        let model = pollModel(api, clock: clock)
-
-        await model.runBrowserSignIn()
-
-        XCTAssertEqual(model.phase, .idle)
-        XCTAssertEqual(model.error, AddAccountCopy.rateLimitedSignIn)
-        XCTAssertTrue(model.signInRateLimited)
-        XCTAssertEqual(model.browserButtonTitle, AddAccountCopy.tryAgain, "VOICE.md verb+object retry copy")
-    }
-
-    func testRateLimitedButtonTitleClearsOnceARetryStarts() async {
-        let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .failure(DaemonError.http(429, "rate limited"))
-        let clock = VirtualClock()
-        let model = pollModel(api, clock: clock)
-
-        await model.runBrowserSignIn()
-        XCTAssertEqual(model.browserButtonTitle, AddAccountCopy.tryAgain)
-
-        // A fresh attempt (the "Try again" tap) clears the rate-limited
-        // state up front — a successful retry behaves exactly as before.
-        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-8"))
-        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "done", error: nil, accountID: "acc-1"))
-        model.openExternal = { _ in }
-
-        await model.runBrowserSignIn()
-
-        XCTAssertFalse(model.signInRateLimited)
-        XCTAssertEqual(model.phase, .done)
-    }
-
-    func testPollFailedAfterAnEarlierRateLimitClearsTheRateLimitedFlag() async {
-        // A start-call 429 followed by a genuinely different poll failure
-        // must not leave the button stuck on "Try again".
-        let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-9"))
-        api.browserLoginStatusResult = .success(
-            BrowserLoginStatus(status: "failed", error: "Claude declined the sign-in — try again", accountID: nil))
-        let clock = VirtualClock()
-        let model = pollModel(api, clock: clock)
-
-        await model.runBrowserSignIn()
-
-        XCTAssertFalse(model.signInRateLimited)
-        XCTAssertEqual(model.browserButtonTitle, AddAccountCopy.browserButton)
-    }
-
-    // MARK: - poll cancellation on sheet close / Cancel
-
-    func testClosingCancelsAnInFlightPollAndResetsToIdle() async {
-        let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-5"))
-        api.browserLoginStatusResult = .failure(DaemonError.down) // never resolves — keeps polling
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-9"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "pending"))
         let model = AddAccountModel(api: api)
-        model.openExternal = { _ in }
-        model.pollInterval = 0.01 // real, but each individual sleep stays well under 50ms
-
+        model.sleep = { _ in try? await Task.sleep(nanoseconds: 1_000_000) }
         model.browserSignIn()
-        await waitUntil(!api.browserLoginStatusRequests.isEmpty)
-        XCTAssertFalse(api.browserLoginStatusRequests.isEmpty, "the poll never started")
-        let seenBeforeClose = api.browserLoginStatusRequests.count
+        await waitUntil(model.phase == .browserWait)
+
+        model.cancelBrowserWait()
+        XCTAssertEqual(model.phase, .idle)
+        await waitUntil(!api.cancelledLogins.isEmpty)
+        XCTAssertEqual(api.cancelledLogins, ["att-9"])
+
+        let seen = api.browserLoginStatusRequests.count
+        try? await Task.sleep(nanoseconds: 40_000_000)
+        XCTAssertLessThanOrEqual(api.browserLoginStatusRequests.count, seen + 1)
+    }
+
+    func testClosingStopsWatchingButLeavesTheSignInRunning() async {
+        let api = StubCockpitAPI()
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-10"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "pending"))
+        let model = AddAccountModel(api: api)
+        model.sleep = { _ in try? await Task.sleep(nanoseconds: 1_000_000) }
+        model.browserSignIn()
+        await waitUntil(model.phase == .browserWait)
 
         model.closed()
 
         XCTAssertEqual(model.phase, .idle)
-        XCTAssertNil(model.error)
-        try? await Task.sleep(nanoseconds: 40_000_000) // let any in-flight iteration finish
-        XCTAssertLessThanOrEqual(
-            api.browserLoginStatusRequests.count, seenBeforeClose + 1,
-            "cancellation must stop the loop, not just reset the phase")
-    }
-
-    func testCancelBrowserWaitStopsPollingAndReturnsToIdle() async {
-        let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-6"))
-        api.browserLoginStatusResult = .failure(DaemonError.down)
-        let model = AddAccountModel(api: api)
-        model.openExternal = { _ in }
-        model.pollInterval = 0.01
-
-        model.browserSignIn()
-        await waitUntil(!api.browserLoginStatusRequests.isEmpty)
-        let seenBeforeCancel = api.browserLoginStatusRequests.count
-
-        model.cancelBrowserWait()
-
-        XCTAssertEqual(model.phase, .idle)
         try? await Task.sleep(nanoseconds: 40_000_000)
-        XCTAssertLessThanOrEqual(api.browserLoginStatusRequests.count, seenBeforeCancel + 1)
+        XCTAssertTrue(api.cancelledLogins.isEmpty,
+                      "approving in the browser after closing the sheet must still add the account")
     }
 
     // MARK: - reset-on-close (full state, not just phase)
@@ -577,12 +688,11 @@ final class AddAccountModelTests: XCTestCase {
     }
 
     func testLeavingIdleForABrowserSignInClearsDetectedRowState() async {
-        // AddAccountDialog.tsx renders DetectedSection only `phase === "idle"
-        // && <DetectedSection/>` — leaving idle unmounts it, discarding its
-        // local state, before any Cancel/close ever runs.
+        // The detected section renders only while idle — leaving idle must
+        // drop its row state before any Cancel/close ever runs.
         let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .success(BrowserLoginStart(authorizeURL: "https://x", attemptID: "att-7"))
-        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "pending", error: nil, accountID: nil))
+        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-7"))
+        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "pending"))
         let model = AddAccountModel(api: api)
         model.openExternal = { _ in }
         model.requestMove("/a")
@@ -594,26 +704,6 @@ final class AddAccountModelTests: XCTestCase {
         XCTAssertNil(model.confirmMove, "detected-row state must not survive leaving idle")
         task.cancel()
     }
-
-    // MARK: - windowSignIn: always the bridge branch natively
-
-    func testWindowSignInOpensLoginWindowAndClosesTheSheetSynchronously() {
-        let api = StubCockpitAPI()
-        let model = AddAccountModel(api: api)
-        var openedWindow = 0
-        var closedSheet = 0
-        model.openLoginWindow = { openedWindow += 1 }
-        model.onRequestClose = { closedSheet += 1 }
-
-        model.windowSignIn()
-
-        XCTAssertEqual(openedWindow, 1)
-        XCTAssertEqual(closedSheet, 1)
-        XCTAssertEqual(model.phase, .idle, "no phase change — this is a synchronous bridge hop, not a network flow")
-    }
-
-    // (The terminal-fallback copy-command test went with the CLI block
-    // itself — owner 2026-08-12: the sheet never points users at the CLI.)
 
     // MARK: - opened() refreshes detected dirs
 

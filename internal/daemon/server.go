@@ -60,10 +60,10 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/adopt/move", d.handleAdoptMove)
 	mux.HandleFunc("POST /v1/stash/adopt", d.handleStashAdopt)
 	mux.HandleFunc("POST /v1/stash/discard", d.handleStashDiscard)
-	mux.HandleFunc("POST /v1/login/start", d.handleLoginStart)
-	mux.HandleFunc("POST /v1/login/complete", d.handleLoginComplete)
 	mux.HandleFunc("POST /v1/login/browser", d.handleLoginBrowser)
 	mux.HandleFunc("GET /v1/login/browser/status", d.handleLoginBrowserStatus)
+	mux.HandleFunc("POST /v1/login/browser/code", d.handleLoginBrowserCode)
+	mux.HandleFunc("POST /v1/login/browser/cancel", d.handleLoginBrowserCancel)
 	mux.HandleFunc("GET /v1/config", d.handleConfigGet)
 	mux.HandleFunc("PUT /v1/config", d.handleConfigPut)
 	mux.HandleFunc("GET /v1/history", d.handleHistory)
@@ -1176,6 +1176,12 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	}
 	defer func() { _ = lock.Close() }() // close drops the flock
 
+	// Only the lock holder may clear sign-in leftovers: a second daemon that
+	// lost the race must never stop the live one's attempt.
+	if d.SignInSweep != nil {
+		d.SignInSweep(ctx)
+	}
+
 	// A daemon that died without its cleanup left daemon.port naming a port
 	// anyone can bind now. Drop it before the new token exists, so this run's
 	// token never sits on disk beside that stale port.
@@ -1239,6 +1245,9 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
+	// No new sign-in can start now; stop a running one so its Claude Code
+	// process and staging copy do not outlive the daemon.
+	d.stopSignIn()
 	// Both Serve goroutines return after Shutdown; drain both so a real
 	// listener error is never silently dropped.
 	for range 2 {

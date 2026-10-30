@@ -59,6 +59,8 @@ final class DoctorPanelModel: ObservableObject {
 
     private let api: CockpitDaemonAPI & DaemonAPI
     private let onAddAccount: () -> Void
+    /// "Sign in again" for one account — the integrator pre-fills its email.
+    private let onSignInAgain: (String) -> Void
     private let onReviewStash: () -> Void
     private var lastReloadKey: String?
 
@@ -73,10 +75,12 @@ final class DoctorPanelModel: ObservableObject {
     init(
         api: CockpitDaemonAPI & DaemonAPI,
         onAddAccount: @escaping () -> Void,
+        onSignInAgain: @escaping (String) -> Void = { _ in },
         onReviewStash: @escaping () -> Void
     ) {
         self.api = api
         self.onAddAccount = onAddAccount
+        self.onSignInAgain = onSignInAgain
         self.onReviewStash = onReviewStash
     }
 
@@ -134,6 +138,8 @@ final class DoctorPanelModel: ObservableObject {
 
     enum RemedyAction: Equatable {
         case addAccount
+        /// Sign in again to one known account (the finding's target id).
+        case signInAgain(accountID: String)
         case reviewStash
         case switchTo(target: String, findingID: String)
         /// The daemon installs the statusline (U5) — rendered as
@@ -144,7 +150,12 @@ final class DoctorPanelModel: ObservableObject {
 
     func remedyAction(for finding: DoctorFinding) -> RemedyAction {
         switch finding.remedy.verb {
-        case "move_into_fleet", "sign_in_again", "register_account":
+        case "sign_in_again":
+            if let target = finding.remedy.target, !target.isEmpty {
+                return .signInAgain(accountID: target)
+            }
+            return .addAccount
+        case "move_into_fleet", "register_account":
             return .addAccount
         case "review_stash":
             return .reviewStash
@@ -165,6 +176,8 @@ final class DoctorPanelModel: ObservableObject {
         switch action {
         case .addAccount:
             onAddAccount()
+        case let .signInAgain(accountID):
+            onSignInAgain(accountID)
         case .reviewStash:
             onReviewStash()
         case let .switchTo(target, findingID):
@@ -493,8 +506,6 @@ private final class PreviewDoctorAPI: CockpitDaemonAPI & DaemonAPI, @unchecked S
     func adopt(configDir: String) async throws {}
     func config() async throws -> DaemonConfig { DaemonConfig(autopilot: nil) }
     func reportMarker(present: Bool) async throws {}
-    func startLogin() async throws -> LoginStart { throw DaemonError.down }
-    func completeLogin(code: String, state: String) async throws {}
     func events() -> AsyncThrowingStream<DaemonState, Error> { .init { $0.finish(throwing: DaemonError.down) } }
 
     func schedules() async throws -> [ScheduleRecord] { [] }
@@ -530,8 +541,10 @@ private final class PreviewDoctorAPI: CockpitDaemonAPI & DaemonAPI, @unchecked S
     func adoptMove(configDir: String, label: String?) async throws -> AdoptMoveResult { throw DaemonError.down }
     func cockpitConfig() async throws -> CockpitConfig { throw DaemonError.down }
     func putConfig(_ cfg: CockpitConfig) async throws -> CockpitConfig { throw DaemonError.down }
-    func startBrowserLogin() async throws -> BrowserLoginStart { throw DaemonError.down }
+    func startBrowserLogin(email: String?) async throws -> BrowserLoginStart { throw DaemonError.down }
     func browserLoginStatus(attempt: String) async throws -> BrowserLoginStatus { throw DaemonError.down }
+    func submitLoginCode(attempt: String, code: String) async throws { throw DaemonError.down }
+    func cancelBrowserLogin(attempt: String) async throws {}
 }
 
 /// DoctorFinding has a custom `init(from:)` (CockpitModels.swift:107-116), so

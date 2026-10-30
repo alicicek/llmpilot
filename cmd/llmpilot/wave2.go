@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,6 +21,7 @@ import (
 	"github.com/alicicek/llmpilot/internal/daemon"
 	"github.com/alicicek/llmpilot/internal/detect"
 	"github.com/alicicek/llmpilot/internal/pilot"
+	"github.com/alicicek/llmpilot/internal/signin"
 	"github.com/alicicek/llmpilot/internal/store"
 	"github.com/alicicek/llmpilot/internal/switcher"
 	"github.com/alicicek/llmpilot/pilotapi"
@@ -43,22 +43,13 @@ func sandboxUsageURL() string {
 	return os.Getenv("LLMPILOT_USAGE_URL")
 }
 
-// sandboxLoginTokenURL / sandboxProfileURL let sandbox runs point the in-app
-// sign-in's exchange and identity fetch at fixture servers. Honored ONLY
-// under LLMPILOT_TEST (the anthropic adapter additionally refuses its
-// production hosts under LLMPILOT_TEST — two independent layers).
-func sandboxLoginTokenURL() string {
+// sandboxClaudeBin lets sandbox runs drive the in-app sign-in with a stand-in
+// for Claude Code. Honored ONLY under LLMPILOT_TEST.
+func sandboxClaudeBin() string {
 	if os.Getenv("LLMPILOT_TEST") == "" {
 		return ""
 	}
-	return os.Getenv("LLMPILOT_TOKEN_URL")
-}
-
-func sandboxProfileURL() string {
-	if os.Getenv("LLMPILOT_TEST") == "" {
-		return ""
-	}
-	return os.Getenv("LLMPILOT_PROFILE_URL")
+	return os.Getenv("LLMPILOT_CLAUDE_BIN")
 }
 
 // entitlementBaseURL is the entitlement worker origin. Production hits the
@@ -374,7 +365,7 @@ func newDaemon(st *store.Store) *daemon.Daemon {
 		d.StashAdopt = sw.AdoptStash
 		d.StashDiscard = sw.DiscardStash
 		d.Pinned = accountIsPinned
-		wireLogin(d, st, sw, ver)
+		wireLogin(d, st, sw)
 	}
 	// The health sweep's local readers — the same gatherer `llmpilot doctor`
 	// uses when no daemon answers, so both surfaces report one truth.
@@ -962,84 +953,30 @@ func switchCloser(
 	}
 }
 
-// wireLogin wires the in-app sign-in surface (POST /v1/login/*). The daemon
-// keeps the PKCE verifier; the exchange + identity fetch run BEFORE
-// InstallLogin so no network ever happens under the credential locks.
-func wireLogin(d *daemon.Daemon, st *store.Store, sw *switcher.Switcher, ver string) {
-	// The new account lands on the GLOBAL dir
-	// (swappable) through the same switcher every other write uses.
-	d.LoginMint = func() (state, verifier, challenge string, err error) {
-		pk, err := anthropic.NewPKCE()
-		if err != nil {
-			return "", "", "", err
+// wireLogin wires the in-app sign-in (POST /v1/login/browser and friends):
+// Claude Code's own `claude auth login`, run in a private staging folder and
+// filed into the fleet when it finishes (internal/signin).
+func wireLogin(d *daemon.Daemon, st *store.Store, sw *switcher.Switcher) {
+	resolver := &claudecfg.CLIResolver{}
+	cli := resolver.Resolve
+	if os.Getenv("LLMPILOT_TEST") != "" {
+		// A sandbox must never run the real Claude Code: its sign-in writes
+		// the real login Keychain, which every other sandbox path refuses.
+		cli = func(context.Context) (claudecfg.CLI, error) {
+			return claudecfg.CLI{}, errors.New("LLMPILOT_TEST is set: refusing the real Claude Code (set LLMPILOT_CLAUDE_BIN to a stand-in)")
 		}
-		st, err := anthropic.NewLoginState()
-		if err != nil {
-			return "", "", "", err
-		}
-		return st, pk.Verifier, pk.Challenge, nil
 	}
-	d.LoginURL = func(challenge, state, redirectURI string) (string, error) {
-		if redirectURI == "" {
-			redirectURI = anthropic.LoginRedirectURI // hosted callback (webview / paste)
-		}
-		return anthropic.AuthorizeURL(challenge, state, redirectURI)
-	}
-	d.LoginComplete = func(ctx context.Context, code, state, verifier, redirectURI string) (store.Account, error) {
-		if redirectURI == "" {
-			redirectURI = anthropic.LoginRedirectURI
-		}
-		lc := &anthropic.LoginClient{
-			TokenBaseURL:   sandboxLoginTokenURL(),
-			ProfileBaseURL: sandboxProfileURL(),
-			UserAgent:      "claude-code/" + ver,
-		}
-		res, err := lc.Exchange(ctx, code, state, verifier, redirectURI)
-		if err != nil {
-			// A 429 is the token endpoint rate-limiting refreshes/exchanges
-			// (transient, not a bad code) — surface it as such instead of a
-			// raw "HTTP 429" so the UI can say "wait a moment and retry".
-			var ee *anthropic.ExchangeError
-			if errors.As(err, &ee) && ee.StatusCode == 429 {
-				// Feed the refresh breaker AS A SIGN-IN observation: same
-				// token endpoint (so refreshes pause), but the short
-				// sign-in cooldown and a doctor line that says a sign-in
-				// was rate-limited — one first-day sign-in 429 must not
-				// read as "a token refresh" nor cost 24h (audit F7).
-				// The login flow's own behavior is unchanged.
-				sw.NoteSignIn429(ctx)
-				return store.Account{}, daemon.ErrSignInRateLimited
+	if bin := sandboxClaudeBin(); bin != "" {
+		cli = func(context.Context) (claudecfg.CLI, error) {
+			if _, err := os.Stat(bin); err != nil {
+				return claudecfg.CLI{}, claudecfg.ErrCLINotFound
 			}
-			return store.Account{}, err
+			return claudecfg.CLI{Path: bin, Env: []string{"PATH=/usr/bin:/bin", "HOME=" + os.Getenv("HOME")}}, nil
 		}
-		// Identity: the profile endpoint is the CLI's own source; the
-		// exchange response's account block is the fallback. Without
-		// either, fail closed — a blank fleet entry helps nobody, and
-		// the discarded lineage costs only a repeated sign-in.
-		ident := struct {
-			AccountUUID      string `json:"accountUuid"`
-			EmailAddress     string `json:"emailAddress"`
-			OrganizationUUID string `json:"organizationUuid,omitempty"`
-			DisplayName      string `json:"displayName,omitempty"`
-		}{}
-		if p, perr := lc.FetchProfile(ctx, res.AccessToken); perr == nil {
-			ident.AccountUUID, ident.EmailAddress = p.AccountUUID, p.EmailAddress
-			ident.OrganizationUUID, ident.DisplayName = p.OrgUUID, p.DisplayName
-		} else if res.Identity.EmailAddress != "" {
-			slog.Warn("profile fetch failed — using the exchange identity", "err", perr)
-			ident.AccountUUID, ident.EmailAddress = res.Identity.AccountUUID, res.Identity.EmailAddress
-			ident.OrganizationUUID = res.Identity.OrgUUID
-		} else {
-			return store.Account{}, fmt.Errorf("signed in, but the account identity could not be read: %w", perr)
-		}
-		cred, err := anthropic.MintOAuthCred(res)
-		if err != nil {
-			return store.Account{}, err
-		}
-		oauthRaw, err := json.Marshal(ident)
-		if err != nil {
-			return store.Account{}, err
-		}
-		return sw.InstallLogin(ctx, cred, oauthRaw)
 	}
+	m := &signin.Manager{Home: st.Home(), Switcher: sw, CLI: cli, Log: slog.Default()}
+	d.SignIn = func(ctx context.Context, email string) (daemon.SignInAttempt, error) {
+		return m.Start(ctx, email)
+	}
+	d.SignInSweep = m.Sweep
 }
