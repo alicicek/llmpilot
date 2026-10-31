@@ -5,20 +5,17 @@ package switcher
 // a copy kills every other copy of the same grant — the hazard that made
 // pinned accounts unswappable in the first place (owner decision 2026-07-16).
 //
-// The guard never reads a SECRET outside the fleet. It decides from
-// `.claude.json`'s oauthAccount email; the one extra question it asks about a
-// dir a move retired ("does it hold a credential again?") is answered by
-// `security dump-keychain` WITHOUT -d — item attributes only, so no ACL
-// prompt can fire — plus a key-presence check on that dir's
-// `.credentials.json`. A fingerprint-accurate guard would have to read
-// foreign secrets, and an authorization dialog at 02:00 is a product
-// failure, so it stays attribute-level.
+// The guard acts only on copies llmpilot itself may have made: a move into
+// the fleet that could not prove the old folder empty marks the account
+// clone-suspect, and that mark stops every rotation until a fresh sign-in.
 //
-// Accepted false positive, deliberately: a genuinely SEPARATE grant for the
-// same email signed into another dir looks identical to a clone here, so it
-// is skipped too. That is the conservative direction (a skipped refresh
-// costs freshness; a wrong refresh costs the account), and it is precisely
-// the same-subscription collision the doctor will surface later.
+// A folder outside the fleet signed in to the same email is NOT treated as a
+// copy (owner 2026-10-31). Signing in there mints its own grant, so rotating
+// ours cannot end it; the email-only guard that used to skip such accounts
+// was nearly always that false alarm, and it left the account to go stale
+// behind a warning nobody needed. In the rare case the folder really holds a
+// hand-made copy, one of the two copies asks for a sign-in again — the same
+// thing the warning asked of everyone.
 
 import (
 	"context"
@@ -32,12 +29,11 @@ import (
 	"github.com/alicicek/llmpilot/internal/store"
 )
 
-// ReasonLineageElsewhere / ReasonCloneSuspect are the STABLE skip-reason
+// ReasonCloneSuspect / ReasonRecordUnreadable are the STABLE skip-reason
 // prefixes the clone guard emits. Callers match on these constants, never on
 // a rendered string, and rewrite them into caller-neutral user copy — a
 // silently skipped refresh is how a fleet goes quietly cold.
 const (
-	ReasonLineageElsewhere = "this sign-in is also live in"
 	ReasonCloneSuspect     = "a second copy of this sign-in may still exist"
 	ReasonRecordUnreadable = "llmpilot cannot read its own record of this account"
 )
@@ -81,11 +77,9 @@ func (s *Switcher) scanDirs() ([]string, error) {
 
 // ForeignSignIns lists config dirs outside the fleet that hold a sign-in.
 // Excluded: the fleet's own global dir and every registered account's config
-// dir. Dirs a move retired are NOT filtered here — that question costs a
-// keychain enumeration, so lineageLiveElsewhere asks it only for a dir whose
-// email actually matches the account being checked. A caller that wants
-// "dirs outside the fleet, minus proven-empty ones" must pair this with
-// retiredAndStillEmpty.
+// dir. Dirs a move retired are NOT filtered here (that question costs a
+// keychain enumeration), so a folder whose credential is gone may still be
+// listed by the email its .claude.json keeps.
 func (s *Switcher) ForeignSignIns(ctx context.Context) ([]ForeignSignIn, error) {
 	dirs, err := s.scanDirs()
 	if err != nil {
@@ -117,82 +111,23 @@ func (s *Switcher) ForeignSignIns(ctx context.Context) ([]ForeignSignIn, error) 
 	return out, nil
 }
 
-// lineageLiveElsewhere reports why an account's backup must not be rotated
-// right now: either a partial retirement left a second copy possible
-// (clone-suspect), or its email is signed into a config dir outside the
-// fleet. Returns ("", false) when rotation is safe. The per-account mark
-// fails CLOSED; the machine-wide dir scan fails open (see inline).
-func (s *Switcher) lineageLiveElsewhere(ctx context.Context, acct store.Account) (string, bool) {
-	if s.Registry != nil {
-		// The clone-suspect mark fails CLOSED (adversarial review P1): it is a
-		// per-account fact whose whole purpose is to stop a rotation, so an
-		// unreadable record must not silently disarm it. (The dir SCAN below
-		// still fails open — freezing the whole fleet on an unrelated
-		// filesystem error would be worse than the risk it guards.)
-		suspect, err := s.Registry.IsCloneSuspect(acct.ID)
-		if err != nil {
-			return ReasonRecordUnreadable + " right now — sign in to the account again if this persists", true
-		}
-		if suspect {
-			return ReasonCloneSuspect + " — sign in to the account again to clear it", true
-		}
-	}
-	if acct.Email == "" {
+// cloneGuard reports why an account's backup must not be rotated right now:
+// a partial retirement left a second copy possible. Returns ("", false) when
+// rotation is safe. A record that cannot be read stops the rotation; one
+// whose contents are damaged is set aside and rebuilt empty (store
+// Retirements), and its marks go with it.
+func (s *Switcher) cloneGuard(acct store.Account) (string, bool) {
+	if s.Registry == nil {
 		return "", false
 	}
-	foreign, err := s.ForeignSignIns(ctx)
+	suspect, err := s.Registry.IsCloneSuspect(acct.ID)
 	if err != nil {
-		s.logf("clone guard: config dir scan failed (%v) — proceeding", err)
-		return "", false
+		return ReasonRecordUnreadable + " right now — sign in to the account again if this persists", true
 	}
-	for _, f := range foreign {
-		if !strings.EqualFold(f.Email, acct.Email) {
-			continue
-		}
-		// This dir carries the account's email — the only case worth paying
-		// for a retirement re-check. A dir a move emptied keeps its identity
-		// block forever (llmpilot never blanks a foreign dir's), so without
-		// this the account could never be refreshed again.
-		if s.retiredAndStillEmpty(ctx, f.Dir) {
-			continue
-		}
-		// A folder that holds no credential at all keeps only the email of
-		// an account signed out of it — no copy there to collide with. This
-		// is the folder a "Sign in again" from llmpilot leaves behind: the
-		// fresh grant lives in the fleet, and refusing to keep it warm would
-		// let it die idle. dirIsSignedOut is confident-yes only, so doubt
-		// still blocks the rotation. It finds the folder's item by the
-		// service name derived from this spelling of the path; a terminal
-		// that reached the folder by another spelling would hide its item
-		// here. Real clones come from partial moves, which the clone-suspect
-		// mark above catches first.
-		if s.dirIsSignedOut(ctx, claudecfg.DirAt(f.Dir)) {
-			continue
-		}
-		return ReasonLineageElsewhere + " " + f.Dir, true
+	if suspect {
+		return ReasonCloneSuspect + " — sign in to the account again to clear it", true
 	}
 	return "", false
-}
-
-// retiredAndStillEmpty reports whether a move retired this dir AND it still
-// holds no credential. A retirement is a fact about a MOMENT — the product
-// itself tells the user a terminal using that folder must sign in again — so
-// the exclusion is re-verified from current state every time, never trusted
-// from the record alone.
-func (s *Switcher) retiredAndStillEmpty(ctx context.Context, dir string) bool {
-	if s.Registry == nil {
-		return false
-	}
-	rec, err := s.Registry.Retirements()
-	if err != nil && !errors.Is(err, store.ErrRecordRebuilt) {
-		return false // unknown never means "safe to rotate"
-	}
-	for _, d := range rec.Dirs {
-		if d.Complete && normDir(d.ConfigDir) == normDir(dir) {
-			return s.retirementStillHolds(ctx, claudecfg.DirAt(dir))
-		}
-	}
-	return false
 }
 
 func normDir(p string) string {
@@ -211,9 +146,7 @@ func normDir(p string) string {
 // fire — and the file read touches no Keychain at all.
 //
 // Any doubt (an enumeration error, an unreadable file) answers "no longer
-// holds": the dir is then scanned like any other, and if it carries this
-// account's email the rotation is skipped. Unknown must never mean "safe to
-// rotate".
+// holds", so the folder stops claiming it was moved.
 func (s *Switcher) retirementStillHolds(ctx context.Context, dir claudecfg.Dir) bool {
 	return s.dirIsSignedOut(ctx, dir)
 }

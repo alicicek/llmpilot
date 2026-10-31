@@ -96,6 +96,14 @@ final class DecodingTests: XCTestCase {
         let s2 = try DaemonDates.decoder().decode(DaemonState.self, from: Data(none.utf8))
         XCTAssertNil(s2.license)
         XCTAssertFalse(s2.licensed)
+        XCTAssertFalse(s2.licenseSeatRefused, "absent means the server has not refused a seat")
+
+        // The server refusing this install a seat rides state too — the
+        // cockpit reloads the license view on it.
+        let refused = """
+        {"accounts": [], "active_id": "", "schedules": [], "license_seat_refused": true, "as_of": "2026-07-12T14:32:00Z"}
+        """
+        XCTAssertTrue(try DaemonDates.decoder().decode(DaemonState.self, from: Data(refused.utf8)).licenseSeatRefused)
     }
 
     func testDetectAndConfigShapes() throws {

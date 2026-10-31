@@ -25,13 +25,17 @@ final class SettingsAutopilotGateTests: XCTestCase {
         XCTAssertTrue(SettingsSheet.autopilotOfferable(license: license(status: "none", active: false)))
         XCTAssertTrue(SettingsSheet.autopilotOfferable(license: license(status: "lapsed", active: false)))
         XCTAssertFalse(SettingsSheet.autopilotOfferable(license: license(status: "trialing", active: true)), "running: the toggle, not the offer")
+        // Paid but off on this Mac: the licence card says why — no offer to buy.
+        XCTAssertFalse(SettingsSheet.autopilotOfferable(license: license(status: "lifetime", active: false, locked: "other_install")))
+        XCTAssertFalse(SettingsSheet.autopilotOfferable(license: license(status: "trialing", active: false, locked: "recheck")))
     }
 
     // MARK: - helpers
 
-    private func license(status: String, active: Bool, available: Bool = true) -> LicenseInfo {
-        try! DaemonDates.decoder().decode(
+    private func license(status: String, active: Bool, available: Bool = true, locked: String? = nil) -> LicenseInfo {
+        let lock = locked.map { #","locked":"\#($0)""# } ?? ""
+        return try! DaemonDates.decoder().decode(
             LicenseInfo.self,
-            from: Data(#"{"available":\#(available),"active":\#(active),"status":"\#(status)","nocard_trial_used":false}"#.utf8))
+            from: Data(#"{"available":\#(available),"active":\#(active),"status":"\#(status)","nocard_trial_used":false\#(lock)}"#.utf8))
     }
 }

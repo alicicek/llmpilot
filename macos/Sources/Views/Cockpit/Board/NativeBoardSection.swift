@@ -15,6 +15,9 @@ struct NativeBoardSection: View {
     /// Phase 4 wires the native paywall; until then the CTA opens the web
     /// cockpit (the plan's stated interim recommendation).
     let onProCTA: () -> Void
+    /// Why a stored purchase is off on this Mac, if it is: the offer's button
+    /// leads to the license instead of offering a trial.
+    var licenseLock: String? = nil
 
     @State private var selectedID: String?
 
@@ -25,6 +28,7 @@ struct NativeBoardSection: View {
                     message: offer.message,
                     showCTA: offer.code == "pro_required",
                     code: offer.code,
+                    licenseLock: licenseLock,
                     onCTA: {
                         // App.tsx:462-465: the CTA dismisses the offer
                         // BEFORE opening the paywall — the banner must not

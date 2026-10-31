@@ -217,8 +217,5 @@ func localDoctorInputs(st *store.Store) doctor.Inputs {
 	if err != nil {
 		sw = nil
 	}
-	if sw == nil {
-		return daemon.DoctorInputs(st, accountIsPinned, nil, doctorReaders(st, nil), time.Now)
-	}
-	return daemon.DoctorInputs(st, accountIsPinned, sw.MovedDirs, doctorReaders(st, sw), time.Now)
+	return daemon.DoctorInputs(st, accountIsPinned, doctorReaders(st, sw), time.Now)
 }

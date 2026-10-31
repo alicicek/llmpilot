@@ -68,6 +68,9 @@ export interface State {
   license_status?: string;
   /** last terminal licensing refusal code (seat_limit_reached, ...). */
   license_error?: string;
+  /** the license server refused this install a seat: "checking" becomes
+   *  "restore by email", so a change signals a license refetch. */
+  license_seat_refused?: boolean;
 }
 
 export type Connection = "connecting" | "live" | "down" | "auth";
@@ -475,6 +478,21 @@ export interface License {
   nocard_trial_used: boolean;
   /** last terminal licensing refusal code; mapped to copy in pro/errors.ts. */
   error_code?: string;
+  /** why a stored purchase is off on this Mac: "other_install" (restore it by
+   *  email) or "recheck" (it comes back after the online check). */
+  locked?: "other_install" | "recheck";
+}
+
+/** A purchase is stored but the autopilot is off on this Mac. Someone who
+ *  paid is never sold to: the trial and the discount are for people who
+ *  have not. */
+export function paidButOff(l: License): boolean {
+  return l.available && !l.active && l.locked !== undefined;
+}
+
+/** The purchase belongs to another install: restoring by email moves it here. */
+export function needsRestore(l: License): boolean {
+  return paidButOff(l) && l.locked === "other_install";
 }
 
 export type Rung = "full" | "discount_trial" | "nocard_trial";

@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -665,4 +666,228 @@ func waitFor(t *testing.T, d time.Duration, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("condition not met within deadline")
+}
+
+// A restart (every app update) must not show a paying user as unlicensed:
+// the online status only lands after the weekly re-check, so the daemon
+// reports a stored purchase the offline gate accepts from the moment it
+// runs. A purchase bound to another install, or none at all, stays off.
+func TestRunReportsAStoredPurchaseBeforeAnyOnlineCheck(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	now := testIssuedAt.Add(24 * time.Hour)
+	foreign := proLifetime()
+	foreign.Install = "install-other"
+	cases := []struct {
+		name string
+		v    pilot.StoredLicense
+		want string
+	}{
+		{"lifetime on this install", pilot.StoredLicense{LicenseID: "lic_restart", Entitlement: signToken(t, "key-a", proLifetime(), priv), Status: "lifetime"}, "lifetime"},
+		{"trial on this install", pilot.StoredLicense{LicenseID: "lic_trial", Entitlement: signToken(t, "key-a", proTrial(now.Add(72*time.Hour)), priv), Status: "trialing"}, "trialing"},
+		{"bound to another install", pilot.StoredLicense{LicenseID: "lic_elsewhere", Entitlement: signToken(t, "key-a", foreign, priv), Status: "lifetime"}, ""},
+		{"nothing stored", pilot.StoredLicense{}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := licenseDaemon(t, "http://unused.invalid", &memLicenseStore{v: tc.v}, pub, true, nil, now)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() { _ = d.Run(ctx); close(done) }()
+			defer func() { cancel(); <-done }()
+			var got string
+			for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+				st, err := d.State(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got = st.License; got == tc.want && (tc.want != "" || time.Now().After(deadline.Add(-1900*time.Millisecond))) {
+					break
+				}
+			}
+			if got != tc.want {
+				t.Fatalf("license_status after start = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// getLocked reads /v1/license's lock reason the way the apps do.
+func getLocked(t *testing.T, d *Daemon) (bool, string) {
+	t.Helper()
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+	resp, body := doAuthed(t, http.MethodGet, srv.URL+"/v1/license", "", d.authToken)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/license = %d %s", resp.StatusCode, body)
+	}
+	var info licenseInfo
+	if err := json.Unmarshal([]byte(body), &info); err != nil {
+		t.Fatal(err)
+	}
+	return info.Active, info.Locked
+}
+
+// A purchase that is stored but off says why, so the apps never sell to
+// someone who paid: another install's purchase (or a seat the server
+// refused) is restored by email; anything else clears itself online.
+func TestLicenseSaysWhyAStoredPurchaseIsOff(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	now := testIssuedAt.Add(24 * time.Hour)
+	foreign := proLifetime()
+	foreign.Install = "install-other"
+	stored := func(p pilotapi.EntitlementPayload, status string) *memLicenseStore {
+		return &memLicenseStore{v: pilot.StoredLicense{LicenseID: "lic_why", Entitlement: signToken(t, "key-a", p, priv), Status: status}}
+	}
+
+	on := licenseDaemon(t, "http://unused.invalid", stored(proLifetime(), "lifetime"), pub, true, nil, now)
+	if active, locked := getLocked(t, on); !active || locked != "" {
+		t.Fatalf("a working purchase: active=%v locked=%q", active, locked)
+	}
+	elsewhere := licenseDaemon(t, "http://unused.invalid", stored(foreign, "lifetime"), pub, true, nil, now)
+	if _, locked := getLocked(t, elsewhere); locked != LockedOtherInstall {
+		t.Fatalf("a purchase bound to another install: locked=%q, want %q", locked, LockedOtherInstall)
+	}
+	// A reinstall wiped the clock anchor: the binding matches, Pro is off
+	// until the online check — nothing to restore.
+	noAnchor := licenseDaemon(t, "http://unused.invalid", stored(proLifetime(), "lifetime"), pub, true, nil, now)
+	noAnchor.License.Manager.Anchor = &pilot.TimeAnchor{Dir: t.TempDir()}
+	if _, locked := getLocked(t, noAnchor); locked != LockedRecheck {
+		t.Fatalf("a purchase off for want of the online check: locked=%q, want %q", locked, LockedRecheck)
+	}
+	lapsed := licenseDaemon(t, "http://unused.invalid", stored(proLifetime(), "lapsed"), pub, true, nil, now)
+	if _, locked := getLocked(t, lapsed); locked != "" {
+		t.Fatalf("a lapsed trial is not a stored purchase: locked=%q", locked)
+	}
+
+	// The server refusing this install a seat turns the recheck into a
+	// restore; an accepted grant clears it.
+	var refuse atomic.Bool
+	refuse.Store(true)
+	noAnchor.Revalidate = func(context.Context) (EntitlementValidation, error) {
+		if refuse.Load() {
+			return EntitlementValidation{}, pilot.ErrInstallNotActivated
+		}
+		return EntitlementValidation{Status: "lifetime"}, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go noAnchor.entitlementLoop(ctx)
+	waitLocked := func(want string) {
+		t.Helper()
+		var locked string
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if _, locked = getLocked(t, noAnchor); locked == want {
+				return
+			}
+		}
+		t.Fatalf("locked = %q, want %q", locked, want)
+	}
+	seatRefusedInState := func() bool {
+		t.Helper()
+		st, err := noAnchor.State(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.LicenseSeatRefused
+	}
+	noAnchor.revalidateCh <- struct{}{}
+	waitLocked(LockedOtherInstall)
+	// The pushed state carries it, so the apps reload the license view.
+	if !seatRefusedInState() {
+		t.Fatal("state does not carry the seat refusal the apps reload on")
+	}
+	refuse.Store(false)
+	noAnchor.revalidateCh <- struct{}{}
+	waitLocked(LockedRecheck) // the seat came back; the anchor is the test's, so still off
+	if seatRefusedInState() {
+		t.Fatal("an accepted check left the seat refusal in state")
+	}
+}
+
+// Opening the license view is the retry for a purchase waiting on the
+// server — an idle fleet has no usage poll to carry the check — throttled,
+// and never for a purchase that needs an email restore instead.
+func TestOpeningTheLicenseViewRetriesTheCheck(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	now := testIssuedAt.Add(24 * time.Hour)
+	foreign := proLifetime()
+	foreign.Install = "install-other"
+	start := func(p pilotapi.EntitlementPayload) (*Daemon, *atomic.Int32) {
+		d := licenseDaemon(t, "http://unused.invalid", &memLicenseStore{v: pilot.StoredLicense{LicenseID: "lic_retry", Entitlement: signToken(t, "key-a", p, priv), Status: "lifetime"}}, pub, true, nil, now)
+		d.License.Manager.Anchor = &pilot.TimeAnchor{Dir: t.TempDir()}
+		calls := &atomic.Int32{}
+		d.Revalidate = func(context.Context) (EntitlementValidation, error) {
+			calls.Add(1)
+			return EntitlementValidation{}, errors.New("offline")
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		go d.entitlementLoop(ctx)
+		return d, calls
+	}
+	settle := func(calls *atomic.Int32, want int32) {
+		t.Helper()
+		for deadline := time.Now().Add(time.Second); time.Now().Before(deadline) && calls.Load() < want; time.Sleep(5 * time.Millisecond) {
+		}
+		time.Sleep(30 * time.Millisecond)
+		if got := calls.Load(); got != want {
+			t.Fatalf("online checks = %d, want %d", got, want)
+		}
+	}
+
+	d, calls := start(proLifetime())
+	_, _ = getLocked(t, d)
+	_, _ = getLocked(t, d)
+	settle(calls, 1) // two opens inside the window: one check
+	d.mu.Lock()
+	d.lastRecheck = time.Time{} // the window passed
+	d.mu.Unlock()
+	_, _ = getLocked(t, d)
+	settle(calls, 2)
+
+	elsewhere, calls := start(foreign)
+	if _, locked := getLocked(t, elsewhere); locked != LockedOtherInstall {
+		t.Fatalf("locked = %q", locked)
+	}
+	settle(calls, 0) // a restore is needed, not a check
+}
+
+// A purchase that is off at start is checked online at once — a reinstalled
+// Mac may have no account to poll for a while — and a working one is not.
+func TestRunChecksAnOffPurchaseOnlineAtOnce(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	now := testIssuedAt.Add(24 * time.Hour)
+	for _, tc := range []struct {
+		name     string
+		noAnchor bool
+		want     int32
+	}{
+		{"off: the clock anchor is gone", true, 1},
+		{"on", false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &memLicenseStore{v: pilot.StoredLicense{LicenseID: "lic_start", Entitlement: signToken(t, "key-a", proLifetime(), priv), Status: "lifetime"}}
+			d := licenseDaemon(t, "http://unused.invalid", store, pub, true, nil, now)
+			if tc.noAnchor {
+				d.License.Manager.Anchor = &pilot.TimeAnchor{Dir: t.TempDir()}
+			}
+			var calls atomic.Int32
+			d.Revalidate = func(context.Context) (EntitlementValidation, error) {
+				calls.Add(1)
+				return EntitlementValidation{Status: "lifetime"}, nil
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() { _ = d.Run(ctx); close(done) }()
+			defer func() { cancel(); <-done }()
+			deadline := time.Now().Add(300 * time.Millisecond)
+			for time.Now().Before(deadline) && calls.Load() < tc.want {
+				time.Sleep(5 * time.Millisecond)
+			}
+			time.Sleep(50 * time.Millisecond)
+			if got := calls.Load(); got != tc.want {
+				t.Fatalf("online checks at start = %d, want %d", got, tc.want)
+			}
+		})
+	}
 }

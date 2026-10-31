@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -13,13 +12,12 @@ import (
 	"github.com/alicicek/llmpilot/internal/store"
 )
 
-// TestKeepWarmSkipsLineageLiveElsewhere is the clone-guard proof. Rotating a
-// lineage that is ALSO signed into a config dir outside the fleet kills that
-// copy (the refresh token rotates server-side), so the rotation must not
-// happen — and the guard must decide it WITHOUT reading a Keychain item
-// outside the fleet's own services (an ACL prompt at 02:00 is a product
-// failure).
-func TestKeepWarmSkipsLineageLiveElsewhere(t *testing.T) {
+// TestKeepWarmRefreshesDespiteTheSameEmailElsewhere: a folder outside the
+// fleet signed in to the same account holds its own grant, so keeping ours
+// warm cannot end it (owner 2026-10-31) — the account is refreshed, and
+// without reading a Keychain item outside the fleet's own services (an ACL
+// prompt at 02:00 is a product failure).
+func TestKeepWarmRefreshesDespiteTheSameEmailElsewhere(t *testing.T) {
 	sw, fk, dir, _ := sandbox(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -62,30 +60,8 @@ func TestKeepWarmSkipsLineageLiveElsewhere(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Rotated || len(calls) != 0 {
-		t.Fatalf("a lineage live in another dir was rotated: %+v calls=%v", res, calls)
-	}
-	if !strings.Contains(res.Skipped, "also live in") || !strings.Contains(res.Skipped, foreign) {
-		t.Fatalf("skip reason must name the other dir: %q", res.Skipped)
-	}
-
-	// A dir a MOVE retired is proven empty — it must not trigger the skip.
-	// The move deleted the folder's own item.
-	if err := fk.keychain().Delete(ctx, claudecfg.DirAt(foreign).KeychainService(), "tester"); err != nil {
-		t.Fatal(err)
-	}
-	if err := sw.Registry.RecordRetirement(store.RetiredDir{
-		ConfigDir: foreign, Email: "b@example.dev", AccountID: acctB.ID, Complete: true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	calls = nil
-	res, err = sw.KeepWarm(ctx, acctB, opts)
-	if err != nil {
-		t.Fatalf("keep-warm after a completed retirement: %v", err)
-	}
 	if !res.Rotated || len(calls) != 1 {
-		t.Fatalf("a retired dir still blocked the rotation: %+v calls=%v", res, calls)
+		t.Fatalf("a sign-in in another folder blocked the refresh: %+v calls=%v", res, calls)
 	}
 }
 
@@ -125,70 +101,10 @@ func TestForeignSignInsExcludesTheFleet(t *testing.T) {
 	}
 }
 
-// TestCloneGuardReArmsAfterAFreshSignInInARetiredDir: a retirement is a fact
-// about a MOMENT. The product tells the user "a terminal using that folder
-// will need to sign in again" — and when they do, that dir holds a live grant
-// again. A permanent exclusion would rotate our copy and kill theirs
-// (adversarial review P0).
-func TestCloneGuardReArmsAfterAFreshSignInInARetiredDir(t *testing.T) {
-	sw, _, dir, _ := sandbox(t)
-	ctx := context.Background()
-	now := time.Now()
-	retired := filepath.Join(t.TempDir(), "claude-retired")
-	if err := os.MkdirAll(retired, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cfg := filepath.Join(retired, ".claude.json")
-	body := fmt.Sprintf(`{"oauthAccount":%s}`, oauthJSON("b@example.dev"))
-	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Retired: the identity block stays (llmpilot never blanks a foreign
-	// dir's) but no credential remains there.
-	sw.ScanDirs = func() ([]string, error) { return []string{retired}, nil }
-	acctB := store.Account{ID: "acct-b", Email: "b@example.dev", ConfigDir: dir.Path()}
-	if err := sw.Registry.RecordRetirement(store.RetiredDir{
-		ConfigDir: retired, Email: "b@example.dev", AccountID: acctB.ID,
-		RetiredAt: now.Add(-time.Hour), Complete: true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := sw.SaveBackup(ctx, acctB.ID, credWithExpiry("token-b", now.Add(20*time.Minute)), oauthJSON("b@example.dev")); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	opts := nearExpiryOpts(now, &calls)
-	res, err := sw.KeepWarm(ctx, acctB, opts)
-	if err != nil || !res.Rotated {
-		t.Fatalf("an untouched retired dir must not block rotation: %+v err=%v", res, err)
-	}
-
-	// The user signs in there again — a credential exists in that dir once
-	// more (Claude Code writes the Keychain on macOS; the identity block may
-	// look identical). The guard must re-arm on the CREDENTIAL, not on a
-	// config-file mtime.
-	if err := sw.Keychain.Set(ctx, claudecfg.DirAt(retired).KeychainService(), "tester", credJSON("token-b-REDONE")); err != nil {
-		t.Fatal(err)
-	}
-	calls = nil
-	res, err = sw.KeepWarm(ctx, acctB, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Rotated || len(calls) != 0 {
-		t.Fatalf("a re-signed-in retired dir did not re-arm the guard: %+v calls=%v", res, calls)
-	}
-	if !strings.Contains(res.Skipped, retired) {
-		t.Fatalf("skip reason must name the dir: %q", res.Skipped)
-	}
-}
-
-// TestCorruptRetirementRecordSelfHealsAndTheScanStillGuards: an unreadable
-// retirements.json must NOT freeze the fleet (it holds no credentials, so it
-// is reconstructible) — but losing the mark must not lose the protection
-// either. With the record gone, no dir is excluded, so the machine-wide scan
-// catches the very copy the mark was standing in for.
-func TestCorruptRetirementRecordSelfHealsAndTheScanStillGuards(t *testing.T) {
+// TestCorruptRetirementRecordSelfHeals: an unreadable retirements.json must
+// NOT freeze the fleet — it holds no credentials, so it is reconstructible.
+// The corrupt document is moved aside and the account keeps refreshing.
+func TestCorruptRetirementRecordSelfHeals(t *testing.T) {
 	sw, _, dir, _ := sandbox(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -200,93 +116,17 @@ func TestCorruptRetirementRecordSelfHealsAndTheScanStillGuards(t *testing.T) {
 	if err := os.WriteFile(recPath, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	// A leftover live copy of this account exists in another dir — the state
-	// the lost mark described.
-	leftover := filepath.Join(t.TempDir(), "claude-leftover")
-	if err := os.MkdirAll(leftover, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cfg := fmt.Sprintf(`{"oauthAccount":%s}`, oauthJSON("b@example.dev"))
-	if err := os.WriteFile(filepath.Join(leftover, ".claude.json"), []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := sw.Keychain.Set(ctx, claudecfg.DirAt(leftover).KeychainService(), "tester", credJSON("token-b-LEFTOVER")); err != nil {
-		t.Fatal(err)
-	}
-	sw.ScanDirs = func() ([]string, error) { return []string{leftover}, nil }
+	sw.ScanDirs = func() ([]string, error) { return nil, nil }
 
 	var calls []string
 	res, err := sw.KeepWarm(ctx, acctB, nearExpiryOpts(now, &calls))
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || !res.Rotated || len(calls) != 1 {
+		t.Fatalf("a corrupt record froze the account: %+v err=%v calls=%v", res, err, calls)
 	}
-	if res.Rotated || len(calls) != 0 {
-		t.Fatalf("the scan did not cover for the lost mark: %+v calls=%v", res, calls)
-	}
-	if !strings.Contains(res.Skipped, ReasonLineageElsewhere) {
-		t.Fatalf("skip reason = %q", res.Skipped)
-	}
-	// The corrupt document was moved aside (uniquely named, so an earlier
-	// quarantine is never clobbered), not left to fail forever.
+	// Moved aside (uniquely named, so an earlier quarantine is never
+	// clobbered), not left to fail forever.
 	quarantined, err := filepath.Glob(recPath + ".corrupt-*")
 	if err != nil || len(quarantined) != 1 {
 		t.Fatalf("the corrupt record was not quarantined: %v %v", quarantined, err)
-	}
-
-	// And with nothing live elsewhere, the account is NOT frozen — the whole
-	// point: one bad file must not stop every account on the machine.
-	sw.ScanDirs = func() ([]string, error) { return nil, nil }
-	calls = nil
-	res, err = sw.KeepWarm(ctx, acctB, nearExpiryOpts(now, &calls))
-	if err != nil || !res.Rotated || len(calls) != 1 {
-		t.Fatalf("a corrupt record froze an unrelated account: %+v err=%v calls=%v", res, err, calls)
-	}
-}
-
-// TestKeepWarmIgnoresSignedOutFolderWithSameEmail is the folder "Sign in
-// again" leaves behind: it still names the account but holds no sign-in, so
-// it cannot hold a second copy — refusing to keep the fresh grant warm would
-// let it die idle. A folder whose state is in doubt still blocks.
-func TestKeepWarmIgnoresSignedOutFolderWithSameEmail(t *testing.T) {
-	sw, _, dir, _ := sandbox(t)
-	ctx := context.Background()
-	now := time.Now()
-	gone := filepath.Join(t.TempDir(), "claude-signed-out")
-	if err := os.MkdirAll(gone, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cfg := fmt.Sprintf(`{"oauthAccount":%s}`, oauthJSON("b@example.dev"))
-	if err := os.WriteFile(filepath.Join(gone, ".claude.json"), []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	sw.ScanDirs = func() ([]string, error) { return []string{gone}, nil }
-	acctB := store.Account{ID: "acct-b", Email: "b@example.dev", ConfigDir: dir.Path()}
-	if err := sw.SaveBackup(ctx, acctB.ID, credWithExpiry("token-b", now.Add(20*time.Minute)), oauthJSON("b@example.dev")); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	res, err := sw.KeepWarm(ctx, acctB, nearExpiryOpts(now, &calls))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Rotated {
-		t.Fatalf("a signed-out folder blocked the refresh: %+v", res)
-	}
-
-	// Doubt blocks: an unparseable credentials file may hold a sign-in.
-	if err := os.WriteFile(claudecfg.DirAt(gone).CredentialsFilePath(), []byte("{not json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := sw.SaveBackup(ctx, acctB.ID, credWithExpiry("token-b2", now.Add(20*time.Minute)), oauthJSON("b@example.dev")); err != nil {
-		t.Fatal(err)
-	}
-	calls = nil
-	res, err = sw.KeepWarm(ctx, acctB, nearExpiryOpts(now, &calls))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Rotated || !strings.Contains(res.Skipped, ReasonLineageElsewhere) {
-		t.Fatalf("a folder in doubt did not block: %+v", res)
 	}
 }

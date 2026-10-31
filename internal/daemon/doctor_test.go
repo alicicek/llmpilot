@@ -170,9 +170,7 @@ func TestDoctorDegraded(t *testing.T) {
 			"b": `{"oauthAccount":{"accountUuid":"b","emailAddress":"b@example.dev","organizationUuid":"org-b"}}`,
 		}},
 	}
-	in := DoctorInputs(st, func(store.Account) bool { return false },
-		func(context.Context) (map[string]bool, error) { return map[string]bool{}, nil },
-		local, time.Now)
+	in := DoctorInputs(st, func(store.Account) bool { return false }, local, time.Now)
 	if in.Daemon != nil {
 		t.Fatal("the shared assembler must leave the daemon facts to the daemon itself")
 	}
@@ -216,7 +214,7 @@ func TestDoctorUnwiredReadersNeverPass(t *testing.T) {
 	rep := d.Doctor(context.Background())
 	for _, id := range []string{
 		doctor.CheckLoginItem, doctor.CheckStatusLine, doctor.CheckSharedPool,
-		doctor.CheckOtherSignIns, doctor.CheckRefreshBudget,
+		doctor.CheckRefreshBudget,
 		// The review's half-blind classes: an unwired stash is not an empty
 		// one, an unreadable identity leaves the duplicate check half-run, and
 		// with no pinned rule a watched lane cannot be told from a switchable

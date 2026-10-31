@@ -42,7 +42,6 @@ type DoctorLocal struct {
 func DoctorInputs(
 	st *store.Store,
 	pinned func(store.Account) bool,
-	movedDirs func(ctx context.Context) (map[string]bool, error),
 	local DoctorLocal,
 	now func() time.Time,
 ) doctor.Inputs {
@@ -52,7 +51,6 @@ func DoctorInputs(
 		Snapshot:    st.Snapshot,
 		Retirements: st.RetirementsSnapshot,
 		Pinned:      pinned,
-		MovedDirs:   movedDirs,
 		Backups:     local.Backups,
 		Foreign:     local.Foreign,
 		Budget:      local.Budget,
@@ -64,7 +62,7 @@ func DoctorInputs(
 // Doctor runs the sweep against this daemon's live view.
 func (d *Daemon) Doctor(ctx context.Context) doctor.Report {
 	d.init()
-	in := DoctorInputs(d.Store, d.Pinned, d.MovedDirs, d.DoctorReaders, d.clock)
+	in := DoctorInputs(d.Store, d.Pinned, d.DoctorReaders, d.clock)
 	in.Daemon = d.doctorFacts(ctx)
 	return doctor.Run(ctx, in)
 }

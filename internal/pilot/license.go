@@ -51,6 +51,10 @@ type LicenseStore interface {
 
 var ErrNoLicense = errors.New("no entitlement stored")
 
+// ErrInstallNotActivated is the license server refusing this install: it
+// holds no seat for the purchase, and email recovery is the way onto it.
+var ErrInstallNotActivated = errors.New("this install holds no seat for the purchase")
+
 // KeychainLicenseStore uses llmpilot's hardened stdin-based Keychain adapter.
 // The entitlement is a signed capability, never a Stripe or signing secret.
 type KeychainLicenseStore struct {
@@ -169,6 +173,54 @@ func (m *LicenseManager) Allowed(ctx context.Context, feature string, now time.T
 	return now.Before(payload.IssuedAt.Add(grace))
 }
 
+// AdoptBoundInstall takes back the install the stored purchase is signed
+// for when this machine's id differs. A reinstall that wiped ~/.llmpilot
+// mints a fresh id while the purchase in the (non-synchronizable) Keychain
+// item stays bound to the old one, which would lock a paying user out of
+// Pro on the Mac they bought it on until an email restore. Only a genuine
+// signature against the pinned keys is trusted (an expired trial's binding
+// included: the server may have converted it); persist runs first so the
+// in-memory id never runs ahead of what the next start reads. Reports
+// whether the id changed. The install id was never a secret — it sits in
+// the token's payload — so this grants nothing the Keychain item did not.
+func (m *LicenseManager) AdoptBoundInstall(ctx context.Context, persist func(string) error) bool {
+	stored, err := m.Store.Load(ctx)
+	if err != nil {
+		return false
+	}
+	keys, err := m.verifyKeys()
+	if err != nil {
+		return false
+	}
+	bound, err := EntitlementBinding(stored.Entitlement, keys)
+	if err != nil || bound == m.InstallID {
+		return false
+	}
+	if err := persist(bound); err != nil {
+		return false
+	}
+	m.InstallID = bound
+	return true
+}
+
+// BoundElsewhere reports a stored purchase whose genuine signature binds it
+// to another install — the one state an email restore exists for.
+func (m *LicenseManager) BoundElsewhere(ctx context.Context) bool {
+	if m.InstallID == "" {
+		return false // no install id to restore onto; the worker refuses an empty one
+	}
+	stored, err := m.Store.Load(ctx)
+	if err != nil {
+		return false
+	}
+	keys, err := m.verifyKeys()
+	if err != nil {
+		return false
+	}
+	bound, err := EntitlementBinding(stored.Entitlement, keys)
+	return err == nil && bound != m.InstallID
+}
+
 // Due is weekly with stable ±12h jitter derived from the opaque license id.
 // Stable jitter survives restarts without another state file.
 func (m *LicenseManager) Due(ctx context.Context, now time.Time) bool {
@@ -228,7 +280,13 @@ func (m *LicenseManager) Revalidate(ctx context.Context) (string, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		var refusal struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&refusal)
+		if resp.StatusCode == http.StatusForbidden && refusal.Error == "install_not_activated" {
+			return "", ErrInstallNotActivated
+		}
 		return "", fmt.Errorf("entitlement validate: HTTP %d", resp.StatusCode)
 	}
 	var result struct {

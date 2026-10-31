@@ -27,6 +27,12 @@ enum ProFlowLogic {
         return license.status == "none" && !onboarded
     }
 
+    /// Where "Turn on the autopilot" and the trial buttons lead. Someone who
+    /// paid is never sold to: a purchase stored but off on this Mac opens
+    /// Settings → License, which says why and, when it belongs to another
+    /// install, takes the restore email.
+    static func sendsToLicense(license: LicenseInfo) -> Bool { license.paidButOff }
+
     /// App.tsx:278 `wantFlow` — one path during first run: the flow owns
     /// the screen from the accounts step through the activation facts.
     static func wantFlow(firstRun: Bool, flowClosed: Bool, showOnboarding: Bool) -> Bool {

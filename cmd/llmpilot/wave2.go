@@ -71,19 +71,32 @@ func entitlementValidateURL() string {
 }
 
 func newLicenseManager(st *store.Store) *pilot.LicenseManager {
+	return licenseManagerWith(st, pilot.KeychainLicenseStore{Keychain: &switcher.Keychain{File: sandboxKeychain()}}, nil)
+}
+
+// licenseManagerWith is newLicenseManager over any license store; keys nil
+// means the embedded keyring (tests pass their own signer's key).
+func licenseManagerWith(st *store.Store, licenses pilot.LicenseStore, keys map[string][]byte) *pilot.LicenseManager {
 	// A missing install id fails closed everywhere (verification requires a
 	// match), so licensing degrades honestly instead of running unbound.
 	installID, err := st.InstallID()
 	if err != nil {
 		slog.Error("install id unavailable — Pro will stay off until it can be persisted", "err", err)
 	}
-	return &pilot.LicenseManager{
-		Store:       pilot.KeychainLicenseStore{Keychain: &switcher.Keychain{File: sandboxKeychain()}},
+	m := &pilot.LicenseManager{
+		Store:       licenses,
+		Keys:        keys,
 		InstallID:   installID,
 		Anchor:      &pilot.TimeAnchor{Dir: st.Home()},
 		ValidateURL: entitlementValidateURL(),
 		HTTP:        &http.Client{Timeout: 10 * time.Second},
 	}
+	// A reinstall that wiped ~/.llmpilot left the purchase bound to the old
+	// install id; take it back rather than pitch Pro to someone who paid.
+	if m.AdoptBoundInstall(context.Background(), st.SetInstallID) {
+		slog.Info("install id restored from the stored purchase")
+	}
+	return m
 }
 
 // cliLicenseManager is the one-shot license view for CLI gate checks.
@@ -582,14 +595,12 @@ func freshenSkippedMessage(reason string) string {
 
 // refreshSkipIsNews reports whether a withheld freshen is worth an event.
 // The benign "not near expiry" no-op is not; a paused breaker, a spent
-// budget, and BOTH clone-guard refusals are — the guard accepts a
-// false-positive class by design, so a silent skip is how a fleet goes
-// quietly cold. Matching rides the engine's stable Reason* constants.
+// budget, and the clone-guard refusals are — a silent skip is how a fleet
+// goes quietly cold. Matching rides the engine's stable Reason* constants.
 func refreshSkipIsNews(skipped string) bool {
 	for _, r := range []string{
 		switcher.ReasonRefreshPaused,
 		switcher.ReasonBudgetExhausted,
-		switcher.ReasonLineageElsewhere,
 		switcher.ReasonCloneSuspect,
 		switcher.ReasonRecordUnreadable,
 	} {
@@ -611,8 +622,6 @@ func refreshSkipReason(skipped string) string {
 		return "its refresh budget is spent for now"
 	case strings.Contains(skipped, switcher.ReasonRefreshPaused):
 		return "refreshes are paused after a rate limit"
-	case strings.Contains(skipped, switcher.ReasonLineageElsewhere):
-		return "it is signed in in another folder too, and refreshing one copy would end the other"
 	case strings.Contains(skipped, switcher.ReasonCloneSuspect):
 		return "a second copy of this sign-in may still exist — sign in to the account again to clear it"
 	case strings.Contains(skipped, switcher.ReasonRecordUnreadable):

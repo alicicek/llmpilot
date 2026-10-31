@@ -412,6 +412,10 @@ struct LicenseInfo: Decodable, Equatable {
     /// The live checkout's back-out verdict ("declined" | "abandoned") — the
     /// only signal the win-back decider arms on (license.go licenseInfo).
     var checkoutOutcome: String?
+    /// Why a stored purchase is off on this Mac — "other_install" (restore it
+    /// by email) or "recheck" (it comes back after the online check); nil
+    /// when Pro is on or nothing was bought (license.go licenseInfo.Locked).
+    var locked: String?
 
     enum CodingKeys: String, CodingKey {
         case available, active, status, kind, features, seats
@@ -423,6 +427,7 @@ struct LicenseInfo: Decodable, Equatable {
         case nocardTrialUsed = "nocard_trial_used"
         case errorCode = "error_code"
         case checkoutOutcome = "checkout_outcome"
+        case locked
     }
 
     init(from decoder: Decoder) throws {
@@ -441,7 +446,16 @@ struct LicenseInfo: Decodable, Equatable {
         nocardTrialUsed = try c.decodeIfPresent(Bool.self, forKey: .nocardTrialUsed) ?? false
         errorCode = try c.decodeIfPresent(String.self, forKey: .errorCode)
         checkoutOutcome = try c.decodeIfPresent(String.self, forKey: .checkoutOutcome)
+        locked = try c.decodeIfPresent(String.self, forKey: .locked)
     }
+
+    /// A purchase is stored but the autopilot is off on this Mac. Someone who
+    /// paid is never sold to: the trial and the discount are for people who
+    /// have not.
+    var paidButOff: Bool { available && !active && locked != nil }
+    /// The purchase belongs to another install: restoring by email moves it
+    /// here.
+    var needsRestore: Bool { paidButOff && locked == "other_install" }
 }
 
 /// GET /v1/license/quote (license.go:420-438) proxies the worker's

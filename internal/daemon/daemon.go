@@ -26,6 +26,7 @@ import (
 
 	"github.com/alicicek/llmpilot/internal/anthropic"
 	"github.com/alicicek/llmpilot/internal/detect"
+	"github.com/alicicek/llmpilot/internal/pilot"
 	"github.com/alicicek/llmpilot/internal/store"
 	"github.com/alicicek/llmpilot/pilotapi"
 )
@@ -330,6 +331,8 @@ type Daemon struct {
 	lastWatchOnly       map[string]time.Time // last watch-only headroom nudge per account — 24h dedupe (LAYER 2)
 	licenseStatus       string               // last online status projection; no token/id/PII
 	licenseError        string               // last terminal licensing refusal code, "" when none
+	seatRefused         bool                 // the license server refused this install a seat; cleared by any accepted grant
+	lastRecheck         time.Time            // last online check the license view asked for (throttle)
 	checkoutOutcome     string               // live checkout's back-out verdict: "" | declined | abandoned
 	checkoutPollGen     int                  // verdict generation — writes and the new-press clear share d.mu
 	cooldown            map[string]coolState // per-account 429 gate (usage+refresh share Anthropic's limit)
@@ -432,6 +435,10 @@ type State struct {
 	// LicenseError is the last terminal licensing refusal code
 	// (seat_limit_reached, trial_email_used, ...) — a machine code only.
 	LicenseError string `json:"license_error,omitempty"`
+	// LicenseSeatRefused is the license server refusing this install a seat.
+	// It turns the license view's "checking" into "restore by email", so the
+	// apps key their license reload on it.
+	LicenseSeatRefused bool `json:"license_seat_refused,omitempty"`
 	// CheckoutOutcome is the live checkout's back-out verdict ("declined" the
 	// instant the worker records the browser back-arrow, "abandoned" when the
 	// activation poll's deadline lapses in silence). The app arms the win-back
@@ -456,6 +463,7 @@ func (d *Daemon) State(ctx context.Context) (State, error) {
 	d.mu.Lock()
 	st.License = d.licenseStatus
 	st.LicenseError = d.licenseError
+	st.LicenseSeatRefused = d.seatRefused
 	st.CheckoutOutcome = d.checkoutOutcome
 	d.mu.Unlock()
 	for _, a := range accs {
@@ -521,8 +529,18 @@ func (d *Daemon) State(ctx context.Context) (State, error) {
 // Run drives the poll loop until ctx is done.
 func (d *Daemon) Run(ctx context.Context) error {
 	d.init()
+	recheck := d.seedLicenseStatus(ctx)
 	if d.Revalidate != nil {
 		go d.entitlementLoop(ctx)
+		// A purchase stored but off — a reinstall wiped the clock anchor, or
+		// the offline grace ran out — is checked online now rather than after
+		// the first usage poll, which a fresh install may not have for a while.
+		if recheck {
+			select {
+			case d.revalidateCh <- struct{}{}:
+			default:
+			}
+		}
 	}
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
@@ -990,11 +1008,21 @@ func (d *Daemon) entitlementLoop(ctx context.Context) {
 			result, err := d.Revalidate(ctx)
 			if err != nil {
 				d.Log.Warn("entitlement revalidation deferred", "err", err)
+				if errors.Is(err, pilot.ErrInstallNotActivated) {
+					d.mu.Lock()
+					changed := !d.seatRefused
+					d.seatRefused = true
+					d.mu.Unlock()
+					if changed {
+						d.notify(ctx)
+					}
+				}
 				continue
 			}
 			d.mu.Lock()
-			changed := d.licenseStatus != result.Status
+			changed := d.licenseStatus != result.Status || d.seatRefused
 			d.licenseStatus = result.Status
+			d.seatRefused = false
 			d.mu.Unlock()
 			if changed {
 				if result.Status == "revoked" {

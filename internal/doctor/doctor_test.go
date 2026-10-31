@@ -161,7 +161,7 @@ func TestDoctorIsReadOnly(t *testing.T) {
 	// ...and it still did the work: every finding class is present.
 	got := findingsByID(rep)
 	for _, id := range []string{
-		"duplicate_identity", "shared_subscription", "signin_live_elsewhere",
+		"duplicate_identity", "shared_subscription",
 		"account_frozen", "signin_rejected", "stash_waiting", "stash_dead",
 		"clone_suspect", "refresh_breaker_open", "refresh_budget_spent",
 		"watched_lane", "statusline_foreign",
@@ -321,23 +321,14 @@ func TestDoctorCollisions(t *testing.T) {
 		t.Errorf("the uncorroborated finding must still say it is not proof: %q", half.Detail)
 	}
 
-	// (iii) an account whose email is signed into a folder outside the fleet
-	// names that folder and offers the migration.
-	elsewhere, ok := got["signin_live_elsewhere"]
-	if !ok {
-		t.Fatal("a fleet email is signed in outside the fleet and nothing was reported")
-	}
-	if !strings.Contains(elsewhere.Detail, f.foreignDir) {
-		t.Errorf("the finding must name the folder, got %q", elsewhere.Detail)
-	}
-	if elsewhere.Remedy.Verb != doctor.VerbMoveIntoFleet || elsewhere.Remedy.Target != f.foreignDir {
-		t.Errorf("remedy = %+v, want move_into_fleet targeting %s", elsewhere.Remedy, f.foreignDir)
-	}
-	// A folder a move already emptied is NOT reported — it keeps its identity
-	// block forever, so reporting it would be a permanent false alarm.
+	// (iii) a fleet account also signed in to a folder outside the fleet is
+	// not a problem: a sign-in made there is its own, and refreshing one does
+	// not end the other. Neither that folder nor one a move emptied is named.
 	for _, fd := range rep.Findings {
-		if strings.Contains(fd.Detail, f.retiredDir) {
-			t.Errorf("a migrated, proven-empty folder was reported as a live copy: %q", fd.Detail)
+		for _, dir := range []string{f.foreignDir, f.retiredDir} {
+			if strings.Contains(fd.Detail, dir) {
+				t.Errorf("%s names a folder outside the fleet: %q", fd.ID, fd.Detail)
+			}
 		}
 	}
 
@@ -742,7 +733,6 @@ func cleanInputs(t *testing.T) doctor.Inputs {
 		Retirements: st.RetirementsSnapshot, // the non-writing reader, as production wires it
 		Backups:     kc,
 		Foreign:     func(context.Context) ([]switcher.ForeignSignIn, error) { return nil, nil },
-		MovedDirs:   func(context.Context) (map[string]bool, error) { return map[string]bool{}, nil },
 		Budget:      func() (switcher.BudgetSnapshot, error) { return switcher.BudgetSnapshot{}, nil },
 		Pinned:      func(store.Account) bool { return false },
 		Install: func() (doctor.InstallFacts, error) {

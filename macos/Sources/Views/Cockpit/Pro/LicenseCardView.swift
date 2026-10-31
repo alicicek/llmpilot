@@ -38,6 +38,12 @@ struct LicenseCardStatus: Equatable {
             df.dateStyle = dateStyle
             return df.string(from: d)
         }
+        if let license, license.paidButOff {
+            let (title, hint) = license.needsRestore
+                ? ("Pro — not on this Mac yet", "Restore it below with the email you bought it with.")
+                : ("Pro — checking your license", "It turns back on by itself once llmpilot reaches the license server.")
+            return LicenseCardStatus(status: status, title: title, hint: hint, canCancel: canCancel, showTurnOn: false)
+        }
         let (title, hint): (String, String)
         switch status {
         case "trialing":

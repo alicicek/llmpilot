@@ -271,7 +271,13 @@ func (s *Switcher) MoveIntoFleet(ctx context.Context, dir claudecfg.Dir, label s
 	// every failure until the retirement phase unwinds completely.
 	priorRaw, priorRawErr := s.Keychain.GetAccount(ctx, BackupService, id)
 	priorAccount := s.lookupAccount(id)
+	var undoRecord func() error // set once the move is recorded as unfinished
 	rollback := func(cause error) (MoveResult, error) {
+		if undoRecord != nil {
+			if err := undoRecord(); err != nil {
+				cause = fmt.Errorf("%w; clearing the unfinished-move record also failed: %v", cause, err)
+			}
+		}
 		if priorRawErr == nil {
 			if err := s.Keychain.Set(ctx, BackupService, id, priorRaw); err != nil {
 				return res, fmt.Errorf("%w; restoring the previous stored sign-in also failed: %v", cause, err)
@@ -307,13 +313,24 @@ func (s *Switcher) MoveIntoFleet(ctx context.Context, dir claudecfg.Dir, label s
 	if err := s.SaveBackup(ctx, id, json.RawMessage(cred), oauthRaw); err != nil {
 		return rollback(fmt.Errorf("storing the sign-in in llmpilot's backups: %w", err))
 	}
-	// 2. Register second — global-swappable, so Swap accepts it.
+	// 2. Record the move as unfinished BEFORE the account can be refreshed:
+	// from registration until the source is proven empty two copies of this
+	// lineage exist, and this mark is what stops keep-warm rotating ours and
+	// ending theirs. Saved first, it cannot be lost to a write that fails
+	// after both copies are live; if it cannot be saved, nothing is
+	// registered yet.
+	undo, err := s.Registry.BeginRetirement(store.RetiredDir{ConfigDir: dir.Path(), Email: email, AccountID: id})
+	if err != nil {
+		return rollback(fmt.Errorf("recording the move: %w", err))
+	}
+	undoRecord = undo
+	// 3. Register — global-swappable, so Swap accepts it.
 	if err := s.registerAccount(acct); err != nil {
 		return rollback(fmt.Errorf("registering the account: %w", err))
 	}
 	s.logf("move: %s stored as %s and registered global-swappable", orUnknown(email), id)
 
-	// 3. Retire last. From here the credential is durable in our backups, so
+	// 4. Retire last. From here the credential is durable in our backups, so
 	// a failure never loses the sign-in — it can only leave a SECOND copy,
 	// which is named (clone-suspect), recorded, and guarded against.
 	res.Account = acct
@@ -324,9 +341,10 @@ func (s *Switcher) MoveIntoFleet(ctx context.Context, dir claudecfg.Dir, label s
 		AccountID: id,
 		Complete:  res.Outcome == MoveComplete,
 	}); err != nil {
-		// The record is how /v1/detect tells the truth about this dir and how
-		// the clone guard learns the mark. Failing to write it while a copy may
-		// survive is exactly the state that must not be silent.
+		// The record is how /v1/detect tells the truth about this dir. The
+		// unfinished-move mark from step 2 stays, so refreshes stay paused
+		// until a fresh sign-in — the safe direction — and the failure is
+		// reported, never silent.
 		return res, fmt.Errorf("the sign-in moved into the fleet but recording it failed: %w", err)
 	}
 	return res, nil
@@ -504,8 +522,7 @@ func (s *Switcher) accountForEmail(email string) store.Account {
 // completed retirement is a fact about a moment, and a folder someone signed
 // back into must stop claiming it was moved — otherwise the cockpit says
 // "already moved into the fleet" and offers no way to resolve the new
-// sign-in, while the clone guard has quietly paused that account's
-// refreshes. Same attribute-only checks as the guard.
+// sign-in. Attribute-only checks: no secret is read.
 func (s *Switcher) MovedDirs(ctx context.Context) (map[string]bool, error) {
 	out := map[string]bool{}
 	if s.Registry == nil {
@@ -552,9 +569,8 @@ func (s *Switcher) ClearCloneSuspect(ctx context.Context, accountID string) {
 	for _, d := range rec.Dirs {
 		// Drop only the UNPROVEN records — those are the ones describing a
 		// possible duplicate, which a fresh lineage makes moot. A proven-empty
-		// record must stay: it is the only thing excluding that dir from the
-		// clone scan, and the dir keeps its identity block forever, so
-		// deleting it would freeze this account for good (re-review).
+		// record must stay: it is what marks that dir as moved (MovedDirs),
+		// which the identity block the dir keeps forever cannot say.
 		if d.AccountID == accountID && !d.Complete {
 			dropped++
 			continue

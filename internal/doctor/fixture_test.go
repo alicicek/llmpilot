@@ -258,11 +258,8 @@ func (f *fleet) inputs() doctor.Inputs {
 		Backups:     f.keychain,
 		Foreign:     f.sw.ForeignSignIns,
 		Budget:      f.sw.BudgetSnapshot,
-		MovedDirs: func(context.Context) (map[string]bool, error) {
-			return map[string]bool{f.retiredDir: true}, nil
-		},
-		Pinned:  func(a store.Account) bool { return a.ConfigDir == f.altDir },
-		Install: func() (doctor.InstallFacts, error) { return f.install, nil },
+		Pinned:      func(a store.Account) bool { return a.ConfigDir == f.altDir },
+		Install:     func() (doctor.InstallFacts, error) { return f.install, nil },
 		// The REAL metadata reader on the real home — metadata only, no
 		// Keychain: the read-only and own-keychain proofs cover it.
 		SetupTokens: (&setuptoken.Store{Home: f.home}).List,

@@ -81,9 +81,10 @@ func (s *Store) Retirements() (Retirements, error) {
 	if err := json.Unmarshal(data, &r); err != nil {
 		// This document holds no credentials — only paths, emails and flags —
 		// so it is reconstructible, and an unreadable one must not freeze
-		// every account forever (re-review). Move it aside and start empty:
-		// with no records, the clone guard excludes NO dir from its scan,
-		// which is the conservative direction.
+		// every account forever (re-review). Move it aside and start empty.
+		// Its clone-suspect marks go with it, so a leftover copy from an
+		// unfinished move may then be refreshed and need a fresh sign-in —
+		// the cost accepted for a fleet that never freezes (owner 2026-10-31).
 		aside := fmt.Sprintf("%s.corrupt-%d", s.retirementsPath(), time.Now().UnixNano())
 		if rerr := os.Rename(s.retirementsPath(), aside); rerr != nil {
 			// Someone else quarantined it first (or it vanished): the document
@@ -136,43 +137,80 @@ func (s *Store) RecordRetirement(rec RetiredDir) error {
 	if !replaced {
 		r.Dirs = append(r.Dirs, rec)
 	}
-	// The mark is DERIVED from the dir records on every write: an account is
-	// clone-suspect exactly while one of its retirements is unproven. So a
-	// later move that does prove that dir empty clears the mark, while a mark
-	// set by a DIFFERENT dir survives (it has its own unproven record).
-	if rec.AccountID != "" {
-		suspect := false
-		for _, d := range r.Dirs {
-			if d.AccountID == rec.AccountID && !d.Complete {
-				suspect = true
-				break
-			}
-		}
-		if suspect {
-			r.CloneSuspect = appendUnique(r.CloneSuspect, rec.AccountID)
-		} else {
-			r.CloneSuspect = without(r.CloneSuspect, rec.AccountID)
-		}
-	}
+	rederiveMark(&r, rec.AccountID)
 	return s.SaveRetirements(r)
 }
 
-// RetiredDirs returns the config dirs whose retirement completed. NOTE for
-// callers: completion is a fact about the MOMENT of the move — a later
-// sign-in can refill the dir — so the clone guard pairs this with a
-// "nothing has written the dir since" check rather than trusting it forever.
-func (s *Store) RetiredDirs() (map[string]bool, error) {
+// rederiveMark recomputes one account's clone-suspect mark from the dir
+// records. The mark is DERIVED on every write: an account is clone-suspect
+// exactly while one of its retirements is unproven. So a later move that
+// does prove that dir empty clears the mark, while a mark set by a
+// DIFFERENT dir survives (it has its own unproven record).
+func rederiveMark(r *Retirements, accountID string) {
+	if accountID == "" {
+		return
+	}
+	for _, d := range r.Dirs {
+		if d.AccountID == accountID && !d.Complete {
+			r.CloneSuspect = appendUnique(r.CloneSuspect, accountID)
+			return
+		}
+	}
+	r.CloneSuspect = without(r.CloneSuspect, accountID)
+}
+
+// BeginRetirement records a move of rec's dir as UNFINISHED — marking its
+// account clone-suspect — before the move registers the account and makes
+// it refreshable: until the source is proven empty two copies of the
+// lineage exist, and a mark saved only afterwards could be lost to a failed
+// write while both copies live. Returns how to put the dir's previous
+// record back if the move rolls back.
+func (s *Store) BeginRetirement(rec RetiredDir) (undo func() error, err error) {
 	r, err := s.Retirements()
+	if errors.Is(err, ErrRecordRebuilt) {
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]bool{}
+	var prior *RetiredDir
 	for _, d := range r.Dirs {
-		if d.Complete {
-			out[strings.ToLower(filepath.Clean(d.ConfigDir))] = true
+		if sameDirPath(d.ConfigDir, rec.ConfigDir) {
+			d := d
+			prior = &d
+			break
 		}
 	}
-	return out, nil
+	rec.Complete = false
+	if err := s.RecordRetirement(rec); err != nil {
+		return nil, err
+	}
+	return func() error { return s.restoreRetirement(rec, prior) }, nil
+}
+
+// restoreRetirement puts a dir's record back to what it was before
+// BeginRetirement (none, or prior) and re-derives the marks it touched.
+func (s *Store) restoreRetirement(rec RetiredDir, prior *RetiredDir) error {
+	r, err := s.Retirements()
+	if errors.Is(err, ErrRecordRebuilt) {
+		err = nil
+	}
+	if err != nil {
+		return err
+	}
+	kept := r.Dirs[:0]
+	for _, d := range r.Dirs {
+		if !sameDirPath(d.ConfigDir, rec.ConfigDir) {
+			kept = append(kept, d)
+		}
+	}
+	r.Dirs = kept
+	rederiveMark(&r, rec.AccountID)
+	if prior != nil {
+		r.Dirs = append(r.Dirs, *prior)
+		rederiveMark(&r, prior.AccountID)
+	}
+	return s.SaveRetirements(r)
 }
 
 // IsCloneSuspect reports whether an account's lineage may exist in a second

@@ -195,11 +195,11 @@ struct NativeCockpitRootView: View {
         }
         .background(CockpitTheme.win)
         // useLicense.ts: hydrate on mount, refetch whenever the SSE-derived
-        // key changes. Native `DaemonState` carries `license_status` but not
-        // `license_error` (never decoded — no native call site has needed
-        // it) — the reload key here is narrower than the web's by exactly
-        // that one field.
-        .task(id: fleet.state?.license) { await cockpit.loadLicense() }
+        // key changes: the status, and the server refusing this install a
+        // seat (which turns "checking your license" into "restore by email").
+        // Native `DaemonState` does not decode `license_error` — no native
+        // call site has needed it.
+        .task(id: fleet.state.map { "\($0.license ?? "")|\($0.licenseSeatRefused)" }) { await cockpit.loadLicense() }
         // useQuote.ts: prefetched the moment the app knows it is unlicensed.
         .task(id: proUnlicensed) { if proUnlicensed { quoteModel.loadIfNeeded() } }
     }
@@ -229,6 +229,13 @@ struct NativeCockpitRootView: View {
             }
             // The close seam, so a finished sign-in can dismiss the sheet.
             .onAppear { addModel.onRequestClose = { addOpen = false } }
+        }
+        // Opening Settings re-reads the license: for a purchase that is off
+        // and waiting on the server, that read is what asks the daemon for
+        // another online check (throttled there) — an idle Mac may have no
+        // usage poll to carry it once the network is back.
+        .onChange(of: settingsOpen) { open in
+            if open { Task { await cockpit.loadLicense() } }
         }
         .sheet(isPresented: $settingsOpen) {
             SheetChrome(minWidth: 460, onClose: { settingsOpen = false }) {
@@ -511,7 +518,8 @@ struct NativeCockpitRootView: View {
                         // Phase 4 chunk 4E: the CTA now opens the native
                         // paywall — it no longer routes to the interim web
                         // cockpit.
-                        onProCTA: { openPaywall() })
+                        onProCTA: { openPaywall() },
+                        licenseLock: cockpit.license?.paidButOff == true ? cockpit.license?.locked : nil)
                 }
                 if showHistory {
                     HistorySectionView(model: historyModel, state: state)
@@ -768,6 +776,13 @@ struct NativeCockpitRootView: View {
     /// `SettingsDialog.onTurnOn` do.
     private func openPaywall() {
         guard let license = cockpit.license else { return }
+        // Someone who paid is never sold to: every "Turn on the autopilot"
+        // and trial button lands on Settings → License, where the card says
+        // why Pro is off here and, when it must be restored, takes the email.
+        if ProFlowLogic.sendsToLicense(license: license) {
+            settingsOpen = true
+            return
+        }
         dismissOnboarding()
         let ask = AskMachine(
             license: license, quote: quoteModel.quote,

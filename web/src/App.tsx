@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   fetchDetected,
+  needsRestore,
+  paidButOff,
   startCheckout,
   switchAccount,
   type DetectedDir,
@@ -115,7 +117,9 @@ const TOUR_STEPS: TourStep[] = [
 export default function App() {
   const live = useDaemonState(fixturesMode);
   const { license, setLicense, reload: reloadLicense } = useLicense(
-    live.state ? `${live.state.license_status ?? ""}|${live.state.license_error ?? ""}` : undefined,
+    live.state
+      ? `${live.state.license_status ?? ""}|${live.state.license_error ?? ""}|${live.state.license_seat_refused ? 1 : 0}`
+      : undefined,
   );
   // The paywall's consent terms: prefetched once the app knows it's unlicensed.
   const {
@@ -128,6 +132,12 @@ export default function App() {
   const [nowMin, setNowMin] = useState(nowMinutesLocal());
   const [addOpen, setAddOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Opening Settings re-reads the license: for a purchase that is off and
+  // waiting on the server, that read is what asks the daemon for another
+  // online check (throttled there) — an idle Mac may have no usage poll.
+  useEffect(() => {
+    if (settingsOpen) reloadLicense();
+  }, [settingsOpen, reloadLicense]);
   const [statuslineOpen, setStatuslineOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(showHistoryPref());
   const [flash, setFlash] = useState<string | null>(null);
@@ -405,6 +415,12 @@ export default function App() {
   // Clearing on OPEN (not just dismiss) covers every path a stale refusal
   // could ride back in — banner reopen, restore-then-reopen, all of them.
   const openPaywall = () => {
+    // Someone who paid is never sold to: Settings → License says why Pro
+    // is off here and, when it must be restored, takes the email.
+    if (license && paidButOff(license)) {
+      setSettingsOpen(true);
+      return;
+    }
     dismissOnboarding();
     setCheckoutError(null);
     setPaywallOpen(true);
@@ -463,7 +479,11 @@ export default function App() {
                   openPaywall();
                 }}
               >
-                Try it free for 4 days
+                {license && paidButOff(license)
+                  ? needsRestore(license)
+                    ? "Restore Pro"
+                    : "See license"
+                  : "Try it free for 4 days"}
               </button>
             )}
             <button
@@ -479,15 +499,19 @@ export default function App() {
       {showProBanner && !proPrompt && license && (
         <div className="flex items-center justify-between gap-4 border-b border-hair bg-panel px-4 py-1.5 text-[11.5px]">
           <span className="text-sec">
-            {license.status === "lapsed" || license.status === "revoked"
-              ? "The autopilot is paused — your schedules are kept."
-              : "The autopilot is off — turn it on to watch your windows."}
+            {needsRestore(license)
+              ? "Your Pro purchase isn't on this Mac yet."
+              : paidButOff(license)
+                ? "Pro is checking your license — it turns back on by itself."
+                : license.status === "lapsed" || license.status === "revoked"
+                ? "The autopilot is paused — your schedules are kept."
+                : "The autopilot is off — turn it on to watch your windows."}
           </span>
           <button
             className="font-semibold text-acc-tx hover:underline"
             onClick={openPaywall}
           >
-            Turn on the autopilot
+            {needsRestore(license) ? "Restore Pro" : paidButOff(license) ? "See license" : "Turn on the autopilot"}
           </button>
         </div>
       )}

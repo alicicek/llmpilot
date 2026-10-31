@@ -47,3 +47,27 @@ func TestInstallIDGeneratesOncePersistsAndRegeneratesOnCorruption(t *testing.T) 
 		t.Fatalf("corrupt file produced %q (previous %q)", third, first)
 	}
 }
+
+func TestSetInstallIDPersistsOnlyAUUIDv4(t *testing.T) {
+	dir := t.TempDir()
+	s := At(dir)
+	minted, err := s.InstallID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const bound = "6f1c2a3b-4d5e-4f60-8a71-b2c3d4e5f607"
+	if err := s.SetInstallID(bound); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.InstallID(); err != nil || got != bound {
+		t.Fatalf("InstallID after set = %q, %v; want %q", got, err, bound)
+	}
+	for _, bad := range []string{"", "install-a", "6f1c2a3b-4d5e-1f60-8a71-b2c3d4e5f607", bound + "\nextra"} {
+		if err := s.SetInstallID(bad); err == nil {
+			t.Errorf("SetInstallID(%q) accepted a non-UUIDv4", bad)
+		}
+	}
+	if got, _ := s.InstallID(); got != bound {
+		t.Fatalf("a refused id replaced the stored one: %q (minted %q)", got, minted)
+	}
+}

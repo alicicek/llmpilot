@@ -85,6 +85,18 @@ func VerifyEntitlement(token string, keys map[string]ed25519.PublicKey, now time
 	return payload, nil
 }
 
+// EntitlementBinding returns the install a genuinely signed token is bound
+// to, valid right now or not: an expired trial's binding is as authentic as
+// a live grant's. Verifying at the zero time keeps every signature and shape
+// check while no expiry can have passed.
+func EntitlementBinding(token string, keys map[string]ed25519.PublicKey) (string, error) {
+	payload, err := VerifyEntitlement(token, keys, time.Time{})
+	if err != nil {
+		return "", err
+	}
+	return payload.Install, nil
+}
+
 func validatePayload(payload pilotapi.EntitlementPayload, now time.Time) error {
 	if payload.Tier != "pro" || payload.Seats < 1 || payload.KeyID == "" || len(payload.Features) == 0 {
 		return ErrInvalidEntitlement

@@ -19,13 +19,7 @@
 //
 // Keychain posture: the sweep reads llmpilot's OWN backup service and nothing
 // else — an authorization dialog at 02:00 is a product failure, and a
-// diagnostic that provokes one is worse than useless. The one question about
-// a foreign folder ("did a move empty it?") is answered by the caller's
-// injected MovedDirs reader — the clone guard's own check: an attribute-only
-// `security dump-keychain` (no -d, so no authorization dialog can fire) plus a
-// key-presence read of that folder's credentials file. This package issues
-// neither call itself, and asks the question at all only when a migration
-// exists to re-check.
+// diagnostic that provokes one is worse than useless.
 package doctor
 
 import (
@@ -222,12 +216,6 @@ type Inputs struct {
 	// (switcher.ForeignSignIns — .claude.json reads, no Keychain at all).
 	Foreign func(ctx context.Context) ([]switcher.ForeignSignIn, error)
 
-	// MovedDirs reports which folders a move retired AND that still hold no
-	// sign-in (switcher.MovedDirs). Without it, a folder llmpilot migrated
-	// cannot be cleared, so it is reported NOT CHECKED rather than assumed
-	// empty (assuming empty is how a real second copy would go unseen).
-	MovedDirs func(ctx context.Context) (map[string]bool, error)
-
 	// Retirements is llmpilot's record of migrated folders and its
 	// clone-suspect marks.
 	Retirements func() (store.Retirements, error)
@@ -280,7 +268,6 @@ const (
 	CheckFleet         = "fleet"
 	CheckDuplicates    = "duplicate_accounts"
 	CheckSharedPool    = "shared_subscription"
-	CheckOtherSignIns  = "other_signins"
 	CheckFrozen        = "frozen_accounts"
 	CheckDeadSignIns   = "dead_signins"
 	CheckKeptSignIns   = "kept_signins"
@@ -317,9 +304,9 @@ type sweep struct {
 	found []Finding
 	rank  map[string]int
 
-	// The retirement record is read ONCE and shared: two checks need it, and
-	// the reader is deliberately the non-rebuilding one (a rebuild renames the
-	// file, and this package never writes).
+	// The retirement record is read ONCE, and the reader is deliberately the
+	// non-rebuilding one (a rebuild renames the file, and this package never
+	// writes).
 	rec     store.Retirements
 	recErr  error
 	recRead bool
@@ -386,7 +373,6 @@ func Run(ctx context.Context, in Inputs) Report {
 	s.open(CheckFleet, "registered accounts")
 	s.open(CheckDuplicates, "duplicate sign-ins")
 	s.open(CheckSharedPool, "shared subscriptions")
-	s.open(CheckOtherSignIns, "sign-ins outside the fleet")
 	s.open(CheckFrozen, "frozen accounts")
 	s.open(CheckDeadSignIns, "rejected sign-ins")
 	s.open(CheckKeptSignIns, "kept sign-ins")
@@ -404,7 +390,6 @@ func Run(ctx context.Context, in Inputs) Report {
 		s.checkFleet(accounts)
 		s.checkDuplicates(accounts, ids)
 		s.checkSharedPool(accounts, ids)
-		s.checkOtherSignIns(accounts)
 		s.checkFrozen(accounts)
 		s.checkDead(accounts)
 		s.checkMigrations(accounts)
@@ -464,7 +449,7 @@ func (s *sweep) loadAccounts() ([]store.Account, bool) {
 
 func (s *sweep) blindWithoutAccounts(why string) {
 	for _, id := range []string{
-		CheckFleet, CheckDuplicates, CheckSharedPool, CheckOtherSignIns, CheckFrozen,
+		CheckFleet, CheckDuplicates, CheckSharedPool, CheckFrozen,
 		CheckDeadSignIns, CheckMigrations, CheckRefreshBudget, CheckWatchedLanes,
 	} {
 		s.notChecked(id, why)
@@ -602,11 +587,10 @@ func (s *sweep) checkFleet(accounts []store.Account) {
 	}
 	// "Register the sign-ins on this Mac" promises existing sign-ins — on a
 	// Mac that has none, that label is a remedy for a state the machine
-	// isn't in (audit 2026-08-11). Peek at the foreign folders the
-	// other-sign-ins check reads anyway (a cheap .claude.json scan, no
-	// Keychain); any doubt (no reader, a read error) keeps the register
-	// label — doubt must never hide the cheaper remedy for sign-ins that do
-	// exist.
+	// isn't in (audit 2026-08-11). Peek at the foreign folders (a cheap
+	// .claude.json scan, no Keychain); any doubt (no reader, a read error)
+	// keeps the register label — doubt must never hide the cheaper remedy
+	// for sign-ins that do exist.
 	remedy := Remedy{Verb: VerbRegisterAccount, Label: "Register the sign-ins on this Mac", Command: "llmpilot init"}
 	if s.in.Foreign != nil {
 		if foreign, err := s.in.Foreign(s.ctx); err == nil && len(foreign) == 0 {
@@ -789,89 +773,6 @@ func (s *sweep) lockstep(group []store.Account) bool {
 	return len(first) > 0
 }
 
-// checkOtherSignIns surfaces what the rotation guard already computes and
-// never tells anyone: an account whose sign-in is ALSO live in a folder
-// outside the fleet. llmpilot refuses to refresh such an account (refreshing
-// one copy kills the other), so the user sees a fleet going quietly cold with
-// no explanation. Here it gets a name and the verb that resolves it.
-func (s *sweep) checkOtherSignIns(accounts []store.Account) {
-	if s.in.Foreign == nil {
-		s.notChecked(CheckOtherSignIns, "this sweep had no way to look at the other Claude folders on this Mac")
-		return
-	}
-	foreign, err := s.in.Foreign(s.ctx)
-	if err != nil {
-		s.notChecked(CheckOtherSignIns, fmt.Sprintf("looking at the other Claude folders failed: %v", err))
-		return
-	}
-	byEmail := map[string]store.Account{}
-	for _, a := range accounts {
-		if e := strings.ToLower(strings.TrimSpace(a.Email)); e != "" {
-			byEmail[e] = a
-		}
-	}
-	// A folder a move retired keeps its identity block forever (llmpilot
-	// never blanks a foreign folder's), so without the migrated-and-empty
-	// answer every migrated folder would be reported as a live second copy
-	// for the rest of time.
-	rec, recErr := s.retirements()
-	if recErr != nil {
-		s.notChecked(CheckOtherSignIns, "llmpilot could not read its record of migrated folders, so a folder it migrated may be named below as if it were a second sign-in")
-	}
-	retired := map[string]bool{}
-	for _, d := range rec.Dirs {
-		if d.Complete {
-			retired[normDir(d.ConfigDir)] = true
-		}
-	}
-	// The migrated-and-empty question costs an attribute-only Keychain
-	// enumeration in the caller (the clone guard's own question, which cannot
-	// fire an authorization dialog), so it is asked ONLY when a migration
-	// exists at all — no migrations, nothing to re-check.
-	moved := map[string]bool{}
-	movedKnown := len(retired) == 0
-	switch {
-	case len(retired) == 0:
-	case s.in.MovedDirs == nil:
-		s.notChecked(CheckOtherSignIns, "llmpilot could not re-check the folders it migrated, so a folder signed into again would not show up here")
-	default:
-		m, err := s.in.MovedDirs(s.ctx)
-		if err != nil {
-			s.notChecked(CheckOtherSignIns, fmt.Sprintf("llmpilot could not re-check the folders it migrated: %v", err))
-			break
-		}
-		movedKnown = true
-		for dir := range m {
-			moved[normDir(dir)] = true
-		}
-	}
-	sort.Slice(foreign, func(i, j int) bool { return foreign[i].Dir < foreign[j].Dir })
-	for _, f := range foreign {
-		acct, ok := byEmail[strings.ToLower(strings.TrimSpace(f.Email))]
-		if !ok {
-			continue // another sign-in on this Mac, not a second copy of ours
-		}
-		dir := normDir(f.Dir)
-		if movedKnown && moved[dir] {
-			continue // a move emptied it and it is still empty — nothing to say
-		}
-		if !movedKnown && retired[dir] {
-			continue // covered by the NOT-CHECKED reason recorded above
-		}
-		s.add(Finding{
-			ID: "signin_live_elsewhere", Check: CheckOtherSignIns, Severity: Warning,
-			Title: fmt.Sprintf("%s is also signed in outside the fleet", acct.Label),
-			Detail: fmt.Sprintf("The same sign-in is live in %s. Refreshing one copy of a sign-in kills the other, so llmpilot will not refresh %s while both exist — its numbers will drift out of date.",
-				f.Dir, acct.Label),
-			Accounts: []string{acct.Label},
-			Remedy: Remedy{
-				Verb: VerbMoveIntoFleet, Label: "Move into the fleet",
-				Target: f.Dir, Command: "llmpilot open",
-			},
-		})
-	}
-}
-
 // checkFrozen surfaces the honest stale state (P1): an account whose stored
 // sign-in expired while idle is served from its last-known snapshot forever,
 // and only using it wakes it.
@@ -994,8 +895,8 @@ func (s *sweep) checkMigrations(accounts []store.Account) {
 			s.add(Finding{
 				ID: "retirement_record_unreadable", Check: CheckMigrations, Severity: Warning,
 				Title: "llmpilot cannot read its record of migrated folders",
-				Detail: "That record is what keeps a folder llmpilot migrated from looking like a second live sign-in, and what remembers a migration it could not finish. " +
-					"Until it reads, refreshes may be paused for accounts that came from those folders.",
+				Detail: "That record remembers a migration llmpilot could not finish. " +
+					"llmpilot sets the damaged file aside and starts a new one on its next refresh.",
 				Remedy: Remedy{Verb: VerbNone, Label: "Nothing to press — signing in to an affected account again clears it"},
 			})
 		}
@@ -1263,8 +1164,6 @@ func localStamp(t, now time.Time) string {
 	}
 	return local.Format("Mon 15:04")
 }
-
-func normDir(p string) string { return strings.ToLower(filepath.Clean(p)) }
 
 // toolName reduces a foreign statusline command to the program it runs. It
 // takes the FIRST whitespace-delimited token, strips quotes and any directory,

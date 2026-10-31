@@ -1,5 +1,14 @@
 import { useState } from "react";
-import { ApiError, cancelTrial, claimRecovery, fetchLicense, recoverLicense, type License } from "../api.ts";
+import {
+  ApiError,
+  cancelTrial,
+  claimRecovery,
+  fetchLicense,
+  needsRestore,
+  paidButOff,
+  recoverLicense,
+  type License,
+} from "../api.ts";
 import { licenseErrorCopy } from "./errors.ts";
 
 // Settings → License. Shows status, the trial countdown + exact charge date,
@@ -24,6 +33,14 @@ function fmtDate(iso: string): string {
 }
 
 function statusLine(l: License): { title: string; hint: string } {
+  if (paidButOff(l)) {
+    return needsRestore(l)
+      ? { title: "Pro — not on this Mac yet", hint: "Restore it below with the email you bought it with." }
+      : {
+          title: "Pro — checking your license",
+          hint: "It turns back on by itself once llmpilot reaches the license server.",
+        };
+  }
   switch (l.status) {
     case "trialing": {
       const days = l.trial?.days_left ?? 0;

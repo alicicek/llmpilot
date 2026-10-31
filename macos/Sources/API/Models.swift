@@ -14,6 +14,10 @@ struct DaemonState: Decodable, Equatable {
     /// revoked; absent (nil) means no entitlement yet. The menu bar reads this
     /// to show Pro state without a second request (it rides /v1/state + SSE).
     var license: String? = nil
+    /// license_seat_refused: the license server refused this install a seat —
+    /// it turns the license view's "checking" into "restore by email", so the
+    /// cockpit reloads the license on it.
+    var licenseSeatRefused = false
     /// The build of the daemon PROCESS answering, which is not necessarily the
     /// binary on disk: an in-place update replaces the bundle while the old
     /// process keeps running. nil from a daemon too old to report it.
@@ -30,6 +34,7 @@ struct DaemonState: Decodable, Equatable {
         case schedules
         case stash
         case license = "license_status"
+        case licenseSeatRefused = "license_seat_refused"
         case version
         case events
         case asOf = "as_of"
@@ -59,6 +64,7 @@ struct DaemonState: Decodable, Equatable {
         schedules = try c.decodeIfPresent([Schedule].self, forKey: .schedules) ?? []
         stash = try c.decodeIfPresent([StashEntry].self, forKey: .stash) ?? []
         license = try c.decodeIfPresent(String.self, forKey: .license)
+        licenseSeatRefused = try c.decodeIfPresent(Bool.self, forKey: .licenseSeatRefused) ?? false
         version = try c.decodeIfPresent(String.self, forKey: .version)
         events = try c.decodeIfPresent([DaemonEvent].self, forKey: .events) ?? []
         asOf = try c.decode(Date.self, forKey: .asOf)

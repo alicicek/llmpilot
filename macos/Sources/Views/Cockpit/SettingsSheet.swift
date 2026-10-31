@@ -254,7 +254,7 @@ struct SettingsSheet: View {
     /// still loading) offers nothing either.
     static func autopilotOfferable(license: LicenseInfo?) -> Bool {
         guard let license else { return false }
-        return license.available && !license.active
+        return license.available && !license.active && !license.paidButOff
     }
 
     /// Native twin of the web's `localStorage.llmpilot.showHistory`

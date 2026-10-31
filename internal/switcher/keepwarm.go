@@ -213,12 +213,11 @@ func (s *Switcher) keepWarmBackup(ctx context.Context, acct store.Account, opts 
 	if live != nil && anthropic.CredFingerprint(live) == fp {
 		return skipResult("backup is the live credential", fp, time.Time{}), nil
 	}
-	// Clone guard (attribute-only, clones.go): a lineage signed into a config
-	// dir outside the fleet — or one a partial retirement could not prove
-	// gone — must never be rotated, because the rotation would kill the copy
-	// we cannot see. The global-live check above only covers the fleet's own
-	// slot; this covers every other dir on the machine.
-	if reason, skip := s.lineageLiveElsewhere(ctx, acct); skip {
+	// Clone guard (clones.go): a lineage a partial retirement could not
+	// prove gone must never be rotated, because the rotation would kill the
+	// copy left behind. The global-live check above covers the fleet's own
+	// slot.
+	if reason, skip := s.cloneGuard(acct); skip {
 		return skipResult(reason, fp, time.Time{}), nil
 	}
 

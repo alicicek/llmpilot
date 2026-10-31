@@ -115,15 +115,12 @@ func TestSwitchRefusesPinnedBeforeFreshen(t *testing.T) {
 	}
 }
 
-// TestCloneGuardSkipsAreNews: a withheld freshen must reach the user's feed.
-// The clone guard accepts a false-positive class by design, so a silent skip
-// is how a fleet goes quietly cold — the previous commit claimed this and did
-// not deliver it (re-review OLD-7).
+// TestCloneGuardSkipsAreNews: a withheld freshen must reach the user's feed
+// — a silent skip is how a fleet goes quietly cold (re-review OLD-7).
 func TestCloneGuardSkipsAreNews(t *testing.T) {
 	news := map[string]bool{
 		switcher.ReasonRefreshPaused:    true,
 		switcher.ReasonBudgetExhausted:  true,
-		switcher.ReasonLineageElsewhere: true,
 		switcher.ReasonCloneSuspect:     true,
 		switcher.ReasonRecordUnreadable: true,
 		"not near expiry":               false, // the benign no-op

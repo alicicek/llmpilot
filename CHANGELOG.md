@@ -4,6 +4,34 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] - 2026-10-31
+
+Someone who paid for Pro is never offered the trial or a discount, and Pro
+comes back by itself after a reinstall. No price, trial length, offer, or
+account-data changes.
+
+### Fixed
+
+- **Pro comes back by itself after a reinstall.** Reinstalling llmpilot on
+  the Mac you bought Pro on no longer locks the autopilot until an email
+  restore: the app picks up the purchase already stored on this Mac and
+  confirms it with the license server as soon as it starts.
+- **Pro shows as on right after an update or a restart.** The menu bar and
+  the board no longer treat a paid license as missing until the weekly
+  online check runs.
+- **Someone who paid is never offered a trial or a discount.** If a
+  purchase is stored but off on this Mac, every "Turn on the autopilot"
+  button opens Settings, which says why: "Pro — checking your license"
+  while it waits for the license server, or "Pro — not on this Mac yet"
+  with the email box, for a purchase that belongs to another Mac.
+
+### Removed
+
+- **The "also signed in outside the fleet" warning.** Signing in to the
+  same Claude account in another Claude Code folder is fine: each sign-in
+  is its own, so llmpilot keeps refreshing the account instead of pausing
+  it and letting its numbers go stale.
+
 ## [1.5.1] - 2026-10-31
 
 Add account is now just the sign-in, and the health panel moves a sign-in
@@ -732,6 +760,7 @@ Initial public release: live usage for every account, lock-first switching,
 window scheduling, the cockpit, the menu bar app, the statusline, and the
 one-time Pro autopilot.
 
+[1.5.2]: https://github.com/alicicek/llmpilot/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/alicicek/llmpilot/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/alicicek/llmpilot/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/alicicek/llmpilot/compare/v1.4.0...v1.4.1

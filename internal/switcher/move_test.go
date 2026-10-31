@@ -394,6 +394,80 @@ func TestMovePartialRetirementKeepsRegistrationAndGuards(t *testing.T) {
 	}
 }
 
+// TestMoveKeepsTheGuardWhenTheFinalRecordFails: the source copy could not be
+// removed AND the closing record could not be written (a full disk). The
+// mark saved before the account was registered still stands, so keep-warm
+// never rotates ours and ends the copy left in the source folder.
+func TestMoveKeepsTheGuardWhenTheFinalRecordFails(t *testing.T) {
+	sw, fk, _, src, st := moveSandbox(t)
+	ctx := context.Background()
+	t.Cleanup(func() { _ = os.Chmod(st.Home(), 0o700) })
+	sw.Keychain = &Keychain{File: fk.keychain().File, Run: failingRunner(fk, func(_ []byte, args []string) bool {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "delete-generic-password") && strings.Contains(joined, src.KeychainService()) {
+			// From here no record can be written.
+			_ = os.Chmod(st.Home(), 0o500)
+			return true
+		}
+		return false
+	})}
+
+	_, err := sw.MoveIntoFleet(ctx, src, "")
+	if err == nil || !strings.Contains(err.Error(), "recording it failed") {
+		t.Fatalf("a failed closing record must be reported, got %v", err)
+	}
+	if err := os.Chmod(st.Home(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	suspect, err := st.IsCloneSuspect(movedID)
+	if err != nil || !suspect {
+		t.Fatalf("the account lost its unfinished-move mark (err=%v)", err)
+	}
+	acct := store.Account{ID: movedID, Email: "b@example.dev"}
+	now := time.Now()
+	if err := sw.SaveBackup(ctx, acct.ID, credWithExpiry("token-b-LIVE", now.Add(time.Minute)), oauthJSON("b@example.dev")); err != nil {
+		t.Fatal(err)
+	}
+	kw, err := sw.KeepWarm(ctx, acct, KeepWarmOpts{
+		RefreshLead: time.Hour,
+		Now:         func() time.Time { return now },
+		Refresh: func(context.Context, string) (anthropic.RefreshResult, error) {
+			t.Fatal("keep-warm refreshed an account whose source copy may still live")
+			return anthropic.RefreshResult{}, nil
+		},
+	})
+	if err != nil || kw.Rotated {
+		t.Fatalf("the unfinished move was not guarded: %+v err=%v", kw, err)
+	}
+}
+
+// TestMoveRollbackClearsTheUnfinishedMark: registration fails after the
+// move was recorded as unfinished; the rollback takes the record and the
+// mark back out, so an account that never joined is not left suspect.
+func TestMoveRollbackClearsTheUnfinishedMark(t *testing.T) {
+	sw, _, _, src, st := moveSandbox(t)
+	ctx := context.Background()
+	// The account list cannot be read or replaced: registration fails.
+	accounts := filepath.Join(st.Home(), "accounts.json")
+	if err := os.Remove(accounts); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(accounts, "blocked"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := sw.MoveIntoFleet(ctx, src, "")
+	if err == nil || !strings.Contains(err.Error(), "registering the account") {
+		t.Fatalf("want a registration failure, got %v", err)
+	}
+	rec, err := st.Retirements()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Dirs) != 0 || len(rec.CloneSuspect) != 0 {
+		t.Fatalf("a rolled-back move left its unfinished record: %+v", rec)
+	}
+}
+
 // TestMoveIntoFleetRefusesAnAliasOfTheFleetDir: detect follows symlinks
 // (os.Stat + IsDir), so a sibling like ~/.claude-alt -> ~/.claude enumerates
 // as its own dir. A string compare would call it foreign and the retirement
@@ -603,10 +677,9 @@ func TestAddAccountKeepsADeservedCloneSuspectMark(t *testing.T) {
 }
 
 // TestFreshSignInKeepsAProvenRetirement: a proven-empty retirement record is
-// the ONLY thing excluding that dir from the clone scan, and the dir keeps
-// its identity block forever — so a fresh sign-in must drop the UNPROVEN
-// records and keep the proven one, or the account freezes for good
-// (re-review of the fix delta).
+// what marks that dir as moved, and the dir keeps its identity block forever
+// — so a fresh sign-in must drop the UNPROVEN records and keep the proven
+// one (re-review of the fix delta).
 func TestFreshSignInKeepsAProvenRetirement(t *testing.T) {
 	sw, _, _, src, st := moveSandbox(t)
 	ctx := context.Background()

@@ -21,6 +21,17 @@ struct ProOfferCard: View {
     /// two-paragraph tree App.tsx:449-457 renders (headline + body); the
     /// web never shows the headline alone.
     var code: String? = nil
+    /// Why a stored purchase is off on this Mac (LicenseInfo.locked): someone
+    /// who paid is shown the license, never the trial.
+    var licenseLock: String? = nil
+
+    static func ctaLabel(licenseLock: String?) -> String {
+        switch licenseLock {
+        case nil: return "Try it free for 4 days"
+        case "other_install": return "Restore Pro"
+        default: return "See license"
+        }
+    }
 
     private var bodyCopy: String {
         code == "pro_unavailable"
@@ -47,7 +58,7 @@ struct ProOfferCard: View {
 
             HStack(spacing: 12) {
                 if showCTA {
-                    Button("Try it free for 4 days", action: onCTA)
+                    Button(Self.ctaLabel(licenseLock: licenseLock), action: onCTA)
                         .buttonStyle(.borderedProminent)
                         .tint(CockpitTheme.accent)
                         .controlSize(.small)

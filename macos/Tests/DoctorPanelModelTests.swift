@@ -372,7 +372,7 @@ final class DoctorPanelModelTests: XCTestCase {
         let api = StubCockpitAPI()
         api.doctorResult = .success(report(
             clean: false, problems: 1,
-            findings: [finding(id: "signin_live_elsewhere", verb: "move_into_fleet", target: "/u/.claude-work")],
+            findings: [finding(id: "watched_lane", verb: "move_into_fleet", target: "/u/.claude-work")],
             checks: [check(state: "finding")]))
         api.adoptMoveResult = .success(try moveResult(note: "A second copy may still exist."))
         let model = makeModel(api)

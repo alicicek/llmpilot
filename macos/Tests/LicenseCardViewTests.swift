@@ -14,12 +14,15 @@ import XCTest
 @MainActor
 final class LicenseCardViewTests: XCTestCase {
     private func license(
-        status: String, available: Bool = true, daysLeft: Int? = nil, chargeDate: Date? = nil,
-        licenseIDMasked: String? = nil, errorCode: String? = nil
+        status: String, available: Bool = true, active: Bool? = nil, locked: String? = nil, daysLeft: Int? = nil,
+        chargeDate: Date? = nil, licenseIDMasked: String? = nil, errorCode: String? = nil
     ) -> LicenseInfo {
+        // A trial or lifetime grant is active on its own Mac; a test that
+        // wants one locked here says so.
+        let active = active ?? (available && (status == "trialing" || status == "lifetime"))
         var fields = [
             "\"available\":\(available)",
-            "\"active\":false",
+            "\"active\":\(active)",
             "\"status\":\"\(status)\"",
             "\"nocard_trial_used\":false",
         ]
@@ -32,6 +35,7 @@ final class LicenseCardViewTests: XCTestCase {
         }
         if let licenseIDMasked { fields.append("\"license_id_masked\":\"\(licenseIDMasked)\"") }
         if let errorCode { fields.append("\"error_code\":\"\(errorCode)\"") }
+        if let locked { fields.append("\"locked\":\"\(locked)\"") }
         let json = "{\(fields.joined(separator: ","))}"
         return try! DaemonDates.decoder().decode(LicenseInfo.self, from: Data(json.utf8))
     }
@@ -72,6 +76,41 @@ final class LicenseCardViewTests: XCTestCase {
         XCTAssertEqual(s.title, "Pro — lifetime")
         XCTAssertFalse(s.canCancel)
         XCTAssertFalse(s.showTurnOn)
+    }
+
+    /// A stored purchase that is off on this Mac says why and never offers to
+    /// sell it: bound to another install → restore by email; waiting for the
+    /// online check → it comes back by itself.
+    func testPaidButOffSaysWhyNeverTurnOn() {
+        for status in ["lifetime", "trialing"] {
+            let elsewhere = license(status: status, active: false, locked: "other_install", daysLeft: status == "trialing" ? 3 : nil)
+            XCTAssertTrue(elsewhere.paidButOff && elsewhere.needsRestore, status)
+            var s = LicenseCardStatus.resolve(license: elsewhere, offline: false)
+            XCTAssertEqual(s.title, "Pro — not on this Mac yet", status)
+            XCTAssertEqual(s.hint, "Restore it below with the email you bought it with.", status)
+            XCTAssertFalse(s.showTurnOn, status)
+            XCTAssertTrue(ProFlowLogic.sendsToLicense(license: elsewhere), status)
+
+            let recheck = license(status: status, active: false, locked: "recheck", daysLeft: status == "trialing" ? 3 : nil)
+            XCTAssertTrue(recheck.paidButOff, status)
+            XCTAssertFalse(recheck.needsRestore, "an online check, not a restore: \(status)")
+            s = LicenseCardStatus.resolve(license: recheck, offline: false)
+            XCTAssertEqual(s.title, "Pro — checking your license", status)
+            XCTAssertEqual(s.hint, "It turns back on by itself once llmpilot reaches the license server.", status)
+            XCTAssertFalse(s.showTurnOn, status)
+            XCTAssertTrue(ProFlowLogic.sendsToLicense(license: recheck), status)
+        }
+        // Nothing bought, Pro on, a lapse, or a build without Pro: the
+        // ordinary card and the ordinary paywall.
+        for l in [license(status: "none"), license(status: "lapsed"), license(status: "revoked"),
+                  license(status: "lifetime", available: false, active: false, locked: "other_install"),
+                  license(status: "lifetime"), license(status: "lifetime", active: false)] {
+            XCTAssertFalse(l.paidButOff, "\(l.status) active=\(l.active) available=\(l.available)")
+            XCTAssertFalse(ProFlowLogic.sendsToLicense(license: l), l.status)
+        }
+        XCTAssertEqual(ProOfferCard.ctaLabel(licenseLock: "other_install"), "Restore Pro")
+        XCTAssertEqual(ProOfferCard.ctaLabel(licenseLock: "recheck"), "See license")
+        XCTAssertEqual(ProOfferCard.ctaLabel(licenseLock: nil), "Try it free for 4 days")
     }
 
     func testLapsedAndRevokedOfferTurnOnNotCancel() {

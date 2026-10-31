@@ -180,9 +180,9 @@ type trialInfo struct {
 type licenseInfo struct {
 	Available bool `json:"available"`
 	// Active is whether Pro features are ON right now, evaluated offline.
-	Active          bool       `json:"active"`
-	Status          string     `json:"status"` // none|trialing|lifetime|lapsed|revoked|unavailable
-	Kind            string     `json:"kind,omitempty"`
+	Active bool   `json:"active"`
+	Status string `json:"status"` // none|trialing|lifetime|lapsed|revoked|unavailable
+	Kind   string `json:"kind,omitempty"`
 	// CheckoutOutcome is the live checkout's back-out verdict ("declined" |
 	// "abandoned") — the ONLY signal the app's win-back decider arms on.
 	CheckoutOutcome string     `json:"checkout_outcome,omitempty"`
@@ -197,7 +197,18 @@ type licenseInfo struct {
 	// ErrorCode is the last terminal licensing refusal (machine code only);
 	// the cockpit maps it to honest copy.
 	ErrorCode string `json:"error_code,omitempty"`
+	// Locked says why a stored purchase is off on this Mac (LockedOtherInstall
+	// | LockedRecheck); empty when Pro is on or nothing was bought.
+	Locked string `json:"locked,omitempty"`
 }
+
+const (
+	// LockedOtherInstall: the purchase belongs to another install — restore
+	// it by email.
+	LockedOtherInstall = "other_install"
+	// LockedRecheck: Pro comes back by itself once the online check runs.
+	LockedRecheck = "recheck"
+)
 
 func maskLicense(id string) string {
 	if id == "" {
@@ -225,6 +236,7 @@ func (d *Daemon) handleLicenseGet(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	info.ErrorCode = d.licenseError
 	info.CheckoutOutcome = d.checkoutOutcome
+	seatRefused := d.seatRefused
 	d.mu.Unlock()
 	if !g.Available {
 		info.Status = "unavailable"
@@ -262,6 +274,22 @@ func (d *Daemon) handleLicenseGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	info.Active = g.Manager.Allowed(ctx, "autopilot", now)
+	// A purchase stored but off on this Mac is never sold to. Bound to
+	// another install, or refused a seat by the server, is what the email
+	// restore is for; anything else (offline too long, the clock anchor a
+	// reinstall wiped, an expired token) clears itself once the online
+	// check runs.
+	if !info.Active && (stored.Status == "trialing" || stored.Status == "lifetime") {
+		info.Locked = LockedRecheck
+		if seatRefused || g.Manager.BoundElsewhere(ctx) {
+			info.Locked = LockedOtherInstall
+		} else {
+			// Opening the license view is the retry: an idle fleet may have
+			// no usage poll to carry the check, and the copy promises Pro
+			// comes back by itself (or, for a trial that ran out, the paywall).
+			d.kickRecheck(now)
+		}
+	}
 	if stored.Status == "trialing" && stored.TrialEnd != nil {
 		days := int(math.Ceil(stored.TrialEnd.Sub(now).Hours() / 24))
 		if days < 0 {
@@ -505,14 +533,70 @@ func (d *Daemon) persistLicense(ctx context.Context, view LicenseView) error {
 	return nil
 }
 
+// seedLicenseStatus reports a stored purchase from the moment the daemon
+// runs. The online status only lands after the weekly re-check, so without
+// this every restart (each app update) showed a paying user as unlicensed —
+// the upsell, no scheduling — for up to a week. Only a grant the offline
+// gate accepts counts. Reports whether a stored purchase is OFF here and
+// needs the online check to come back.
+func (d *Daemon) seedLicenseStatus(ctx context.Context) (recheck bool) {
+	g := d.License
+	if g == nil || !g.Available || g.Manager == nil {
+		return false
+	}
+	stored, err := g.Manager.Store.Load(ctx)
+	if err != nil || (stored.Status != "trialing" && stored.Status != "lifetime") {
+		return false
+	}
+	if !g.Manager.Allowed(ctx, "autopilot", g.now()) {
+		return true
+	}
+	d.mu.Lock()
+	changed := d.licenseStatus == ""
+	if changed {
+		d.licenseStatus = stored.Status
+	}
+	d.mu.Unlock()
+	// The listeners are already up: an app that fetched in the gap must
+	// hear about it rather than wait for an unrelated push.
+	if changed {
+		d.notify(ctx)
+	}
+	return false
+}
+
+// recheckEvery throttles the online checks the license view asks for.
+const recheckEvery = 5 * time.Minute
+
+// kickRecheck queues one online check for a purchase that is off and waiting
+// on the server, at most every recheckEvery. The size-one channel coalesces
+// it with any check already queued.
+func (d *Daemon) kickRecheck(now time.Time) {
+	if d.Revalidate == nil {
+		return
+	}
+	d.mu.Lock()
+	if !d.lastRecheck.IsZero() && now.Sub(d.lastRecheck) < recheckEvery {
+		d.mu.Unlock()
+		return
+	}
+	d.lastRecheck = now
+	d.mu.Unlock()
+	select {
+	case d.revalidateCh <- struct{}{}:
+	default:
+	}
+}
+
 // setLicenseStatus records the online status projection, clears any stale
 // licensing error, and pushes fresh state (which carries license_status) to
 // every SSE subscriber when it changed.
 func (d *Daemon) setLicenseStatus(ctx context.Context, status string) {
 	d.mu.Lock()
-	changed := d.licenseStatus != status || d.licenseError != ""
+	changed := d.licenseStatus != status || d.licenseError != "" || d.seatRefused
 	d.licenseStatus = status
 	d.licenseError = ""
+	d.seatRefused = false
 	d.mu.Unlock()
 	if changed {
 		d.notify(ctx)

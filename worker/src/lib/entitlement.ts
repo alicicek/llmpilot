@@ -8,8 +8,10 @@ export interface EntitlementPayload {
   features: string[];
   seats: number;
   kind: EntitlementKind;
-  // install binds the token to one machine's random install id; the app
-  // verifier refuses a mismatch, so a copied Keychain item is inert.
+  // install binds the token to one machine's random install id — the seat
+  // the server counts. The app verifier refuses a mismatch, and after a
+  // reinstall wipes the id the app takes this binding back from its own
+  // stored token.
   install: string;
   // issued_at is the signed freshness anchor for the app's offline-grace
   // window; validate re-signs with a fresh one on every call.
