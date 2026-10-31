@@ -131,6 +131,7 @@
 		E9D8FDE21D4834E34D3EC48E /* BoardPieces.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5E63229C9EBF6EB7AEA64FF /* BoardPieces.swift */; };
 		EC44940579BDB28B1B5A1AE9 /* GoldenVectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1225C6416643D37F3FDC0DF /* GoldenVectorTests.swift */; };
 		ED78413C9CE9CD066CCC60D5 /* LLMPilotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB37742EE077E02EFE176E1 /* LLMPilotApp.swift */; };
+		EE57E81D46DEEA18A5E7D03E /* AddAccountSheetHostingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB04242ACDAC019D33173443 /* AddAccountSheetHostingTests.swift */; };
 		EF9CBCAD5275F7C69EA707B0 /* ScheduleActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A041E08BF1A389043926032 /* ScheduleActions.swift */; };
 		EFC3BA8707FFF33B9536FF1C /* EducationMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2661024528415D2CA391F4BB /* EducationMath.swift */; };
 		F18348926E13F630628A69CD /* StubAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24B54C26175A44616808D0D2 /* StubAPI.swift */; };
@@ -316,6 +317,7 @@
 		F145734CB66F81A06F5E9A62 /* FleetViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetViewModelTests.swift; sourceTree = "<group>"; };
 		FA092E89323B2C7A1C9F15CE /* DoctorPanelHostingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoctorPanelHostingTests.swift; sourceTree = "<group>"; };
 		FAEBAD1312F887601B0CE322 /* BoardPiecesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardPiecesTests.swift; sourceTree = "<group>"; };
+		FB04242ACDAC019D33173443 /* AddAccountSheetHostingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddAccountSheetHostingTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -490,6 +492,7 @@
 			isa = PBXGroup;
 			children = (
 				A810711A076E28D1A4679B07 /* AddAccountModelTests.swift */,
+				FB04242ACDAC019D33173443 /* AddAccountSheetHostingTests.swift */,
 				26CEE21F87AE723D873D3986 /* AnsiVectorTests.swift */,
 				09483B64E0DA178D5E14B627 /* AXTestSupport.swift */,
 				08F7CD4A9AA3330E2C77E974 /* BoardAudioTests.swift */,
@@ -782,6 +785,7 @@
 			files = (
 				2DF93BE50F1AC7FBDE9A77CE /* AXTestSupport.swift in Sources */,
 				02784BC2467503525DA197F4 /* AddAccountModelTests.swift in Sources */,
+				EE57E81D46DEEA18A5E7D03E /* AddAccountSheetHostingTests.swift in Sources */,
 				903B04E0BEEF2DA51492707F /* AnsiVectorTests.swift in Sources */,
 				5287671BF9D0488DA83E215E /* BoardAudioTests.swift in Sources */,
 				FCB29657245F65D0A4CABF7A /* BoardPiecesTests.swift in Sources */,

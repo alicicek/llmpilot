@@ -32,6 +32,7 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI {
     nonisolated(unsafe) var eventsResult: Result<DaemonState, Error> = .failure(DaemonError.down)
 
     private(set) var switchedTo: [String] = []
+    private(set) var detectCalls = 0
     private(set) var adopted: [String] = []
     private(set) var markerReports: [Bool] = []
 
@@ -43,7 +44,10 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI {
         try switchResult.get()
     }
 
-    func detect() async throws -> [DetectedDir] { try detectResult.get() }
+    func detect() async throws -> [DetectedDir] {
+        detectCalls += 1
+        return try detectResult.get()
+    }
 
     func adopt(configDir: String) async throws {
         adopted.append(configDir)

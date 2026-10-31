@@ -39,13 +39,6 @@ final class AddAccountModelTests: XCTestCase {
         }
     }
 
-    private func detected(
-        dir: String = "/tmp/dir", email: String = "mira@example.com",
-        registered: Bool = false, moved: Bool = false, signedIn: Bool? = nil
-    ) -> DetectedDir {
-        DetectedDir(configDir: dir, email: email, registered: registered, moved: moved, signedIn: signedIn)
-    }
-
     /// Fire-and-forget async work (adopt/move/opened) is spawned from a
     /// synchronous entry point exactly like StashPanelModel — poll with
     /// small real waits (never over 50ms each) until it settles, mirroring
@@ -75,20 +68,7 @@ final class AddAccountModelTests: XCTestCase {
         XCTAssertEqual(
             AddAccountCopy.doneMessage(outcome: nil, email: nil),
             "The account joined your fleet — switch to it any time.")
-        XCTAssertEqual(AddAccountCopy.moved, "Already moved into the fleet.")
-        XCTAssertEqual(
-            AddAccountCopy.registeredElsewhere,
-            "A second folder for an account llmpilot already watches. One account means one " +
-                "limit, so adding this folder would add no headroom.")
-        // No CLI in the remedy (owner 2026-08-12): the row offers the
-        // sheet's own sign-in as a button instead.
-        XCTAssertEqual(
-            AddAccountCopy.signedOut,
-            "Signed out — this folder remembers the account, but its sign-in is gone.")
         XCTAssertEqual(AddAccountCopy.signInAgain, "Sign in again")
-        XCTAssertEqual(
-            AddAccountCopy.cloneSuspectFallback,
-            "A second copy of this sign-in may still exist — llmpilot will not switch to it until that's resolved.")
         XCTAssertEqual(
             AddAccountCopy.moveWarning("/Users/mira/.claude"),
             "The sign-in leaves /Users/mira/.claude — a terminal using that folder will need to sign in again.")
@@ -99,236 +79,6 @@ final class AddAccountModelTests: XCTestCase {
         XCTAssertEqual(AddAccountModel.sentence("the sign-in timed out — start it again"), "The sign-in timed out — start it again.")
         XCTAssertEqual(AddAccountModel.sentence("Already a sentence."), "Already a sentence.")
         XCTAssertEqual(AddAccountModel.sentence(""), "")
-    }
-
-    // MARK: - detected-row classification table (AddAccountDialog.tsx:130-201)
-
-    func testClassifyMovedWinsOverEverything() {
-        let d = detected(registered: true, moved: true, signedIn: false)
-        XCTAssertEqual(AddAccountModel.classify(d, fleetEmails: []), .moved)
-    }
-
-    func testClassifySignedOutAndWatchedElsewhereIsCaseFolded() {
-        let d = detected(email: "Alex@Example.dev", registered: false, moved: false, signedIn: false)
-        XCTAssertEqual(AddAccountModel.classify(d, fleetEmails: ["alex@example.dev"]), .registeredElsewhere)
-    }
-
-    func testClassifySignedOutAndNotWatchedAnywhere() {
-        let d = detected(email: "new@example.com", registered: false, moved: false, signedIn: false)
-        XCTAssertEqual(AddAccountModel.classify(d, fleetEmails: ["someone-else@example.com"]), .signedOut)
-    }
-
-    func testClassifyUnregisteredNormalRow() {
-        let d = detected(registered: false, moved: false, signedIn: true)
-        XCTAssertEqual(AddAccountModel.classify(d, fleetEmails: []), .unregistered)
-    }
-
-    func testClassifyRegisteredKeepsOnlyTheMigrationVerb() {
-        let d = detected(registered: true, moved: false, signedIn: true)
-        XCTAssertEqual(AddAccountModel.classify(d, fleetEmails: []), .registered)
-    }
-
-    func testClassifyAbsentSignedInFieldReadsAsSignedIn() {
-        // Older daemons omit signed_in — absence must read as signed in,
-        // the pre-existing behavior (AddAccountDialog.tsx / api.ts:96-100).
-        let d = detected(registered: false, moved: false, signedIn: nil)
-        XCTAssertEqual(AddAccountModel.classify(d, fleetEmails: []), .unregistered)
-    }
-
-    func testCandidatesExcludeTheFleetsOwnConfigDir() async {
-        let api = StubCockpitAPI()
-        api.detectResult = .success([
-            detected(dir: "/fleet", email: "me@x.com"),
-            detected(dir: "/other", email: "you@x.com"),
-        ])
-        let model = AddAccountModel(api: api, fleetDir: "/fleet")
-        await model.refreshDetected()
-        XCTAssertEqual(model.candidates.map(\.configDir), ["/other"])
-    }
-
-    func testDetectedSectionEmptyWhenNoCandidatesAndNoNotes() async {
-        let api = StubCockpitAPI()
-        api.detectResult = .success([])
-        let model = AddAccountModel(api: api)
-        await model.refreshDetected()
-        XCTAssertTrue(model.isDetectedSectionEmpty)
-    }
-
-    // MARK: - adopt: single-flight across rows
-
-    func testAdoptSetsRowBusySynchronouslyAndBlocksOtherRows() {
-        let api = StubCockpitAPI()
-        let model = AddAccountModel(api: api)
-
-        model.adoptRow("/a")
-        XCTAssertEqual(model.rowBusy, AddAccountModel.RowBusy(dir: "/a", action: .adopt))
-
-        // A second row's action while busy is a no-op — AddAccountDialog.
-        // tsx:168,176 `disabled={busy !== null}` blocks EVERY row, not just
-        // this one.
-        model.adoptRow("/b")
-        XCTAssertEqual(model.rowBusy, AddAccountModel.RowBusy(dir: "/a", action: .adopt))
-        model.requestMove("/c")
-        XCTAssertNil(model.confirmMove, "move must not arm while another row's request is in flight")
-    }
-
-    func testAdoptSuccessRefreshesDetectedAndClearsBusy() async {
-        let api = StubCockpitAPI()
-        api.adoptResult = .success(())
-        api.detectResult = .success([detected(dir: "/still-here")])
-        let model = AddAccountModel(api: api)
-
-        model.adoptRow("/a")
-        await waitUntil(model.rowBusy == nil)
-
-        XCTAssertEqual(api.adopted, ["/a"])
-        XCTAssertNil(model.rowBusy)
-        XCTAssertEqual(model.detected.map(\.configDir), ["/still-here"])
-    }
-
-    func testAdoptFailureSurfacesRowErrorAndClearsBusy() async {
-        let api = StubCockpitAPI()
-        api.adoptResult = .failure(DaemonError.down)
-        let model = AddAccountModel(api: api)
-
-        model.adoptRow("/a")
-        await waitUntil(model.rowBusy == nil)
-
-        XCTAssertNotNil(model.rowError)
-        XCTAssertNil(model.rowBusy)
-    }
-
-    // MARK: - move: two-click confirm state machine, incl. disarm
-
-    func testMoveFirstClickArmsConfirmWithoutCallingAPI() {
-        let api = StubCockpitAPI()
-        let model = AddAccountModel(api: api)
-        model.requestMove("/a")
-        XCTAssertEqual(model.confirmMove, "/a")
-        XCTAssertTrue(api.adoptMoveRequests.isEmpty)
-    }
-
-    func testMoveSecondClickOnSameDirFires() async {
-        let api = StubCockpitAPI()
-        api.adoptMoveResult = .success(
-            AdoptMoveResult(
-                account: CockpitAccount(id: "1", label: "mira", email: "mira@x.com", configDir: "/a", keychainService: "svc", pinned: true),
-                outcome: "complete", note: ""))
-        let model = AddAccountModel(api: api)
-
-        model.requestMove("/a")
-        model.requestMove("/a")
-        XCTAssertNil(model.confirmMove, "a fired move must clear the armed state")
-
-        await waitUntil(model.rowBusy == nil)
-        XCTAssertEqual(api.adoptMoveRequests.map(\.configDir), ["/a"])
-    }
-
-    func testMoveOnADifferentDirRearmsInsteadOfFiring() {
-        let api = StubCockpitAPI()
-        let model = AddAccountModel(api: api)
-        model.requestMove("/a")
-        XCTAssertEqual(model.confirmMove, "/a")
-        model.requestMove("/b")
-        XCTAssertEqual(model.confirmMove, "/b", "clicking a different row's move arms THAT row, not a fire")
-        XCTAssertTrue(api.adoptMoveRequests.isEmpty)
-    }
-
-    func testResetMoveConfirmRevertsToIdle() {
-        // The native analog of AddAccountDialog.tsx:184's onBlur reset.
-        let api = StubCockpitAPI()
-        let model = AddAccountModel(api: api)
-        model.requestMove("/a")
-        XCTAssertEqual(model.confirmMove, "/a")
-        model.resetMoveConfirm(for: "/a")
-        XCTAssertNil(model.confirmMove)
-        // A reverted confirm means the next click arms again, not a fire.
-        model.requestMove("/a")
-        XCTAssertEqual(model.confirmMove, "/a")
-        XCTAssertTrue(api.adoptMoveRequests.isEmpty)
-    }
-
-    func testResetMoveConfirmIsANoOpForAnUnarmedOrDifferentDir() {
-        let api = StubCockpitAPI()
-        let model = AddAccountModel(api: api)
-        model.resetMoveConfirm(for: "nothing-armed")
-        XCTAssertNil(model.confirmMove)
-
-        model.requestMove("/a")
-        model.resetMoveConfirm(for: "/b")
-        XCTAssertEqual(model.confirmMove, "/a", "a different row's reset must not disarm /a")
-    }
-
-    func testMoveConfirmAutoRevertsAfterTheConfiguredDelay() async {
-        let api = StubCockpitAPI()
-        let model = AddAccountModel(api: api)
-        model.confirmResetDelay = 0.02 // 20ms — small real wait, like StashPanelModel's precedent
-        model.requestMove("/a")
-        XCTAssertEqual(model.confirmMove, "/a")
-        await waitUntil(model.confirmMove == nil)
-        XCTAssertNil(model.confirmMove, "the armed confirm must auto-revert")
-        XCTAssertTrue(api.adoptMoveRequests.isEmpty, "a timed-out confirm must never fire the move")
-    }
-
-    // MARK: - outcome-note persistence and clearing
-
-    func testCloneSuspectMoveLeavesAWarningNoteUsingServerText() async {
-        let api = StubCockpitAPI()
-        api.adoptMoveResult = .success(
-            AdoptMoveResult(
-                account: CockpitAccount(id: "1", label: "m", email: "m@x.com", configDir: "/a", keychainService: "s", pinned: true),
-                outcome: "clone_suspect", note: "a second copy of this exact sign-in lives at /other too"))
-        api.detectResult = .success([]) // the row itself vanishes after the move
-        let model = AddAccountModel(api: api)
-
-        model.requestMove("/a")
-        model.requestMove("/a")
-        await waitUntil(model.rowBusy == nil)
-
-        XCTAssertEqual(model.moveNotes["/a"], "a second copy of this exact sign-in lives at /other too")
-        XCTAssertTrue(model.candidates.isEmpty, "the row vanishes from the list")
-        XCTAssertFalse(model.isDetectedSectionEmpty, "the section survives to show the note")
-    }
-
-    func testCloneSuspectMoveWithoutServerNoteUsesVerbatimFallback() async {
-        let api = StubCockpitAPI()
-        api.adoptMoveResult = .success(
-            AdoptMoveResult(
-                account: CockpitAccount(id: "1", label: "m", email: "m@x.com", configDir: "/a", keychainService: "s", pinned: true),
-                outcome: "clone_suspect", note: ""))
-        let model = AddAccountModel(api: api)
-
-        model.requestMove("/a")
-        model.requestMove("/a")
-        await waitUntil(model.rowBusy == nil)
-
-        XCTAssertEqual(model.moveNotes["/a"], AddAccountCopy.cloneSuspectFallback)
-    }
-
-    func testALaterCleanMoveOfTheSameDirClearsTheEarlierNote() async {
-        let api = StubCockpitAPI()
-        let model = AddAccountModel(api: api)
-
-        // First: a clone-suspect move leaves a note.
-        api.adoptMoveResult = .success(
-            AdoptMoveResult(
-                account: CockpitAccount(id: "1", label: "m", email: "m@x.com", configDir: "/a", keychainService: "s", pinned: true),
-                outcome: "clone_suspect", note: "watch out"))
-        model.requestMove("/a")
-        model.requestMove("/a")
-        await waitUntil(model.rowBusy == nil)
-        XCTAssertEqual(model.moveNotes["/a"], "watch out")
-
-        // A later clean move of the SAME dir resolves it.
-        api.adoptMoveResult = .success(
-            AdoptMoveResult(
-                account: CockpitAccount(id: "1", label: "m", email: "m@x.com", configDir: "/a", keychainService: "s", pinned: true),
-                outcome: "complete", note: ""))
-        model.requestMove("/a")
-        model.requestMove("/a")
-        await waitUntil(model.moveNotes["/a"] == nil)
-
-        XCTAssertNil(model.moveNotes["/a"], "a note that is no longer true must not linger")
     }
 
     // MARK: - sign-in: start, poll, outcomes
@@ -662,59 +412,13 @@ final class AddAccountModelTests: XCTestCase {
                       "approving in the browser after closing the sheet must still add the account")
     }
 
-    // MARK: - reset-on-close (full state, not just phase)
+    // MARK: - reset-on-close
 
-    func testCloseClearsPhaseErrorAndDetectedRowState() async {
-        let api = StubCockpitAPI()
-        api.adoptMoveResult = .success(
-            AdoptMoveResult(
-                account: CockpitAccount(id: "1", label: "m", email: "m@x.com", configDir: "/a", keychainService: "s", pinned: true),
-                outcome: "clone_suspect", note: "watch out"))
-        let model = AddAccountModel(api: api)
+    func testCloseClearsPhaseAndError() {
+        let model = AddAccountModel(api: StubCockpitAPI())
         model.error = "some earlier error"
-        model.requestMove("/a") // arm the confirm
-        model.requestMove("/a") // fire it
-        await waitUntil(model.rowBusy == nil)
-        XCTAssertEqual(model.moveNotes["/a"], "watch out")
-
         model.closed()
-
         XCTAssertEqual(model.phase, .idle)
         XCTAssertNil(model.error)
-        XCTAssertNil(model.confirmMove)
-        XCTAssertNil(model.rowBusy)
-        XCTAssertNil(model.rowError)
-        XCTAssertTrue(model.moveNotes.isEmpty, "a persistent native model must clear DetectedSection state on close the way the web's unmount does")
-    }
-
-    func testLeavingIdleForABrowserSignInClearsDetectedRowState() async {
-        // The detected section renders only while idle — leaving idle must
-        // drop its row state before any Cancel/close ever runs.
-        let api = StubCockpitAPI()
-        api.startBrowserLoginResult = .success(BrowserLoginStart(attemptID: "att-7"))
-        api.browserLoginStatusResult = .success(BrowserLoginStatus(status: "pending"))
-        let model = AddAccountModel(api: api)
-        model.openExternal = { _ in }
-        model.requestMove("/a")
-        XCTAssertEqual(model.confirmMove, "/a")
-
-        let task = Task { await model.runBrowserSignIn() }
-        await waitUntil(model.phase != .idle)
-
-        XCTAssertNil(model.confirmMove, "detected-row state must not survive leaving idle")
-        task.cancel()
-    }
-
-    // MARK: - opened() refreshes detected dirs
-
-    func testOpenedRefreshesDetectedDirs() async {
-        let api = StubCockpitAPI()
-        api.detectResult = .success([detected(dir: "/fresh")])
-        let model = AddAccountModel(api: api)
-
-        model.opened()
-        await waitUntil(!model.detected.isEmpty)
-
-        XCTAssertEqual(model.detected.map(\.configDir), ["/fresh"])
     }
 }

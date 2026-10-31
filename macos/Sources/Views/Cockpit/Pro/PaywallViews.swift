@@ -1240,7 +1240,7 @@ struct PaywallActiveScreen: View {
 }
 
 /// The ⑨ watch-only promote list: one row per pinned lane with the
-/// two-click move (AddAccountModel's consent idiom — warning between the
+/// two-click move (ActivationMoveModel's consent idiom — warning between the
 /// clicks, 3s auto-disarm). Notes render at SECTION level so a warning
 /// outlives the row it was about.
 private struct ActivationWatchOnlySection: View {
@@ -1296,7 +1296,7 @@ private struct ActivationWatchOnlySection: View {
             }
             if armed {
                 // The consequence, stated BETWEEN the two clicks — the same
-                // consent shape the Add-account sheet's move uses.
+                // consent shape the doctor's move uses.
                 Text(AddAccountCopy.moveWarning(lane.configDir))
                     .font(CockpitTheme.Onboarding.annotation)
                     .lineSpacing(CockpitTheme.Onboarding.annotationLineSpacing)

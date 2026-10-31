@@ -48,6 +48,7 @@ final class DoctorPanelCancellationTests: XCTestCase {
         XCTAssertNil(model.sweepErr)
     }
 }
+import Combine
 @testable import llmpilot
 
 @MainActor
@@ -277,6 +278,162 @@ final class DoctorPanelModelTests: XCTestCase {
         let model = makeModel(api)
         await model.load()
         XCTAssertEqual(model.remedyAction(for: model.report!.findings[0]), .addAccount)
+    }
+
+    // MARK: - move verb: runs in the panel, never via Add account
+
+    private func moveResult(note: String) throws -> AdoptMoveResult {
+        let outcome = note.isEmpty ? "complete" : "clone_suspect"
+        return try DaemonDates.decoder().decode(AdoptMoveResult.self, from: Data(
+            #"{"account":{"id":"w","label":"w","email":"w@x.dev","pinned":false,"config_dir":"/u/.claude-work","keychain_service":"svc-w"},"outcome":"\#(outcome)","note":"\#(note)"}"#.utf8))
+    }
+
+    private func waitForMove(_ model: DoctorPanelModel) async {
+        for _ in 0..<100 where model.move.busyDir != nil {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    func testMoveIntoFleetTakesTwoClicksThenMovesAndReloads() async throws {
+        let api = StubCockpitAPI()
+        api.doctorResult = .success(report(
+            clean: true, problems: 0,
+            findings: [finding(id: "watched_lane", severity: "info", verb: "move_into_fleet", target: "/u/.claude-work")],
+            checks: [check(state: "finding")]))
+        api.adoptMoveResult = .success(try moveResult(note: ""))
+        var added = 0
+        let model = DoctorPanelModel(api: api, onAddAccount: { added += 1 }, onReviewStash: {})
+        await model.load()
+        let f = model.report!.findings[0]
+        let action = model.remedyAction(for: f)
+        XCTAssertEqual(action, .moveIntoFleet(dir: "/u/.claude-work"))
+        XCTAssertEqual(model.remedyLabel(for: f), "Fix")
+        XCTAssertNil(model.moveWarning(for: f))
+
+        // Click one arms and states the consequence; nothing moves yet.
+        model.run(action)
+        XCTAssertTrue(api.adoptMoveRequests.isEmpty, "one click must never move a sign-in")
+        XCTAssertEqual(model.remedyLabel(for: f), AddAccountCopy.moveConfirm)
+        XCTAssertEqual(model.moveWarning(for: f), AddAccountCopy.moveWarning("/u/.claude-work"))
+
+        // Click two moves THAT folder, and the row stays busy until the
+        // sweep has re-run — a moved row must not be pressable on stale state.
+        let callsBefore = api.doctorCalls
+        api.doctorResult = .success(report(clean: true, problems: 0, checks: [check(state: "ok")]))
+        // Sampled at the instant busy clears — polling afterwards would let a
+        // detached reload finish first and hide the gap.
+        var callsWhenFreed: Int?
+        let sub = model.move.$busyDir.dropFirst().sink { dir in
+            if dir == nil, callsWhenFreed == nil { callsWhenFreed = api.doctorCalls }
+        }
+        defer { sub.cancel() }
+        model.run(model.remedyAction(for: f))
+        XCTAssertTrue(model.actionBusy)
+        await waitForMove(model)
+        XCTAssertEqual(api.adoptMoveRequests.map(\.configDir), ["/u/.claude-work"])
+        XCTAssertEqual(callsWhenFreed, callsBefore + 1, "busy cleared before the sweep re-ran")
+        XCTAssertEqual(model.headline, "No problems found — all 1 checks ran.")
+        XCTAssertEqual(added, 0, "the move must not open Add account")
+        XCTAssertEqual(model.moveNotes, [])
+    }
+
+    func testArmingAMoveRepublishesThePanel() async {
+        let api = StubCockpitAPI()
+        api.doctorResult = .success(report(
+            clean: true, problems: 0,
+            findings: [finding(id: "watched_lane", severity: "info", verb: "move_into_fleet", target: "/u/.claude-work")],
+            checks: [check(state: "finding")]))
+        let model = makeModel(api)
+        await model.load()
+        var changes = 0
+        let sub = model.objectWillChange.sink { _ in changes += 1 }
+        defer { sub.cancel() }
+        model.run(model.remedyAction(for: model.report!.findings[0]))
+        XCTAssertGreaterThan(changes, 0, "the panel would never show the armed label or the warning")
+    }
+
+    func testMoveIntoFleetDisarmedConfirmNeverMoves() async {
+        let api = StubCockpitAPI()
+        api.doctorResult = .success(report(
+            clean: true, problems: 0,
+            findings: [finding(id: "watched_lane", severity: "info", verb: "move_into_fleet", target: "/u/.claude-work")],
+            checks: [check(state: "finding")]))
+        let model = makeModel(api)
+        await model.load()
+        let f = model.report!.findings[0]
+        model.run(model.remedyAction(for: f))
+        model.move.resetConfirm(for: "/u/.claude-work") // the 3s timeout's own path
+        XCTAssertNil(model.moveWarning(for: f))
+        model.run(model.remedyAction(for: f))
+        XCTAssertTrue(api.adoptMoveRequests.isEmpty, "a disarmed confirm must not carry over")
+    }
+
+    func testPartialMoveIsReportedByTheSweepNotAStickyNote() async throws {
+        let api = StubCockpitAPI()
+        api.doctorResult = .success(report(
+            clean: false, problems: 1,
+            findings: [finding(id: "signin_live_elsewhere", verb: "move_into_fleet", target: "/u/.claude-work")],
+            checks: [check(state: "finding")]))
+        api.adoptMoveResult = .success(try moveResult(note: "A second copy may still exist."))
+        let model = makeModel(api)
+        await model.load()
+        let f = model.report!.findings[0]
+        // The sweep after a partial move names it as its own finding.
+        api.doctorResult = .success(report(
+            clean: false, problems: 1,
+            findings: [finding(id: "clone_suspect", verb: "sign_in_again", target: "w")],
+            checks: [check(state: "finding")]))
+        model.run(model.remedyAction(for: f))
+        model.run(model.remedyAction(for: f))
+        await waitForMove(model)
+        XCTAssertEqual(model.report?.findings.map(\.id), ["clone_suspect"])
+        XCTAssertEqual(model.moveNotes, [], "the sweep already says it — a second copy of the warning would never leave")
+    }
+
+    func testFailedMoveNoteShowsUntilTheNextSweep() async {
+        let api = StubCockpitAPI()
+        api.doctorResult = .success(report(
+            clean: true, problems: 0,
+            findings: [finding(id: "watched_lane", severity: "info", verb: "move_into_fleet", target: "/u/.claude-work")],
+            checks: [check(state: "finding")]))
+        api.adoptMoveResult = .failure(DaemonError.down)
+        let model = makeModel(api)
+        await model.load()
+        let f = model.report!.findings[0]
+        model.run(model.remedyAction(for: f))
+        model.run(model.remedyAction(for: f))
+        await waitForMove(model)
+        XCTAssertEqual(model.moveNotes.count, 1, "a failed move must say so")
+        XCTAssertFalse(model.actionBusy)
+        await model.load()
+        XCTAssertEqual(model.moveNotes, [], "a fresh sweep replaces the old failure")
+    }
+
+    func testMoveIntoFleetWithoutAFolderIsNotActionable() async {
+        let api = StubCockpitAPI()
+        api.doctorResult = .success(report(
+            clean: true, problems: 0, findings: [finding(id: "f1", verb: "move_into_fleet", target: nil)],
+            checks: [check(state: "finding")]))
+        let model = makeModel(api)
+        await model.load()
+        let f = model.report!.findings[0]
+        XCTAssertEqual(model.remedyAction(for: f), .none)
+        model.run(model.remedyAction(for: f))
+        XCTAssertTrue(api.adoptMoveRequests.isEmpty)
+    }
+
+    func testRegisterAccountStillOpensAddAccount() async {
+        let api = StubCockpitAPI()
+        api.doctorResult = .success(report(
+            clean: true, problems: 0, findings: [finding(id: "no_accounts", verb: "register_account")],
+            checks: [check(state: "finding")]))
+        let model = makeModel(api)
+        await model.load()
+        let f = model.report!.findings[0]
+        XCTAssertEqual(model.remedyAction(for: f), .addAccount)
+        // Add account is only the sign-in now — the label must not promise
+        // the sign-ins already on this Mac.
+        XCTAssertEqual(model.remedyLabel(for: f), "Add a Claude account")
     }
 
     // MARK: - reload-key change detection

@@ -7,8 +7,6 @@ export function Toolbar(props: {
   conn: Connection;
   state: State | null;
   asOfAge: string | null;
-  /** unregistered config dirs detected on this Mac — 0 renders no badge. */
-  detectedCount: number;
   onFreshWindow: (accountId: string) => void;
   onAddAccount: () => void;
   onSettings: () => void;
@@ -47,11 +45,6 @@ export function Toolbar(props: {
         className="flex items-center gap-1.5 rounded-md border border-hair px-3 py-1.5 text-[11.5px] text-sec hover:text-text"
       >
         ＋ Add account
-        {props.detectedCount > 0 && (
-          <span className="flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-rail px-[4px] text-[9.5px] font-bold tabular-nums text-text">
-            {props.detectedCount}
-          </span>
-        )}
       </button>
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>

@@ -100,7 +100,7 @@ export function FirstRun({
     fetchDetected()
       // A dir that names an account but holds no sign-in cannot be added —
       // offering it on the very first screen would make the app's opening
-      // move fail. Those folders live in Add account, where the remedy is.
+      // move fail. Adding one means signing in again, which Add account does.
       .then((d) => setDetected(d.filter((x) => !x.registered && x.signed_in !== false)))
       .catch(() => setDetected((d) => d ?? []));
     return () => window.clearTimeout(t);

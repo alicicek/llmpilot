@@ -98,9 +98,7 @@ struct AccountState: Decodable, Equatable, Identifiable {
     /// The account's own config dir (pilotapi/types.go `config_dir`).
     /// Global-swappable fleet accounts all carry the GLOBAL dir here
     /// (internal/daemon/server.go:592-593); pinned/watched accounts carry
-    /// their own folder. The Add-account sheet uses the first unpinned
-    /// account's dir — i.e. the global dir — to hide the fleet's OWN folder
-    /// from the detected list (web App.tsx:604 fleetDir).
+    /// their own folder.
     var configDir: String?
 
     enum CodingKeys: String, CodingKey {

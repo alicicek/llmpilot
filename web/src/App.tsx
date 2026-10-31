@@ -419,7 +419,6 @@ export default function App() {
           conn={conn}
           state={state}
           asOfAge={conn === "down" ? asOfAge : null}
-          detectedCount={detected.filter((d) => !d.registered).length}
           onFreshWindow={bookFreshWindow}
           onAddAccount={() => setAddOpen(true)}
           onSettings={() => setSettingsOpen(true)}
@@ -607,10 +606,6 @@ export default function App() {
       <AddAccountDialog
         open={addOpen}
         onOpenChange={setAddOpen}
-        detected={detected}
-        fleetDir={(state?.accounts ?? []).find((a) => !a.pinned)?.config_dir ?? ""}
-        fleetEmails={(state?.accounts ?? []).map((a) => a.email).filter(Boolean)}
-        onDetectedChange={refreshDetected}
       />
       <SettingsDialog
         open={settingsOpen}

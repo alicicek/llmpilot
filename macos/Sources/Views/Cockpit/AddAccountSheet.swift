@@ -4,9 +4,7 @@ import SwiftUI
 // The "Add account" surface, shared by the cockpit sheet and the standalone
 // sign-in window (LoginWindow.swift). Sign-in runs through Claude Code
 // itself: the daemon starts `claude auth login`, Claude Code opens the
-// browser, and the account joins the fleet when the user approves. The
-// "already signed in on this Mac" section below lists folders llmpilot can
-// adopt or move without signing in at all.
+// browser, and the account joins the fleet when the user approves.
 
 /// Every string the sheet shows, in one place.
 enum AddAccountCopy {
@@ -59,51 +57,15 @@ enum AddAccountCopy {
     static let getClaudeCode = "Install Claude Code"
     static let claudeCodeSetupURL = URL(string: "https://code.claude.com/docs/en/setup")!
 
-    // MARK: detected section
-    static let detectedHeader = "Already signed in on this Mac"
-    static let moved = "Already moved into the fleet."
-    static let registeredElsewhere =
-        "A second folder for an account llmpilot already watches. One account means one " +
-        "limit, so adding this folder would add no headroom."
-    // No CLI in the remedy (owner 2026-08-12) — the sheet's own sign-in IS
-    // the remedy, offered as a button on the row.
-    static let signedOut =
-        "Signed out — this folder remembers the account, but its sign-in is gone."
     static let signInAgain = "Sign in again"
-    static let unregisteredSub =
-        "Add as watched keeps its usage visible without ever switching to it. Move into the " +
-        "fleet makes it switchable."
-    static let registeredSub =
-        "llmpilot already knows this account. Moving this copy leaves one sign-in — it won't " +
-        "refresh the account while two exist."
-    static let addAsWatched = "Add as watched"
-    static let adding = "Adding…"
-    static let moveIntoFleet = "Move into the fleet"
+
+    // MARK: move into the fleet (the activation screen's confirm, PaywallViews)
     static let moveConfirm = "Move it — confirm"
     static let moving = "Moving…"
-    static let cloneSuspectFallback =
-        "A second copy of this sign-in may still exist — llmpilot will not switch to it until that's resolved."
 
     static func moveWarning(_ configDir: String) -> String {
         "The sign-in leaves \(configDir) — a terminal using that folder will need to sign in again."
     }
-}
-
-/// Per-row classification, pulled out as a pure function so it is
-/// independently testable against a classification table. Order matters:
-/// `moved` wins over everything, then the confirmed-empty
-/// (`signed_in == false`) branch, then the normal adopt/move branch.
-enum DetectedRowClass: Equatable {
-    case moved
-    /// signed_in == false AND the account is already watched from another
-    /// folder — telling this folder to "sign in again" would be wrong, the
-    /// account is live elsewhere.
-    case registeredElsewhere
-    /// signed_in == false and the account is not watched anywhere else.
-    case signedOut
-    case unregistered
-    /// Registered (pinned) but not yet moved — keeps the migration verb only.
-    case registered
 }
 
 enum AddAccountPhase: Equatable {
@@ -115,12 +77,6 @@ enum AddAccountPhase: Equatable {
 
 @MainActor
 final class AddAccountModel: ObservableObject {
-    struct RowBusy: Equatable {
-        enum Action: Equatable { case adopt, move }
-        let dir: String
-        let action: Action
-    }
-
     @Published private(set) var phase: AddAccountPhase = .idle
     @Published var error: String?
     /// Set with `error` when Claude Code isn't installed — the sheet then
@@ -140,16 +96,6 @@ final class AddAccountModel: ObservableObject {
     /// A follow-up the user needs (e.g. open Claude Code once) — shown under
     /// the done line, and the sheet stays open so it can be read.
     @Published private(set) var doneNote = ""
-    @Published private(set) var detected: [DetectedDir] = []
-    @Published private(set) var rowBusy: RowBusy?
-    @Published var rowError: String?
-    @Published private(set) var confirmMove: String?
-    @Published private(set) var moveNotes: [String: String] = [:]
-
-    /// The fleet's own config dir — never listed — and every email the fleet
-    /// already watches. Set by the integrator from the live daemon state.
-    var fleetDir: String
-    var fleetEmails: [String]
 
     private let api: CockpitDaemonAPI & DaemonAPI
 
@@ -169,27 +115,17 @@ final class AddAccountModel: ObservableObject {
     var pollTimeout: TimeInterval = 11 * 60
     /// Linger on "done" before auto-closing.
     var doneLingerDelay: TimeInterval = 1.8
-    /// Move-confirm auto-disarm.
-    var confirmResetDelay: TimeInterval = 3
     private var attemptID = ""
     /// The email the current sign-in was started for ("Sign in again").
     private var requestedEmail: String?
     /// The cancellable sign-in + poll sequence.
     private var signInTask: Task<Void, Never>?
-    private var confirmResetTask: Task<Void, Never>?
 
-    init(api: CockpitDaemonAPI & DaemonAPI, fleetDir: String = "", fleetEmails: [String] = []) {
+    init(api: CockpitDaemonAPI & DaemonAPI) {
         self.api = api
-        self.fleetDir = fleetDir
-        self.fleetEmails = fleetEmails
     }
 
     // MARK: - lifecycle (sheet open/close)
-
-    /// Call when the sheet appears — refetches detected dirs on every open.
-    func opened() {
-        Task { await self.refreshDetected() }
-    }
 
     /// Call when the sheet goes away. Stops watching the sign-in but leaves
     /// it running: approving in the browser after closing the sheet still
@@ -199,8 +135,6 @@ final class AddAccountModel: ObservableObject {
         signInTask = nil
         reset()
         requestedEmail = nil
-        clearDetectedRowState()
-        detected = []
     }
 
     private func reset() {
@@ -222,111 +156,6 @@ final class AddAccountModel: ObservableObject {
     var signInButtonTitle: String {
         if phase == .starting { return AddAccountCopy.starting }
         return error != nil ? AddAccountCopy.tryAgain : AddAccountCopy.signInButton
-    }
-
-    private func clearDetectedRowState() {
-        confirmResetTask?.cancel()
-        confirmResetTask = nil
-        rowBusy = nil
-        rowError = nil
-        confirmMove = nil
-        moveNotes = [:]
-    }
-
-    // MARK: - detected dirs
-
-    func refreshDetected() async {
-        detected = (try? await api.detect()) ?? []
-    }
-
-    /// Every folder except the fleet's own slot.
-    var candidates: [DetectedDir] {
-        detected.filter { $0.configDir != fleetDir }
-    }
-
-    /// The section (and its outcome notes) only disappears once there is
-    /// nothing left to show.
-    var isDetectedSectionEmpty: Bool {
-        candidates.isEmpty && moveNotes.isEmpty
-    }
-
-    static func classify(_ d: DetectedDir, fleetEmails: [String]) -> DetectedRowClass {
-        if d.moved { return .moved }
-        if d.signedIn == false {
-            // Case-folded: .claude.json can hold "Alex@Example.dev" for an
-            // account the fleet knows as "alex@example.dev".
-            let inFleet = fleetEmails.contains { $0.caseInsensitiveCompare(d.email) == .orderedSame }
-            return inFleet ? .registeredElsewhere : .signedOut
-        }
-        return d.registered ? .registered : .unregistered
-    }
-
-    /// Blocks EVERY row while any one row's action is in flight.
-    func adoptRow(_ dir: String) {
-        guard rowBusy == nil else { return }
-        rowBusy = RowBusy(dir: dir, action: .adopt)
-        rowError = nil
-        Task {
-            do {
-                try await self.api.adopt(configDir: dir)
-                await self.refreshDetected()
-            } catch {
-                self.rowError = error.localizedDescription
-            }
-            self.rowBusy = nil
-        }
-    }
-
-    /// The two-click confirm: first click arms it, second click (while
-    /// still armed for THIS dir) fires the move.
-    func requestMove(_ dir: String) {
-        guard rowBusy == nil else { return }
-        if confirmMove == dir {
-            confirmResetTask?.cancel()
-            confirmMove = nil
-            runMove(dir)
-        } else {
-            confirmMove = dir
-            scheduleConfirmReset(for: dir)
-        }
-    }
-
-    /// Disarms an armed move confirm.
-    func resetMoveConfirm(for dir: String) {
-        guard confirmMove == dir else { return }
-        confirmResetTask?.cancel()
-        confirmMove = nil
-    }
-
-    private func scheduleConfirmReset(for dir: String) {
-        confirmResetTask?.cancel()
-        let delay = confirmResetDelay
-        confirmResetTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(max(delay, 0) * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            self?.resetMoveConfirm(for: dir)
-        }
-    }
-
-    private func runMove(_ dir: String) {
-        rowBusy = RowBusy(dir: dir, action: .move)
-        rowError = nil
-        Task {
-            do {
-                let res = try await self.api.adoptMove(configDir: dir, label: nil)
-                if res.outcome == "clone_suspect" {
-                    self.moveNotes[dir] = res.note.isEmpty ? AddAccountCopy.cloneSuspectFallback : res.note
-                } else {
-                    // A later clean move of the same dir resolves the earlier
-                    // warning — a note that is no longer true must not linger.
-                    self.moveNotes.removeValue(forKey: dir)
-                }
-                await self.refreshDetected()
-            } catch {
-                self.rowError = error.localizedDescription
-            }
-            self.rowBusy = nil
-        }
     }
 
     // MARK: - sign-in
@@ -352,7 +181,6 @@ final class AddAccountModel: ObservableObject {
         // closed() may have cancelled us before this body even ran — don't
         // resurrect .starting on a sign-in the user already abandoned.
         guard !Task.isCancelled else { return }
-        clearDetectedRowState()
         reset()
         requestedEmail = email
         phase = .starting
@@ -509,9 +337,6 @@ struct AddAccountSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(AddAccountCopy.title)
                 .font(.system(size: 15, weight: .bold))
-            if model.phase == .idle {
-                AddAccountDetectedSection(model: model)
-            }
             phaseBody
             if let error = model.error {
                 CockpitWarnBox {
@@ -532,7 +357,6 @@ struct AddAccountSheet: View {
         }
         // No root padding/frame: SheetChrome (NativeCockpitWindow.swift) and
         // the standalone window each own the inset.
-        .onAppear { model.opened() }
         .onDisappear { model.closed() }
     }
 
@@ -679,163 +503,5 @@ struct AddAccountSheet: View {
         .background(CockpitTheme.panel)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(CockpitTheme.hairSoft, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-/// The "already signed in on this Mac" list.
-private struct AddAccountDetectedSection: View {
-    @ObservedObject var model: AddAccountModel
-
-    var body: some View {
-        if model.isDetectedSectionEmpty {
-            EmptyView()
-        } else {
-            content
-        }
-    }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(AddAccountCopy.detectedHeader)
-                .font(.system(size: 11.5, weight: .bold))
-            if !model.candidates.isEmpty {
-                VStack(spacing: 0) {
-                    ForEach(Array(model.candidates.enumerated()), id: \.element.id) { idx, dir in
-                        AddAccountDetectedRow(dir: dir, model: model)
-                        if idx != model.candidates.count - 1 {
-                            Divider().overlay(CockpitTheme.hairSoft)
-                        }
-                    }
-                }
-            }
-            // Outcome notes live at SECTION level, not the row: a completed
-            // move drops its dir from `candidates`, and a warning tied to
-            // the row would vanish with it — a partial retirement reported
-            // as success (AddAccountDialog.tsx:206-209). Sorted for a
-            // stable render order (Dictionary has none).
-            ForEach(model.moveNotes.keys.sorted(), id: \.self) { dir in
-                if let note = model.moveNotes[dir] {
-                    CockpitWarnBox {
-                        Text(note).font(.system(size: 10.5)).foregroundColor(CockpitTheme.warn)
-                    }
-                }
-            }
-            if let err = model.rowError {
-                CockpitWarnBox {
-                    Text(err).font(.system(size: 11)).foregroundColor(CockpitTheme.warn)
-                }
-            }
-        }
-        .padding(12)
-        .background(CockpitTheme.panel)
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(CockpitTheme.hairSoft, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-private struct AddAccountDetectedRow: View {
-    let dir: DetectedDir
-    @ObservedObject var model: AddAccountModel
-
-    private var cls: DetectedRowClass { AddAccountModel.classify(dir, fleetEmails: model.fleetEmails) }
-    private var busy: AddAccountModel.RowBusy? { model.rowBusy }
-    private var anyBusy: Bool { model.rowBusy != nil }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(dir.email)
-                    .font(.system(size: 12, weight: .semibold))
-                    .lineLimit(1)
-                Text(dir.configDir)
-                    .font(.system(size: 10))
-                    .foregroundColor(CockpitTheme.ter)
-                    .lineLimit(1)
-            }
-            switch cls {
-            case .moved:
-                Text(AddAccountCopy.moved)
-                    .font(.system(size: 10.5))
-                    .foregroundColor(CockpitTheme.ter)
-            case .registeredElsewhere:
-                Text(AddAccountCopy.registeredElsewhere)
-                    .font(.system(size: 10.5))
-                    .foregroundColor(CockpitTheme.ter)
-            case .signedOut:
-                Text(AddAccountCopy.signedOut)
-                    .font(.system(size: 10.5))
-                    .foregroundColor(CockpitTheme.ter)
-                    .fixedSize(horizontal: false, vertical: true)
-                // The row's remedy, as a control (owner 2026-08-12: an
-                // un-pressable explanation left nothing to DO) — the
-                // sheet's own sign-in, pre-filled with this account.
-                Button(action: { model.browserSignIn(email: dir.email) }) {
-                    Text(AddAccountCopy.signInAgain)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(CockpitTheme.sec)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(CockpitTheme.hair, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .opacity(anyBusy ? 0.5 : 1)
-                .disabled(anyBusy)
-                .accessibilityIdentifier("add-account-signin-again-\(dir.configDir)")
-                .accessibilityLabel(AddAccountCopy.signInAgain)
-            case .unregistered, .registered:
-                Text(cls == .registered ? AddAccountCopy.registeredSub : AddAccountCopy.unregisteredSub)
-                    .font(.system(size: 10))
-                    .foregroundColor(CockpitTheme.ter)
-                HStack(spacing: 8) {
-                    if cls == .unregistered {
-                        adoptButton
-                    }
-                    moveButton
-                }
-                if model.confirmMove == dir.configDir {
-                    Text(AddAccountCopy.moveWarning(dir.configDir))
-                        .font(.system(size: 10))
-                        .foregroundColor(CockpitTheme.warn)
-                }
-            }
-        }
-        .padding(.vertical, 8)
-    }
-
-    private var adoptButton: some View {
-        let label = busy?.dir == dir.configDir && busy?.action == .adopt ? AddAccountCopy.adding : AddAccountCopy.addAsWatched
-        return Button(action: { model.adoptRow(dir.configDir) }) {
-            Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(CockpitTheme.sec)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(CockpitTheme.hair, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .opacity(anyBusy ? 0.5 : 1)
-        .disabled(anyBusy)
-        .accessibilityIdentifier("add-account-adopt-\(dir.configDir)")
-        .accessibilityLabel(label)
-    }
-
-    private var moveButton: some View {
-        let confirming = model.confirmMove == dir.configDir
-        let label = busy?.dir == dir.configDir && busy?.action == .move
-            ? AddAccountCopy.moving
-            : (confirming ? AddAccountCopy.moveConfirm : AddAccountCopy.moveIntoFleet)
-        return Button(action: { model.requestMove(dir.configDir) }) {
-            Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(confirming ? CockpitTheme.warn : CockpitTheme.sec)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(CockpitTheme.hairSoft, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .opacity(anyBusy ? 0.5 : 1)
-        .disabled(anyBusy)
-        .accessibilityIdentifier("add-account-move-\(dir.configDir)")
-        .accessibilityLabel(label)
     }
 }

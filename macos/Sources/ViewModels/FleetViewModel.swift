@@ -579,11 +579,6 @@ final class FleetViewModel: ObservableObject {
     /// lives in the cockpit; the menu bar surfaces that they exist).
     var stash: [StashEntry] { state?.stash ?? [] }
 
-    /// Other logged-in Claude Code accounts on this Mac that aren't part of
-    /// the fleet yet — the destructive move lives in the cockpit; the menu
-    /// bar only surfaces that they exist so nothing goes invisible.
-    var unadoptedDetectedCount: Int { detected.filter { !$0.registered }.count }
-
     var cockpitURL: URL? { api.cockpitURL() }
 
     /// The official app always ships the engine, so an absent/expired grant is

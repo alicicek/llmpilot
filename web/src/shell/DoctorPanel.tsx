@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchDoctor, switchAccount, type DoctorFinding, type DoctorReport } from "../api.ts";
+import { adoptMove, fetchDoctor, switchAccount, type DoctorFinding, type DoctorReport } from "../api.ts";
 import { findingSeverity, type Severity } from "../board/severity.ts";
 
 // The health sweep, rendered. It shows exactly what `llmpilot doctor` prints —
@@ -15,6 +15,10 @@ const SEVERITY_STYLE: Record<Severity, string> = {
   warn: "border-warnbd text-warn",
   calm: "border-hairsoft text-sec",
 };
+
+// One row per finding: several share an id (every watched lane is
+// "watched_lane"), so busy state keys on the whole row.
+const rowKey = (f: DoctorFinding) => `${f.id}:${f.accounts.join(",")}:${f.remedy.target ?? ""}`;
 
 const SEVERITY_WORD: Record<Severity, string> = {
   crit: "Critical",
@@ -38,6 +42,15 @@ export function DoctorPanel({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // "Move into the fleet" runs here, not in Add account: that dialog is only
+  // the sign-in now, and signing in leaves a watched lane watched. Two
+  // clicks, the consequence stated between them, disarmed after 3s.
+  const [confirmMove, setConfirmMove] = useState<string | null>(null);
+  useEffect(() => {
+    if (!confirmMove) return;
+    const t = window.setTimeout(() => setConfirmMove(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [confirmMove]);
 
   const [reloads, setReloads] = useState(0);
   const load = useCallback(() => {
@@ -106,7 +119,36 @@ export function DoctorPanel({
 
   const action = (f: DoctorFinding) => {
     switch (f.remedy.verb) {
-      case "move_into_fleet":
+      case "move_into_fleet": {
+        // Both findings that offer it name the folder; with no folder there
+        // is nothing to move, so no button.
+        const dir = f.remedy.target;
+        if (!dir) return null;
+        return () => {
+          if (confirmMove !== dir) {
+            setConfirmMove(dir);
+            return;
+          }
+          setConfirmMove(null);
+          setBusy(rowKey(f));
+          setErr(null);
+          adoptMove(dir)
+            // Busy until the sweep re-runs, so the moved row can't be pressed
+            // again on stale state. The sweep is the truth: a partial move
+            // comes back as its own finding.
+            .then(() =>
+              fetchDoctor().then(
+                (r) => {
+                  setReport(r);
+                  setSweepErr(null);
+                },
+                () => setReloads((n) => n + 1),
+              ),
+            )
+            .catch((e: Error) => setErr(e.message))
+            .finally(() => setBusy(null));
+        };
+      }
       case "sign_in_again":
       case "register_account":
         return () => onAddAccount();
@@ -117,7 +159,7 @@ export function DoctorPanel({
         // verb for one — so this button can only ever call a switch it accepts.
         return () => {
           if (!f.remedy.target) return;
-          setBusy(f.id);
+          setBusy(rowKey(f));
           setErr(null);
           switchAccount(f.remedy.target)
             .then(() => setReloads((n) => n + 1)) // a resolved finding must not linger
@@ -128,6 +170,21 @@ export function DoctorPanel({
         return null;
     }
   };
+
+  const armed = (f: DoctorFinding) =>
+    f.remedy.verb === "move_into_fleet" && !!f.remedy.target && confirmMove === f.remedy.target;
+  const label = (f: DoctorFinding) =>
+    busy === rowKey(f)
+      ? f.remedy.verb === "move_into_fleet"
+        ? "Moving…"
+        : "Working…"
+      : armed(f)
+        ? "Move it — confirm"
+        : f.remedy.verb === "register_account"
+          ? // The daemon's label may promise the sign-ins already on this Mac
+            // (the CLI's `llmpilot init`); here the button opens the sign-in.
+            "Add a Claude account"
+          : f.remedy.label;
 
   return (
     <section
@@ -155,7 +212,7 @@ export function DoctorPanel({
             const run = action(f);
             return (
               <li
-                key={`${f.id}:${f.accounts.join(",")}:${f.remedy.target ?? ""}`}
+                key={rowKey(f)}
                 className="flex items-start justify-between gap-3 border-b border-hairsoft py-2 last:border-b-0"
               >
                 <div className="min-w-0">
@@ -168,6 +225,12 @@ export function DoctorPanel({
                     <span className="truncate text-[12px] font-semibold">{f.title}</span>
                   </div>
                   <p className="mt-0.5 text-[11px] leading-relaxed text-sec">{f.detail}</p>
+                  {armed(f) && (
+                    <p className="mt-1 text-[10.5px] leading-relaxed text-warn">
+                      The sign-in leaves {f.remedy.target} — a terminal using that folder will need
+                      to sign in again.
+                    </p>
+                  )}
                   {!run && (
                     <p className="mt-0.5 text-[10.5px] text-ter">
                       {f.remedy.label}
@@ -184,9 +247,12 @@ export function DoctorPanel({
                   <button
                     disabled={busy !== null}
                     onClick={run}
+                    onBlur={() => {
+                      if (armed(f)) setConfirmMove(null);
+                    }}
                     className="shrink-0 rounded-md bg-acc-tx px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-50 dark:bg-accent"
                   >
-                    {busy === f.id ? "Working…" : f.remedy.label}
+                    {label(f)}
                   </button>
                 )}
               </li>

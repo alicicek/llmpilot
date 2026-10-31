@@ -64,9 +64,6 @@ struct FlashBanner: View {
 struct NativeToolbarRow: View {
     let status: FleetViewModel.Status
     let asOfAge: String?
-    /// Toolbar.tsx:43-53 / App.tsx:422 — `detected.filter { !$0.registered
-    /// }.count`; 0 hides the badge.
-    let unregisteredDetectedCount: Int
     let onAddAccount: () -> Void
     let onSettings: () -> Void
     /// Toolbar.tsx:16 — replays the guided tour; nil hides the control
@@ -112,14 +109,6 @@ struct NativeToolbarRow: View {
                 Text("＋ Add account")
                     .font(.system(size: 11.5))
                     .foregroundColor(CockpitTheme.sec)
-                if unregisteredDetectedCount > 0 {
-                    Text("\(unregisteredDetectedCount)")
-                        .font(CockpitTheme.numeric(9.5, weight: .bold))
-                        .foregroundColor(CockpitTheme.text)
-                        .frame(minWidth: 15, minHeight: 15)
-                        .padding(.horizontal, 4)
-                        .background(CockpitTheme.rail, in: Capsule())
-                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -147,17 +136,17 @@ struct NativeToolbarRow: View {
 
 // MARK: - previews
 
-#Preview("Toolbar row — badge") {
+#Preview("Toolbar row") {
     NativeToolbarRow(
-        status: .live, asOfAge: nil, unregisteredDetectedCount: 2,
+        status: .live, asOfAge: nil,
         onAddAccount: {}, onSettings: {})
         .padding()
         .frame(width: 640)
 }
 
-#Preview("Toolbar row — no badge, down") {
+#Preview("Toolbar row — down") {
     NativeToolbarRow(
-        status: .down, asOfAge: "9 min ago", unregisteredDetectedCount: 0,
+        status: .down, asOfAge: "9 min ago",
         onAddAccount: {}, onSettings: {})
         .padding()
         .frame(width: 640)

@@ -12,14 +12,9 @@ final class LoginWindowController: NSWindowController, NSWindowDelegate {
     private var model: AddAccountModel?
 
     /// Opens (or brings forward) the window. `email` starts a sign-in
-    /// pre-filled with that account straight away; `state` lets the
-    /// "already signed in on this Mac" list leave out what the fleet has.
-    func open(
-        email: String? = nil, state: DaemonState? = nil,
-        api: CockpitDaemonAPI & DaemonAPI = HTTPDaemonClient()
-    ) {
+    /// pre-filled with that account straight away.
+    func open(email: String? = nil, api: CockpitDaemonAPI & DaemonAPI = HTTPDaemonClient()) {
         if let win = window, win.isVisible, let model {
-            Self.apply(state, to: model)
             if let email, model.phase == .idle { model.browserSignIn(email: email) }
             present(win)
             return
@@ -35,7 +30,6 @@ final class LoginWindowController: NSWindowController, NSWindowDelegate {
         win.isReleasedWhenClosed = false
         win.delegate = self
         let m = AddAccountModel(api: api)
-        Self.apply(state, to: m)
         m.onRequestClose = { [weak self, weak win] in
             // Close only the window THIS model belongs to — a newer one may
             // have replaced it during the done linger.
@@ -54,12 +48,6 @@ final class LoginWindowController: NSWindowController, NSWindowDelegate {
         win.center()
         present(win)
         if let email { m.browserSignIn(email: email) }
-    }
-
-    private static func apply(_ state: DaemonState?, to model: AddAccountModel) {
-        guard let state else { return }
-        model.fleetEmails = state.accounts.map(\.email).filter { !$0.isEmpty }
-        model.fleetDir = state.accounts.first { !$0.pinned }?.configDir ?? ""
     }
 
     private func present(_ win: NSWindow) {

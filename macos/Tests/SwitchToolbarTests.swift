@@ -2,9 +2,7 @@ import XCTest
 @testable import llmpilot
 
 /// Phase 2 chunk A coverage: the SWITCH verb's button-visibility rule
-/// (LaneHeader.tsx:68), the "＋ Add account" badge's unregistered-count
-/// derivation (Toolbar.tsx:43-53 / App.tsx:422, via FleetViewModel's own
-/// `unadoptedDetectedCount`), and the toolbar's error-flash dismiss state
+/// (LaneHeader.tsx:68) and the toolbar's error-flash dismiss state
 /// (App.tsx:206-212, 429-439).
 @MainActor
 final class SwitchToolbarTests: XCTestCase {
@@ -30,38 +28,6 @@ final class SwitchToolbarTests: XCTestCase {
                 switchButtonVisible(active: v.active, pinned: v.pinned), v.expected,
                 "active=\(v.active) pinned=\(v.pinned)")
         }
-    }
-
-    // MARK: - unregistered detected-count badge (Toolbar.tsx:43-53, App.tsx:422)
-
-    private func detected(registered: [Bool]) -> [DetectedDir] {
-        registered.enumerated().map { i, isRegistered in
-            DetectedDir(configDir: "/tmp/dir-\(i)", email: "u\(i)@example.dev", registered: isRegistered, moved: false)
-        }
-    }
-
-    func testUnregisteredDetectedCountDerivation() async throws {
-        let api = StubAPI()
-        api.stateResult = .success(Fixtures.twoAccounts())
-
-        // Mixed registered/unregistered — only the unregistered ones count.
-        api.detectResult = detected(registered: [false, true, false, false])
-        let model = FleetViewModel(api: api, autostart: false)
-        model.defaults = UserDefaults(suiteName: "SwitchToolbarTests")!
-        model.openWindow = { _ in }
-        model.loginItems = FakeLoginItems()
-        try await model.refresh()
-        XCTAssertEqual(model.unadoptedDetectedCount, 3)
-
-        // All registered — badge count (and so the badge itself) is 0.
-        api.detectResult = detected(registered: [true, true])
-        try await model.refresh()
-        XCTAssertEqual(model.unadoptedDetectedCount, 0)
-
-        // Nothing detected at all — still 0, never negative or nil-crashing.
-        api.detectResult = []
-        try await model.refresh()
-        XCTAssertEqual(model.unadoptedDetectedCount, 0)
     }
 
     // MARK: - flash dismissal clears the source (App.tsx:206-212, 429-439)

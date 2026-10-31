@@ -4,6 +4,27 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-10-31
+
+Add account is now just the sign-in, and the health panel moves a sign-in
+into the fleet itself. No price, trial length, offer, or account-data
+changes.
+
+### Changed
+
+- **Move into the fleet runs from the health panel.** When the health
+  check offers to move a sign-in into the fleet, the button now moves it
+  right there, with the same two-click confirm, instead of opening Add
+  account.
+
+### Removed
+
+- **The list of Claude folders found on this Mac.** Add account no longer
+  lists other Claude Code sign-ins it finds, and the menu bar and the Add
+  account button no longer count them. You know which account you want to
+  add: Add account is now just Sign in with Claude. The menu bar's empty
+  state still offers to add the account already signed in on this Mac.
+
 ## [1.5.0] - 2026-10-30
 
 Adding an account now signs in through Claude Code itself, so it works the
@@ -711,6 +732,7 @@ Initial public release: live usage for every account, lock-first switching,
 window scheduling, the cockpit, the menu bar app, the statusline, and the
 one-time Pro autopilot.
 
+[1.5.1]: https://github.com/alicicek/llmpilot/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/alicicek/llmpilot/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/alicicek/llmpilot/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/alicicek/llmpilot/compare/v1.3.6...v1.4.0

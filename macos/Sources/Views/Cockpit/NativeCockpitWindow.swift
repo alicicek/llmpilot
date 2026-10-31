@@ -131,10 +131,9 @@ struct NativeCockpitRootView: View {
         self.onFlowModeChange = onFlowModeChange
         let doctor = DoctorPanelModel(
             api: api,
-            onAddAccount: { [weak fleet] in LoginWindowController.shared.open(state: fleet?.state) },
+            onAddAccount: { LoginWindowController.shared.open() },
             onSignInAgain: { [weak fleet] id in
-                let email = fleet?.state?.accounts.first { $0.id == id }?.email
-                LoginWindowController.shared.open(email: email, state: fleet?.state)
+                LoginWindowController.shared.open(email: fleet?.state?.accounts.first { $0.id == id }?.email)
             },
             onReviewStash: {})
         _doctorModel = StateObject(wrappedValue: doctor)
@@ -158,7 +157,7 @@ struct NativeCockpitRootView: View {
         let moveModel = ActivationMoveModel(api: api)
         // A landed move unpins the lane — refresh so the promoted row
         // leaves the ⑨ list and the facts line recounts itself.
-        moveModel.onMoved = { Task { try? await fleet.refresh() } }
+        moveModel.onMoved = { try? await fleet.refresh() }
         _activationMove = StateObject(wrappedValue: moveModel)
         _winback = StateObject(wrappedValue: WinbackModel(defaults: fleet.defaults))
         _onboarded = AppStorage(wrappedValue: false, "proOnboarded", store: fleet.defaults)
@@ -228,17 +227,8 @@ struct NativeCockpitRootView: View {
             SheetChrome(width: 440, onClose: { addOpen = false }) {
                 AddAccountSheet(model: addModel)
             }
-            .onAppear {
-                // The in-fleet classification needs the CURRENT fleet emails
-                // (empty ones filtered), the fleet's own dir so it never
-                // lists itself with a move verb, and the close seam so a
-                // finished sign-in can dismiss.
-                // (The sheet's own onAppear already calls opened() — no
-                // duplicate detect() here.)
-                addModel.fleetEmails = state.accounts.map(\.email).filter { !$0.isEmpty }
-                addModel.fleetDir = state.accounts.first { !$0.pinned }?.configDir ?? ""
-                addModel.onRequestClose = { addOpen = false }
-            }
+            // The close seam, so a finished sign-in can dismiss the sheet.
+            .onAppear { addModel.onRequestClose = { addOpen = false } }
         }
         .sheet(isPresented: $settingsOpen) {
             SheetChrome(minWidth: 460, onClose: { settingsOpen = false }) {
@@ -480,7 +470,6 @@ struct NativeCockpitRootView: View {
                     NativeToolbarRow(
                         status: fleet.status,
                         asOfAge: asOfAge,
-                        unregisteredDetectedCount: fleet.unadoptedDetectedCount,
                         onAddAccount: { addOpen = true },
                         onSettings: { settingsOpen = true },
                         // Toolbar.tsx:426 `canGuide ? () => setTourOpen(true)

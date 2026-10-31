@@ -2,13 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { ShellDialog } from "./dialog.tsx";
 import {
   ApiError,
-  adoptAccount,
-  adoptMove,
   cancelBrowserLogin,
   fetchBrowserLoginStatus,
   startBrowserLogin,
   submitLoginCode,
-  type DetectedDir,
 } from "../api.ts";
 
 // "Sign in with Claude": the daemon runs Claude Code's own sign-in, which
@@ -31,199 +28,7 @@ function sentence(s: string): string {
   return /[.?…]$/.test(out) ? out : `${out}.`;
 }
 
-// DetectedSection is the "already signed in on this Mac" list — the fix for
-// the carryover bug (only the first of N detected dirs ever got an adopt
-// affordance). Each unregistered dir gets two verbs: an additive watch-only
-// adopt, or a destructive move into the switchable fleet (two-step confirm,
-// same precedent as StashPanel's discard — no one-click destroy).
-function DetectedSection({
-  detected,
-  fleetDir,
-  fleetEmails,
-  onChanged,
-}: {
-  detected: DetectedDir[];
-  fleetDir: string;
-  /** emails already in the fleet — a signed-out FOLDER whose account is live
-   *  in another folder is not a signed-out ACCOUNT, and must not be told to
-   *  sign in again. */
-  fleetEmails: readonly string[];
-  onChanged: () => void;
-}) {
-  const [busy, setBusy] = useState<{ dir: string; action: "adopt" | "move" } | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [confirmMove, setConfirmMove] = useState<string | null>(null);
-  const [moveNotes, setMoveNotes] = useState<Record<string, string>>({});
-
-  // Unregistered dirs get both verbs. A dir whose account is registered as
-  // WATCHED (pinned) keeps the migration verb — that is the primary
-  // flow (add as watched, then move), and three other strings in the product
-  // point the user here. A dir already moved is informational only.
-  // Every folder except the fleet's own slot is worth listing: unregistered
-  // ones can be adopted or moved, a watched account's folder keeps the
-  // migration verb, a moved-and-still-empty one is informational, and a
-  // folder someone signed back into after a move needs the verb that
-  // resolves it — filtering by registration hid exactly that last case.
-  const candidates = detected.filter((d) => d.config_dir !== fleetDir);
-  // The section outlives its own list: a completed move empties the
-  // candidates, and unmounting here would take an outcome warning with it —
-  // a partial retirement silently reported as success.
-  const notes = Object.entries(moveNotes);
-  if (candidates.length === 0 && notes.length === 0) return null;
-
-  const runAdopt = (dir: string) => {
-    setBusy({ dir, action: "adopt" });
-    setErr(null);
-    adoptAccount(dir)
-      .then(onChanged)
-      .catch((e: Error) => setErr(e.message))
-      .finally(() => setBusy(null));
-  };
-
-  const runMove = (dir: string) => {
-    setBusy({ dir, action: "move" });
-    setErr(null);
-    setConfirmMove(null);
-    adoptMove(dir)
-      .then((res) => {
-        setMoveNotes((m) => {
-          const next = { ...m };
-          if (res.outcome === "clone_suspect") {
-            next[dir] =
-              res.note ||
-              "A second copy of this sign-in may still exist — llmpilot will not switch to it until that's resolved.";
-          } else {
-            // A later clean move of the same folder resolves the earlier
-            // warning — a note that is no longer true must not linger.
-            delete next[dir];
-          }
-          return next;
-        });
-        onChanged();
-      })
-      .catch((e: Error) => setErr(e.message))
-      .finally(() => setBusy(null));
-  };
-
-  return (
-    <section className="rounded-lg border border-hairsoft bg-panel px-3 py-2.5">
-      <h2 className="text-[11.5px] font-bold tracking-[-0.01em]">Already signed in on this Mac</h2>
-      {candidates.length > 0 && (
-      <ul className="mt-1.5 flex flex-col">
-        {candidates.map((d) => (
-          <li key={d.config_dir} className="border-b border-hairsoft py-2 last:border-b-0 last:pb-0">
-            <div className="min-w-0">
-              <div className="truncate text-[12px] font-semibold">{d.email}</div>
-              <div className="mt-0.5 truncate text-[10px] text-ter">{d.config_dir}</div>
-            </div>
-            {d.moved ? (
-              <p className="mt-1 text-[10.5px] leading-relaxed text-ter">
-                Already moved into the fleet.
-              </p>
-            ) : d.signed_in === false ? (
-              // The folder names an account but holds no sign-in. Both verbs
-              // refuse here, so neither is offered — the user gets the one
-              // thing that changes the state instead. WHICH thing depends on
-              // whether the account itself is gone: an identity already
-              // watched from another folder is signed in perfectly well, and
-              // telling its owner to "sign in again" reads as the app not
-              // knowing the account it is actively using (owner 2026-08-05).
-              // Case-folded: .claude.json can hold "Alex@Example.dev" for an
-              // account the fleet knows as "alex@example.dev", and a raw
-              // compare would fall back to the sign-in-again nonsense this
-              // branch exists to remove.
-              fleetEmails.some((e) => e.toLowerCase() === d.email.toLowerCase()) ? (
-                <p className="mt-1 text-[10.5px] leading-relaxed text-ter">
-                  A second folder for an account llmpilot already watches. One account means one
-                  limit, so adding this folder would add no headroom.
-                </p>
-              ) : (
-                <p className="mt-1 text-[10.5px] leading-relaxed text-ter">
-                  Signed out — this folder remembers the account, but its sign-in is gone. Run{" "}
-                  <code className="font-semibold">claude</code> in that folder and sign in again to
-                  use it here.
-                </p>
-              )
-            ) : (
-              <>
-                <p className="mt-1 text-[10px] leading-relaxed text-ter">
-                  {d.registered
-                    ? "llmpilot already knows this account. Moving this copy leaves one sign-in — it won't refresh the account while two exist."
-                    : "Add as watched keeps its usage visible without ever switching to it. Move into the fleet makes it switchable."}
-                </p>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                  {!d.registered && (
-                  <button
-                    disabled={busy !== null}
-                    onClick={() => runAdopt(d.config_dir)}
-                    className="rounded-md border border-hair px-2.5 py-1 text-[11px] font-semibold text-sec hover:text-text disabled:opacity-50"
-                  >
-                    {busy?.dir === d.config_dir && busy.action === "adopt" ? "Adding…" : "Add as watched"}
-                  </button>
-                  )}
-                  <button
-                    disabled={busy !== null}
-                    onClick={() => {
-                      if (confirmMove === d.config_dir) {
-                        runMove(d.config_dir);
-                      } else {
-                        setConfirmMove(d.config_dir);
-                      }
-                    }}
-                    onBlur={() => setConfirmMove((c) => (c === d.config_dir ? null : c))}
-                    className="rounded-md border border-hairsoft px-2.5 py-1 text-[11px] font-semibold text-sec hover:text-warn disabled:opacity-50"
-                  >
-                    {busy?.dir === d.config_dir && busy.action === "move"
-                      ? "Moving…"
-                      : confirmMove === d.config_dir
-                        ? "Move it — confirm"
-                        : "Move into the fleet"}
-                  </button>
-                </div>
-                {confirmMove === d.config_dir && (
-                  <p className="mt-1.5 text-[10px] leading-relaxed text-warn">
-                    The sign-in leaves {d.config_dir} — a terminal using that folder will need to sign
-                    in again.
-                  </p>
-                )}
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
-      )}
-      {/* Outcome notes live at SECTION level, not in the row: a completed
-          move drops its dir from the list, and a warning that unmounts with
-          the row would flash for a frame and vanish — a partial retirement
-          reported as success. */}
-      {notes.map(([dir, note]) => (
-        <p
-          key={dir}
-          className="mt-2 rounded-md border border-warnbd bg-warnbg px-2.5 py-2 text-[10.5px] leading-relaxed text-warn"
-        >
-          {note}
-        </p>
-      ))}
-      {err && (
-        <p className="mt-2 rounded-lg border border-warnbd bg-warnbg px-3 py-2 text-[11px] text-warn">
-          {err}
-        </p>
-      )}
-    </section>
-  );
-}
-
-export function AddAccountDialog(props: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  detected: DetectedDir[];
-  /** the fleet's own config dir — the one folder that is never listed, since
-   *  the account signed in there is already switchable. */
-  fleetDir: string;
-  /** every email the fleet already watches, in any folder. */
-  fleetEmails: readonly string[];
-  onDetectedChange: () => void;
-}) {
+export function AddAccountDialog(props: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [manualUrl, setManualUrl] = useState("");
   const [paste, setPaste] = useState("");
@@ -252,15 +57,6 @@ export function AddAccountDialog(props: {
     setClaudeMissing(false);
     attemptId.current = "";
   };
-
-  // Refresh detected dirs every time the dialog opens — the shipped bug was
-  // a list that only ever loaded once and never shrank as accounts got
-  // adopted.
-  const onDetectedChange = useRef(props.onDetectedChange);
-  onDetectedChange.current = props.onDetectedChange;
-  useEffect(() => {
-    if (props.open) onDetectedChange.current();
-  }, [props.open]);
 
   // While waiting, poll THIS attempt's status — the daemon records the
   // outcome under the attempt id (a fleet-size check would never complete on
@@ -380,14 +176,6 @@ export function AddAccountDialog(props: {
       }}
       title="Add account"
     >
-      {phase === "idle" && (
-        <DetectedSection
-          detected={props.detected}
-          fleetDir={props.fleetDir}
-          fleetEmails={props.fleetEmails}
-          onChanged={onDetectedChange.current}
-        />
-      )}
       {phase === "done" ? (
         doneWarn ? (
           <>

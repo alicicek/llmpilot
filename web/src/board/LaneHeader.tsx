@@ -125,8 +125,8 @@ export default function LaneHeader({ account, active, nowMinutes, onSwitch }: La
         {stale && snap && <div className="mt-1.5 text-[9.5px] text-ter">{staleStamp(snap.as_of, nowMinutes)}</div>}
         {!active && account.pinned && (
           <p className="mt-1.5 text-[10px] leading-relaxed text-ter">
-            Watched — signs in from its own folder, usage only. Move it into the fleet from Add
-            account to make it switchable.
+            Watched — signs in from its own folder, usage only. Move it into the fleet to make it
+            switchable.
           </p>
         )}
       </div>

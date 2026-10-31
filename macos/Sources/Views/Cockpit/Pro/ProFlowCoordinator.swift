@@ -307,23 +307,25 @@ struct WatchOnlyLane: Equatable, Identifiable {
 /// watch-only must be able to promote them AT the activation moment — not
 /// discover on the board that the autopilot can't switch to anything.
 /// Moving a sign-in is consequential (it leaves the folder; a terminal
-/// still using it must sign in again), so this keeps AddAccountModel's
-/// exact consent idiom: two clicks, the warning between them, and a 3s
-/// auto-disarm.
+/// still using it must sign in again), so it takes two clicks, with the
+/// warning between them, and a 3s auto-disarm. The doctor's "Move into the
+/// fleet" runs through it too (DoctorPanelModel.move).
 @MainActor
 final class ActivationMoveModel: ObservableObject {
     @Published private(set) var busyDir: String?
     @Published private(set) var confirmDir: String?
     /// Section-level, keyed by dir, and kept after a moved row leaves the
     /// list — a partial-retirement warning must not vanish with the row it
-    /// was about (AddAccountModel's own lesson, AddAccountDialog.tsx:206-209).
+    /// was about.
     @Published private(set) var notes: [String: String] = [:]
 
-    /// Same 3s auto-disarm as AddAccountModel.confirmResetDelay.
+    /// How long an armed confirm waits for the second click.
     var confirmResetDelay: TimeInterval = 3
     /// Wired by the composition root to a fleet refresh, so the promoted
-    /// lane unpins on screen and the facts line recounts itself.
-    var onMoved: () -> Void = {}
+    /// lane unpins on screen and the facts line recounts itself. Awaited:
+    /// the row stays busy until the refresh lands, so a moved row can't be
+    /// pressed again on stale state.
+    var onMoved: () async -> Void = {}
 
     private let api: CockpitDaemonAPI & DaemonAPI
     private var confirmResetTask: Task<Void, Never>?
@@ -352,6 +354,12 @@ final class ActivationMoveModel: ObservableObject {
         }
     }
 
+    /// Drops every note — for a caller whose own refresh already reports
+    /// what the notes said.
+    func clearNotes() {
+        notes = [:]
+    }
+
     /// Disarms an armed confirm — the timeout calls this in production;
     /// tests call it directly (StashPanelModel/AddAccountModel precedent).
     func resetConfirm(for dir: String) {
@@ -368,7 +376,7 @@ final class ActivationMoveModel: ObservableObject {
                 // future outcome) explains itself — show it verbatim, it is
                 // the daemon's own user-facing copy.
                 if !result.note.isEmpty { notes[dir] = result.note }
-                onMoved()
+                await onMoved()
             } catch {
                 notes[dir] =
                     (error as? LocalizedError)?.errorDescription ?? "The move didn't take — try again."

@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 // Native port of web/src/shell/DoctorPanel.tsx — the health sweep, rendered.
@@ -72,6 +73,12 @@ final class DoctorPanelModel: ObservableObject {
         Task { await self?.load() }
     }
 
+    /// "Move into the fleet" runs here, not in Add account: that sheet is
+    /// only the sign-in now, and signing in leaves a watched lane watched.
+    /// Same two-click consent as the "Pro is on" screen's make-switchable.
+    let move: ActivationMoveModel
+    private var moveObservation: AnyCancellable?
+
     init(
         api: CockpitDaemonAPI & DaemonAPI,
         onAddAccount: @escaping () -> Void,
@@ -82,6 +89,14 @@ final class DoctorPanelModel: ObservableObject {
         self.onAddAccount = onAddAccount
         self.onSignInAgain = onSignInAgain
         self.onReviewStash = onReviewStash
+        move = ActivationMoveModel(api: api)
+        // A landed move resolves the finding — re-run the sweep so it leaves.
+        move.onMoved = { [weak self] in await self?.load() }
+        // The rows read `move`'s armed/busy state but views observe THIS
+        // model — republish (AskMachine's winback precedent).
+        moveObservation = move.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     /// Reloads unconditionally — callers gate through `reloadIfKeyChanged`.
@@ -107,6 +122,10 @@ final class DoctorPanelModel: ObservableObject {
             }
             report = r
             sweepErr = nil
+            // The sweep is the truth: a partial move is its own finding
+            // ("may still exist in two places"), so an earlier move's note
+            // must not outlive the sweep that replaced it.
+            move.clearNotes()
             // The statusline note is back after an install landed: give
             // the row its button again instead of a stale "Installed —".
             if r.findings.contains(where: { $0.remedy.verb == "install_statusline" }) {
@@ -142,6 +161,9 @@ final class DoctorPanelModel: ObservableObject {
         case signInAgain(accountID: String)
         case reviewStash
         case switchTo(target: String, findingID: String)
+        /// Move the sign-in in one folder into the fleet — two clicks, the
+        /// consequence stated between them.
+        case moveIntoFleet(dir: String)
         /// The daemon installs the statusline (U5) — rendered as
         /// `StatuslineInstallControl`, which owns the consent step.
         case installStatusline
@@ -155,7 +177,12 @@ final class DoctorPanelModel: ObservableObject {
                 return .signInAgain(accountID: target)
             }
             return .addAccount
-        case "move_into_fleet", "register_account":
+        case "move_into_fleet":
+            // Both findings that offer it name the folder; with no folder
+            // there is nothing to move, so no button.
+            guard let target = finding.remedy.target, !target.isEmpty else { return .none }
+            return .moveIntoFleet(dir: target)
+        case "register_account":
             return .addAccount
         case "review_stash":
             return .reviewStash
@@ -193,12 +220,42 @@ final class DoctorPanelModel: ObservableObject {
                 }
                 busyFindingID = nil
             }
+        case let .moveIntoFleet(dir):
+            move.requestMove(dir)
         case .installStatusline:
             statuslineInstall.install()
         case .none:
             break
         }
     }
+
+    /// One action at a time: a switch or a move in flight greys every button.
+    var actionBusy: Bool { busyFindingID != nil || move.busyDir != nil }
+
+    func remedyLabel(for finding: DoctorFinding) -> String {
+        switch remedyAction(for: finding) {
+        case let .moveIntoFleet(dir):
+            if move.busyDir == dir { return AddAccountCopy.moving }
+            if move.confirmDir == dir { return AddAccountCopy.moveConfirm }
+        case .addAccount where finding.remedy.verb == "register_account":
+            // The daemon's label may promise the sign-ins already on this
+            // Mac (the CLI's `llmpilot init`); here the button opens the
+            // sign-in.
+            return "Add a Claude account"
+        default:
+            break
+        }
+        return busyFindingID == finding.id ? "Working…" : finding.remedy.label
+    }
+
+    /// The leave-the-folder warning, shown only while a move is armed.
+    func moveWarning(for finding: DoctorFinding) -> String? {
+        guard case let .moveIntoFleet(dir) = remedyAction(for: finding), move.confirmDir == dir else { return nil }
+        return AddAccountCopy.moveWarning(dir)
+    }
+
+    /// Why the last move failed, until the next sweep.
+    var moveNotes: [String] { move.notes.keys.sorted().compactMap { move.notes[$0] } }
 
     // MARK: - derived (DoctorPanel.tsx lines 86-105)
 
@@ -379,6 +436,12 @@ struct DoctorPanelView: View {
                     Text(err).font(.system(size: 11)).foregroundColor(CockpitTheme.warn)
                 }
             }
+
+            ForEach(Array(model.moveNotes.enumerated()), id: \.offset) { _, note in
+                CockpitWarnBox {
+                    Text(note).font(.system(size: 11)).foregroundColor(CockpitTheme.warn)
+                }
+            }
         }
         .padding(16)
         .background(CockpitTheme.panel)
@@ -406,6 +469,12 @@ struct DoctorPanelView: View {
                 Text(finding.detail)
                     .font(.system(size: 11))
                     .foregroundColor(CockpitTheme.sec)
+                if let warning = model.moveWarning(for: finding) {
+                    Text(warning)
+                        .font(.system(size: 10.5))
+                        .foregroundColor(CockpitTheme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if action == .none {
                     remedyFallback(finding.remedy)
                 }
@@ -415,7 +484,7 @@ struct DoctorPanelView: View {
                 StatuslineInstallControl(model: model.statuslineInstall, filled: true)
                     .frame(maxWidth: 300, alignment: .trailing)
             } else if action != .none {
-                let label = model.busyFindingID == finding.id ? "Working…" : finding.remedy.label
+                let label = model.remedyLabel(for: finding)
                 Button(action: { model.run(action) }) {
                     Text(label)
                         .font(.system(size: 11, weight: .semibold))
@@ -428,8 +497,8 @@ struct DoctorPanelView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
-                .opacity(model.busyFindingID != nil ? 0.5 : 1)
-                .disabled(model.busyFindingID != nil)
+                .opacity(model.actionBusy ? 0.5 : 1)
+                .disabled(model.actionBusy)
                 .accessibilityIdentifier("doctor-remedy-\(finding.id)")
                 .accessibilityLabel(label)
             }

@@ -192,26 +192,8 @@ struct MenuBarView: View {
                 Divider().padding(.leading, 12)
                 stashRows
             }
-            if model.unadoptedDetectedCount > 0 {
-                Divider().padding(.leading, 12)
-                detectedRow
-            }
         }
         .padding(.vertical, 4)
-    }
-
-    /// Other Claude Code sign-ins found on this Mac that aren't part of the
-    /// fleet yet — glanceable only; the move into the fleet is cockpit-only.
-    private var detectedRow: some View {
-        let count = model.unadoptedDetectedCount
-        return Text(count == 1
-            ? "1 more Claude sign-in found on this Mac — add it in the cockpit."
-            : "\(count) more Claude sign-ins found on this Mac — add them in the cockpit.")
-            .font(.system(size: 10).monospacedDigit())
-            .foregroundStyle(.tertiary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .accessibilityIdentifier("detected-count")
     }
 
     /// A swap preserved sign-ins it could not attribute — say so and point
@@ -391,7 +373,7 @@ struct MenuBarView: View {
                                 .font(.system(size: 10))
                                 .foregroundStyle(.tertiary)
                             Button("Sign in") {
-                                LoginWindowController.shared.open(email: d.email, state: model.state)
+                                LoginWindowController.shared.open(email: d.email)
                             }
                             .controlSize(.small)
                         } else {
@@ -424,7 +406,7 @@ struct MenuBarView: View {
             }
             .keyboardShortcut("o")
             Button {
-                LoginWindowController.shared.open(state: model.state)
+                LoginWindowController.shared.open()
                 dismiss()
             } label: {
                 Label("Add account", systemImage: "person.badge.plus")

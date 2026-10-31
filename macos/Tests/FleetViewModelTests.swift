@@ -170,23 +170,10 @@ final class FleetViewModelTests: XCTestCase {
         try await model.refresh()
         XCTAssertFalse(model.accounts.isEmpty)
         XCTAssertEqual(model.detected.map(\.configDir), ["/Users/x/.claude-other"])
-        XCTAssertEqual(model.unadoptedDetectedCount, 1)
 
         // A second refresh with the same non-empty fleet must not clear it.
         try await model.refresh()
         XCTAssertEqual(model.detected.map(\.configDir), ["/Users/x/.claude-other"])
-    }
-
-    func testUnadoptedDetectedCountExcludesAlreadyRegistered() async throws {
-        let api = StubAPI()
-        api.stateResult = .success(Fixtures.twoAccounts())
-        api.detectResult = [
-            DetectedDir(configDir: "/Users/x/.claude-a", email: "a@example.dev", registered: true),
-            DetectedDir(configDir: "/Users/x/.claude-b", email: "b@example.dev", registered: false),
-        ]
-        let model = makeModel(api)
-        try await model.refresh()
-        XCTAssertEqual(model.unadoptedDetectedCount, 1)
     }
 
     func testEnsureRunningSurfacesLauncherError() async {
