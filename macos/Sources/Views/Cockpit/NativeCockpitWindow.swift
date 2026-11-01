@@ -1092,7 +1092,7 @@ final class NativeCockpitWindowController: NSWindowController, NSWindowDelegate 
             mode = .cockpit
             sizeState.minSize = mode.minSize
             let root = NativeCockpitRootView(
-                fleet: fleet, cockpit: CockpitViewModel(api: api), api: api,
+                fleet: fleet, cockpit: CockpitViewModel(api: api, analyticsCache: .standard), api: api,
                 onFlowModeChange: { [weak self] isFlow in self?.setFlowMode(isFlow) })
             // EditableWindow, not NSWindow: THE cockpit now hosts paste
             // targets (the license recovery email/code fields, the plan-cost

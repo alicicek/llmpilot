@@ -153,7 +153,7 @@ struct DoctorReport: Decodable, Equatable {
 // MARK: - analytics (GET /v1/analytics — internal/daemon/server.go:878-972)
 
 /// internal/analytics/analytics.go:31-36.
-struct AnalyticsTokens: Decodable, Equatable {
+struct AnalyticsTokens: Codable, Equatable {
     var input: Int64
     var output: Int64
     var cacheCreation: Int64
@@ -168,7 +168,7 @@ struct AnalyticsTokens: Decodable, Equatable {
 
 /// The unexported `cellOut` shape (server.go:901-908). `accountID` is ""
 /// for activity in the shared global config dir — the UI's "shared" row.
-struct AnalyticsCell: Decodable, Equatable {
+struct AnalyticsCell: Codable, Equatable {
     var accountID: String
     var project: String
     var model: String
@@ -186,7 +186,7 @@ struct AnalyticsCell: Decodable, Equatable {
 /// `hour_weekday` is a fixed [7][24]int64 Go array, so neither is ever nil
 /// on the wire in practice — tolerated as null/absent anyway, the same
 /// defensive posture as every other array field on this client.
-struct AnalyticsResponse: Decodable, Equatable {
+struct AnalyticsResponse: Codable, Equatable {
     var cells: [AnalyticsCell]
     /// 7 rows (Sunday=0) × 24 local hours of total tokens.
     var hourWeekday: [[Int64]]

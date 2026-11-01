@@ -308,6 +308,7 @@ struct HistorySectionView: View {
     let state: DaemonState
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var open: Bool
 
     init(model: HistorySectionModel, state: DaemonState, defaultOpen: Bool = false) {
@@ -333,6 +334,10 @@ struct HistorySectionView: View {
     private var filteredCells: [AnalyticsCell] {
         guard let analytics = cockpit.analytics else { return [] }
         return HistoryDerivation.filteredCells(analytics.cells, cutoff: cutoff, today: todayStr, selected: selected)
+    }
+
+    private var showsOtherRange: Bool {
+        model.isAnalyticsLoading && cockpit.analyticsDays != model.range.days
     }
 
     private var accountsCaption: String {
@@ -401,25 +406,30 @@ struct HistorySectionView: View {
                 .padding(.bottom, 4)
 
             if cockpit.analytics == nil, cockpit.analyticsError == nil {
-                Text("Loading history…")
-                    .font(.system(size: 11))
-                    .foregroundColor(CockpitTheme.ter)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
-            } else if cockpit.analyticsError != nil {
+                // Only before anything ever loaded: later opens show the
+                // last cards at once (CockpitViewModel keeps every range).
+                HistorySkeleton()
+                    .transition(.opacity)
+            } else if cockpit.analytics == nil {
                 // Charts.tsx:24 — a FIXED string on every failure; the raw
                 // error (HTTP body, NSURL prose) never reaches the surface.
+                // A failed refresh over cards already shown keeps the cards.
                 HistoryQuietState(message: HistorySectionView.unavailableCopy, wide: true)
                     .padding(16)
             } else {
                 cardsGrid
-                    .opacity(model.isAnalyticsLoading ? 0.6 : 1)
-                    .animation(.easeInOut(duration: CockpitTheme.Motion.swap), value: model.isAnalyticsLoading)
+                    // Dimmed only while the cards show another range than
+                    // the one picked; refreshing the same range is silent.
+                    .opacity(showsOtherRange ? 0.6 : 1)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: CockpitTheme.Motion.swap), value: showsOtherRange)
+                    .transition(.opacity)
 
                 HistoryDelightFooter(cells: filteredCells, range: model.range)
                 HistoryTableView(cells: filteredCells)
             }
         }
+        // The skeleton fades into the cards (the one state change it has).
+        .animation(reduceMotion ? nil : .easeInOut(duration: CockpitTheme.Motion.swap), value: cockpit.analytics == nil)
     }
 
     private var cardsGrid: some View {

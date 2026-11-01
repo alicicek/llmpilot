@@ -1,6 +1,7 @@
 package analytics
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -321,5 +322,167 @@ func TestProjectFromTranscriptCwd(t *testing.T) {
 	}
 	if !got["plainproj"] {
 		t.Errorf("no-cwd file must fall back to the dir-name decode: %v", got)
+	}
+}
+
+// appendTo adds content to the end of path.
+func appendTo(t *testing.T, path, content string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sameAggregate fails unless a and b hold the same cells and heatmap.
+func sameAggregate(t *testing.T, label string, a, b *Aggregate) {
+	t.Helper()
+	if fmt.Sprint(a.Cells) != fmt.Sprint(b.Cells) {
+		t.Fatalf("%s: cells differ\n got %v\nwant %v", label, a.Cells, b.Cells)
+	}
+	if fmt.Sprint(a.DailyHourWeekday) != fmt.Sprint(b.DailyHourWeekday) {
+		t.Fatalf("%s: heatmap differs", label)
+	}
+}
+
+// A live session's transcript only grows. Once read, a big file is read on
+// from where the last read stopped, and the totals equal a fresh read of
+// the whole file — a repeat of the last message straddling the boundary
+// counts once, and a half-written last line waits until it is whole.
+func TestScanAppendMatchesAWholeRead(t *testing.T) {
+	old := appendMin
+	appendMin = 1
+	t.Cleanup(func() { appendMin = old })
+
+	cfg := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	path := filepath.Join(cfg, "projects", "-Users-x-dev-proj", "s.jsonl")
+	last := assistantLine("claude-fable-5", "2026-07-01", "m2", "r2", 20, 2)
+	writeFile(t, path,
+		`{"type":"user","cwd":"/Users/x/dev/proj","message":{"role":"user","content":"hi"}}`+"\n"+
+			assistantLine("claude-fable-5", "2026-07-01", "m1", "r1", 10, 1)+"\n"+last+"\n")
+	if _, err := Scan(cfg, cachePath); err != nil {
+		t.Fatal(err)
+	}
+
+	half := assistantLine("claude-opus-5", "2026-07-03", "m4", "r4", 40, 4)
+	appendTo(t, path, last+"\n"+ // the same message again: counts once
+		assistantLine("claude-sonnet-5", "2026-07-02", "m3", "r3", 30, 3)+"\n"+
+		half[:len(half)/2]) // still being written
+	got, err := Scan(cfg, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	whole, err := Scan(cfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameAggregate(t, "after append", got, whole)
+
+	appendTo(t, path, half[len(half)/2:]+"\n")
+	got, err = Scan(cfg, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	whole, err = Scan(cfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameAggregate(t, "after the half line completes", got, whole)
+	if len(got.Cells) != 3 || got.Cells[0].Project != "proj" {
+		t.Fatalf("cells = %+v", got.Cells)
+	}
+}
+
+// The point of the append read: what was already read is not read again.
+// A change far before the read offset (outside the edge the hash covers)
+// is invisible to it — the old model stays — while the appended line is
+// counted.
+func TestScanAppendDoesNotReReadThePrefix(t *testing.T) {
+	old := appendMin
+	appendMin = 1
+	t.Cleanup(func() { appendMin = old })
+
+	cfg := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	path := filepath.Join(cfg, "projects", "p", "s.jsonl")
+	content := assistantLine("claude-aaaa-5", "2026-07-01", "m0", "r0", 1, 1) + "\n"
+	for i := 1; i < 60; i++ { // well past edgeBytes after the first line
+		content += assistantLine("claude-fable-5", "2026-07-01", fmt.Sprintf("m%d", i), fmt.Sprintf("r%d", i), 1, 1) + "\n"
+	}
+	writeFile(t, path, content)
+	if _, err := Scan(cfg, cachePath); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy(data[bytes.Index(data, []byte("claude-aaaa-5")):], "claude-bbbb-5") // same length, first line only
+	writeFile(t, path, string(data))
+	appendTo(t, path, assistantLine("claude-sonnet-5", "2026-07-02", "mx", "rx", 1, 1)+"\n")
+
+	got, err := Scan(cfg, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := map[string]bool{}
+	for _, c := range got.Cells {
+		models[c.Model] = true
+	}
+	if !models["claude-aaaa-5"] || models["claude-bbbb-5"] || !models["claude-sonnet-5"] {
+		t.Fatalf("models = %v: the prefix was re-read, or the append was missed", models)
+	}
+}
+
+// A file rewritten rather than appended to — the bytes before the read
+// offset changed — is read whole again.
+func TestScanRewrittenFileIsReadWhole(t *testing.T) {
+	old := appendMin
+	appendMin = 1
+	t.Cleanup(func() { appendMin = old })
+
+	cfg := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	path := filepath.Join(cfg, "projects", "p", "s.jsonl")
+	writeFile(t, path, assistantLine("claude-fable-5", "2026-07-01", "m1", "r1", 10, 1)+"\n")
+	if _, err := Scan(cfg, cachePath); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path,
+		assistantLine("claude-opus-5", "2026-07-05", "n1", "s1", 99, 9)+"\n"+
+			assistantLine("claude-opus-5", "2026-07-05", "n2", "s2", 1, 1)+"\n")
+	got, err := Scan(cfg, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	whole, err := Scan(cfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameAggregate(t, "after a rewrite", got, whole)
+}
+
+// Small files keep no append state: they re-read in milliseconds, and the
+// cache stays the size it was.
+func TestScanSmallFilesKeepNoAppendState(t *testing.T) {
+	cfg := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	writeFile(t, filepath.Join(cfg, "projects", "p", "s.jsonl"),
+		assistantLine("claude-fable-5", "2026-07-01", "m1", "r1", 10, 1)+"\n")
+	if _, err := Scan(cfg, cachePath); err != nil {
+		t.Fatal(err)
+	}
+	for p, fe := range loadCache(cachePath).Files {
+		if fe.Offset != 0 || fe.Edge != "" || len(fe.Tail) != 0 {
+			t.Fatalf("%s kept append state: %+v", p, fe)
+		}
 	}
 }

@@ -14,7 +14,17 @@ final class CockpitViewModel: ObservableObject {
     @Published private(set) var doctorError: String?
 
     @Published private(set) var analytics: AnalyticsResponse?
+    /// The range, in days, `analytics` covers — History dims it only while
+    /// it shows another range than the one asked for.
+    @Published private(set) var analyticsDays: Int?
     @Published private(set) var analyticsError: String?
+    /// Every range loaded so far: History shows a range it has seen at once
+    /// and refreshes it behind, instead of waiting on the daemon again.
+    private var analyticsByDays: [Int: AnalyticsResponse] = [:]
+    private var analyticsRestored = false
+    /// The same, kept on disk so a relaunch shows History at once too; nil
+    /// keeps nothing (tests, previews).
+    private let analyticsCache: AnalyticsDiskCache?
 
     @Published private(set) var license: LicenseInfo?
     @Published private(set) var licenseError: String?
@@ -33,8 +43,9 @@ final class CockpitViewModel: ObservableObject {
 
     private let api: CockpitDaemonAPI
 
-    init(api: CockpitDaemonAPI) {
+    init(api: CockpitDaemonAPI, analyticsCache: AnalyticsDiskCache? = nil) {
         self.api = api
+        self.analyticsCache = analyticsCache
     }
 
     /// A cancelled load surfaces NOTHING: SwiftUI's `.task(id:)` cancels the
@@ -67,9 +78,22 @@ final class CockpitViewModel: ObservableObject {
     }
 
     func loadAnalytics(days: Int = 30) async {
+        if !analyticsRestored {
+            analyticsRestored = true
+            analyticsByDays = analyticsCache?.load() ?? [:]
+        }
+        // What this range showed last time, at once; the fetch replaces it.
+        if let kept = analyticsByDays[days] {
+            analytics = kept
+            analyticsDays = days
+        }
         do {
-            analytics = try await api.analytics(days: days)
+            let fresh = try await api.analytics(days: days)
+            analyticsByDays[days] = fresh
+            analytics = fresh
+            analyticsDays = days
             analyticsError = nil
+            analyticsCache?.save(analyticsByDays)
         } catch {
             if let msg = surfacedMessage(error) { analyticsError = msg }
         }

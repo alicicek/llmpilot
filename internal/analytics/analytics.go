@@ -14,8 +14,11 @@ package analytics
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -115,7 +118,34 @@ type fileEntry struct {
 	// carried in the cache so a cache-hit file still contributes to the
 	// heatmap without being re-parsed.
 	DailyHourWeekday map[string]HourWeekday `json:"daily_hour_weekday,omitempty"`
+
+	// Append state, kept for files of appendMin bytes or more: a live
+	// session's transcript only grows, and re-reading a gigabyte on every
+	// History load took ~50 s (owner's Mac, 2026-11-01). Offset is the end
+	// of the last complete line read (0 = no state: any change re-parses
+	// the whole file); Edge hashes the bytes just before it, so a file
+	// rewritten rather than appended to is caught and read whole; Project
+	// is the label its cells carry; Tail is the dedup keys of the last
+	// messages read, so a repeat straddling Offset counts once.
+	Offset  int64    `json:"offset,omitempty"`
+	Edge    string   `json:"edge,omitempty"`
+	Project string   `json:"project,omitempty"`
+	Tail    []string `json:"tail,omitempty"`
 }
+
+// appendMin is the size from which a file keeps append state; smaller
+// files re-parse in milliseconds. A var so tests can lower it.
+var appendMin int64 = 8 << 20
+
+const (
+	// tailKeys bounds Tail. A repeated assistant line (one message written
+	// as several content blocks) sits within 16 lines of the first across
+	// all 1,681 transcripts on the owner's Mac (2026-11-01); 64 keys is a
+	// wide margin.
+	tailKeys = 64
+	// edgeBytes is how much of the read prefix Edge covers.
+	edgeBytes = 4096
+)
 
 // cacheVersion 3: project now derives from the transcript's own cwd field
 // (exact) instead of the lossy dir-name decode — cached cells carry the old
@@ -153,21 +183,18 @@ func Scan(configDir, cachePath string) (*Aggregate, error) {
 			return nil //nolint:nilerr // vanished mid-walk: skip
 		}
 		agg.FilesTotal++
-		if prev, ok := cache.Files[p]; ok &&
-			prev.MTimeUnixNano == info.ModTime().UnixNano() && prev.Size == info.Size() {
+		prev, cached := cache.Files[p]
+		if cached && prev.MTimeUnixNano == info.ModTime().UnixNano() && prev.Size == info.Size() {
 			next.Files[p] = prev
 			agg.FilesReused++
 			return nil
 		}
-		project := projectFromPath(root, p)
-		cells, hw := parseFile(p, project)
-		next.Files[p] = fileEntry{
-			MTimeUnixNano:    info.ModTime().UnixNano(),
-			Size:             info.Size(),
-			Cells:            cells,
-			DailyHourWeekday: hw,
-		}
 		agg.FilesParsed++
+		if cached && appendable(p, prev, info.Size()) {
+			next.Files[p] = appendFile(p, prev, info)
+			return nil
+		}
+		next.Files[p] = parseWhole(p, projectFromPath(root, p), info)
 		return nil
 	})
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -262,7 +289,7 @@ func projectFromPath(root, filePath string) string {
 // "tale-mode") over-splits into its own last dash-delimited word. Worktree
 // directories are deliberately NOT merged back into their parent project —
 // that needs real path knowledge this heuristic doesn't have.
-// It is the FALLBACK only: parseFile prefers the transcript's own cwd field,
+// It is the FALLBACK only: a read prefers the transcript's own cwd field,
 // which is exact ("tale-mode" stays "tale-mode" — Greptile P2, 2026-07-11);
 // this decode covers files that carry no cwd line at all.
 func projectFromDirName(name string) string {
@@ -274,7 +301,7 @@ func projectFromDirName(name string) string {
 	return base
 }
 
-// parseFile aggregates one transcript. Lines that are not assistant usage
+// A read aggregates one transcript. Lines that are not assistant usage
 // lines — user lines, system lines, unknown types, malformed JSON, future
 // fields — are skipped without error. Duplicated assistant lines (same
 // message.id + requestId, e.g. from resumed sessions rewriting history into
@@ -284,47 +311,81 @@ func projectFromDirName(name string) string {
 // exact, unlike the fallback dir-name decode, which truncates dashed
 // basenames ("tale-mode" → "mode"; Greptile P2 2026-07-11, cwd presence
 // verified against real transcripts the same day).
-func parseFile(path, fallbackProject string) ([]Cell, map[string]HourWeekday) {
+//
+// parseState accumulates one read of one transcript.
+type parseState struct {
+	byKey   map[Cell]*Cell
+	seen    map[string]struct{}
+	hw      map[string]HourWeekday
+	project string   // from the transcript's own cwd line; "" until seen
+	tail    []string // the last tailKeys dedup keys recorded, oldest first
+}
+
+func newParseState(project string, tail ...string) *parseState {
+	ps := &parseState{byKey: map[Cell]*Cell{}, seen: map[string]struct{}{}, hw: map[string]HourWeekday{}, project: project}
+	for _, k := range tail {
+		ps.seen[k] = struct{}{}
+	}
+	ps.tail = append(ps.tail, tail...)
+	return ps
+}
+
+// read consumes path from offset to its end and returns the offset after
+// the last complete line. A final line with no newline is counted when it
+// is whole JSON (and read past); a half-written one is left for the next
+// read, which starts at its first byte.
+func (ps *parseState) read(path string, offset int64) int64 {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil
+		return offset
 	}
 	defer f.Close() //nolint:errcheck // read-only
-
-	byKey := map[Cell]*Cell{}
-	seen := map[string]struct{}{}
-	hwByDay := map[string]HourWeekday{}
-	project := ""
+	if offset > 0 {
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			return offset
+		}
+	}
 	// ReadBytes instead of a Scanner: transcript lines (pasted images,
 	// thinking blocks) can exceed any fixed scanner buffer.
 	r := bufio.NewReaderSize(f, 256<<10)
 	for {
 		line, err := r.ReadBytes('\n')
 		if len(line) > 0 {
-			if project == "" && bytes.Contains(line, []byte(`"cwd"`)) {
+			complete := line[len(line)-1] == '\n' || json.Valid(line)
+			if !complete {
+				return offset
+			}
+			offset += int64(len(line))
+			if ps.project == "" && bytes.Contains(line, []byte(`"cwd"`)) {
 				var c struct {
 					Cwd string `json:"cwd"`
 				}
 				if json.Unmarshal(line, &c) == nil && strings.HasPrefix(c.Cwd, "/") {
 					if base := filepath.Base(c.Cwd); base != "" && base != "/" && base != "." {
-						project = base
+						ps.project = base
 					}
 				}
 			}
 			// cells accumulate with an empty Project; the resolved label is
-			// stamped below (one project per file, so keys never collide).
-			consumeLine(line, "", byKey, seen, hwByDay)
+			// stamped by cells() (one project per file, so keys never collide).
+			if key := consumeLine(line, "", ps.byKey, ps.seen, ps.hw); key != "" {
+				ps.tail = append(ps.tail, key)
+				if len(ps.tail) > tailKeys {
+					ps.tail = ps.tail[len(ps.tail)-tailKeys:]
+				}
+			}
 		}
 		if err != nil {
-			break // io.EOF or a read error: either way the file is done
+			return offset // io.EOF or a read error: either way the file is done
 		}
 	}
-	if project == "" {
-		project = fallbackProject
-	}
+}
 
-	cells := make([]Cell, 0, len(byKey))
-	for _, c := range byKey {
+// cells returns the accumulated cells stamped with project, sorted by
+// model then day.
+func (ps *parseState) cells(project string) []Cell {
+	cells := make([]Cell, 0, len(ps.byKey))
+	for _, c := range ps.byKey {
 		c.Project = project
 		cells = append(cells, *c)
 	}
@@ -334,13 +395,127 @@ func parseFile(path, fallbackProject string) ([]Cell, map[string]HourWeekday) {
 		}
 		return cells[i].Day < cells[j].Day
 	})
-	return cells, hwByDay
+	return cells
 }
 
-func consumeLine(line []byte, project string, byKey map[Cell]*Cell, seen map[string]struct{}, hwByDay map[string]HourWeekday) {
+// parseWhole reads a file from its first byte, keeping append state when
+// it is big enough to be worth it.
+func parseWhole(path, fallbackProject string, info fs.FileInfo) fileEntry {
+	ps := newParseState("")
+	end := ps.read(path, 0)
+	project := ps.project
+	if project == "" {
+		project = fallbackProject
+	}
+	fe := fileEntry{
+		MTimeUnixNano:    info.ModTime().UnixNano(),
+		Size:             info.Size(),
+		Cells:            ps.cells(project),
+		DailyHourWeekday: ps.hw,
+	}
+	if end >= appendMin {
+		if edge, ok := edgeHash(path, end); ok {
+			fe.Offset, fe.Edge, fe.Project, fe.Tail = end, edge, project, ps.tail
+		}
+	}
+	return fe
+}
+
+// appendable reports a file that only grew since prev was read: it has
+// append state, is no shorter than what was read, and the bytes before
+// the read offset are the ones read then.
+func appendable(path string, prev fileEntry, size int64) bool {
+	if prev.Offset <= 0 || prev.Edge == "" || size < prev.Offset {
+		return false
+	}
+	edge, ok := edgeHash(path, prev.Offset)
+	return ok && edge == prev.Edge
+}
+
+// appendFile reads only what was added after prev.Offset and folds it
+// into prev's totals.
+func appendFile(path string, prev fileEntry, info fs.FileInfo) fileEntry {
+	ps := newParseState(prev.Project, prev.Tail...)
+	end := ps.read(path, prev.Offset)
+
+	byKey := map[Cell]Cell{}
+	for _, c := range prev.Cells {
+		byKey[Cell{Model: c.Model, Day: c.Day}] = c
+	}
+	for _, c := range ps.cells(prev.Project) {
+		k := Cell{Model: c.Model, Day: c.Day}
+		t, ok := byKey[k]
+		if !ok {
+			t = Cell{Project: prev.Project, Model: c.Model, Day: c.Day}
+		}
+		t.Messages += c.Messages
+		t.Tokens.add(c.Tokens)
+		byKey[k] = t
+	}
+	cells := make([]Cell, 0, len(byKey))
+	for _, c := range byKey {
+		cells = append(cells, c)
+	}
+	sort.Slice(cells, func(i, j int) bool {
+		if cells[i].Model != cells[j].Model {
+			return cells[i].Model < cells[j].Model
+		}
+		return cells[i].Day < cells[j].Day
+	})
+	hw := map[string]HourWeekday{}
+	for day, g := range prev.DailyHourWeekday {
+		hw[day] = g
+	}
+	for day, g := range ps.hw {
+		cur := hw[day]
+		cur.add(g)
+		hw[day] = cur
+	}
+
+	fe := fileEntry{
+		MTimeUnixNano:    info.ModTime().UnixNano(),
+		Size:             info.Size(),
+		Cells:            cells,
+		DailyHourWeekday: hw,
+		Offset:           prev.Offset,
+		Edge:             prev.Edge,
+		Project:          prev.Project,
+		Tail:             ps.tail,
+	}
+	if end != prev.Offset {
+		if edge, ok := edgeHash(path, end); ok {
+			fe.Offset, fe.Edge = end, edge
+		}
+	}
+	return fe
+}
+
+// edgeHash hashes the edgeBytes before offset (all of them for a shorter
+// file).
+func edgeHash(path string, offset int64) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close() //nolint:errcheck // read-only
+	start := offset - edgeBytes
+	if start < 0 {
+		start = 0
+	}
+	buf := make([]byte, offset-start)
+	if _, err := f.ReadAt(buf, start); err != nil {
+		return "", false
+	}
+	sum := sha256.Sum256(buf)
+	return hex.EncodeToString(sum[:16]), true
+}
+
+// consumeLine counts one line and returns the dedup key it recorded, or
+// "" when it recorded none.
+func consumeLine(line []byte, project string, byKey map[Cell]*Cell, seen map[string]struct{}, hwByDay map[string]HourWeekday) string {
 	// Cheap pre-filter before JSON-decoding megabyte lines.
 	if !bytes.Contains(line, []byte(`"assistant"`)) {
-		return
+		return ""
 	}
 	var ln struct {
 		Type      string `json:"type"`
@@ -358,15 +533,16 @@ func consumeLine(line []byte, project string, byKey map[Cell]*Cell, seen map[str
 		} `json:"message"`
 	}
 	if json.Unmarshal(line, &ln) != nil {
-		return
+		return ""
 	}
 	if ln.Type != "assistant" || ln.Message.Model == "" || ln.Message.Usage == nil {
-		return
+		return ""
 	}
+	key := ""
 	if ln.Message.ID != "" && ln.RequestID != "" {
-		key := ln.Message.ID + "\x00" + ln.RequestID
+		key = ln.Message.ID + "\x00" + ln.RequestID
 		if _, dup := seen[key]; dup {
-			return
+			return ""
 		}
 		seen[key] = struct{}{}
 	}
@@ -401,4 +577,5 @@ func consumeLine(line []byte, project string, byKey map[Cell]*Cell, seen map[str
 			hwByDay[day] = grid
 		}
 	}
+	return key
 }

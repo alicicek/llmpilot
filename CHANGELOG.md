@@ -4,6 +4,23 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **History opens at once.** The charts you saw last stay on screen when
+  you close and reopen the window, or relaunch the app, and refresh
+  quietly behind; each range you've opened (Today, 7d, 30d, 1y) is kept.
+  The very first load shows the cards' outline instead of "Loading
+  history…".
+
+### Fixed
+
+- **History no longer re-reads long sessions from the start.** A live
+  Claude Code session's log only grows, but every History load read all
+  of it again — about 50 seconds with a few big sessions running. Big
+  logs are now read on from where the last read stopped.
+
 ## [1.7.1] - 2026-11-01
 
 A tidier status line install. No price, trial length, offer, or
