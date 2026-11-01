@@ -97,7 +97,9 @@ enum StatuslineInstallCopy {
     /// the doctor note beside it already says whose line it is. Names the
     /// BACKUP FILE, never a terminal command — the person this button
     /// exists for has no `llmpilot` on PATH (review 2026-10-03 P1).
-    static let consent = "Claude Code already runs a statusline. Keep both — it renders above the llmpilot line — or replace it; the old line is saved to ~/.llmpilot/statusline-replaced.json and settings.json.orig."
+    static let consent = "Claude Code already shows another status line."
+    /// The consent step's second, quieter line: what each choice does.
+    static let consentNote = "Keep both puts it above llmpilot's line. Replacing saves the old one in ~/.llmpilot."
 
     static func result(_ outcome: StatuslineInstallOutcome) -> String {
         switch outcome {

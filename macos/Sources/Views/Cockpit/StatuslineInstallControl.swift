@@ -9,21 +9,31 @@ struct StatuslineInstallControl: View {
     /// remedy column uses its filled action button, Settings its plain
     /// system buttons.
     var filled = false
+    /// Trailing in a row's control column; leading where the consent step
+    /// gets the row's full width under its label (Settings).
+    var alignment: HorizontalAlignment = .trailing
+
+    private var textAlignment: TextAlignment { alignment == .leading ? .leading : .trailing }
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: alignment, spacing: 6) {
             switch model.phase {
             case .idle, .busy:
                 button(model.phase == .busy ? StatuslineInstallCopy.working : StatuslineInstallCopy.button,
                        action: model.install, identifier: "statusline-install")
                     .disabled(model.phase == .busy)
             case .needsConsent:
-                VStack(alignment: .trailing, spacing: 6) {
-                    Text(StatuslineInstallCopy.consent)
-                        .font(.system(size: 10.5))
-                        .foregroundColor(CockpitTheme.sec)
-                        .multilineTextAlignment(.trailing)
-                        .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: alignment, spacing: 6) {
+                    VStack(alignment: alignment, spacing: 2) {
+                        Text(StatuslineInstallCopy.consent)
+                            .font(.system(size: 11))
+                            .foregroundColor(CockpitTheme.text)
+                        Text(StatuslineInstallCopy.consentNote)
+                            .font(.system(size: 10.5))
+                            .foregroundColor(CockpitTheme.ter)
+                    }
+                    .multilineTextAlignment(textAlignment)
+                    .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
                         Button(StatuslineInstallCopy.cancel, action: model.cancel)
                             .accessibilityIdentifier("statusline-install-cancel")
@@ -32,6 +42,9 @@ struct StatuslineInstallControl: View {
                         Button(StatuslineInstallCopy.replaceIt, action: model.replace)
                             .accessibilityIdentifier("statusline-install-replace")
                     }
+                    // Never truncated to "Keep b…": the labels keep their
+                    // width and the text above wraps instead.
+                    .fixedSize()
                 }
             case let .done(outcome):
                 Text(StatuslineInstallCopy.result(outcome))

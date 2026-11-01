@@ -186,18 +186,26 @@ final class SettingsModel: ObservableObject {
 private struct SettingsRow<Content: View>: View {
     let label: String
     let hint: String?
+    /// Anything that needs the row's full width, under the label — a
+    /// question too long for the control column.
+    var footer: AnyView? = nil
     @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(.system(size: 12, weight: .semibold))
-                if let hint {
-                    Text(hint).font(.system(size: 10.5)).foregroundColor(CockpitTheme.ter)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label).font(.system(size: 12, weight: .semibold))
+                    if let hint {
+                        Text(hint).font(.system(size: 10.5)).foregroundColor(CockpitTheme.ter)
+                    }
                 }
+                Spacer(minLength: 12)
+                content
             }
-            Spacer(minLength: 12)
-            content
+            if let footer {
+                footer
+            }
         }
         .padding(.vertical, 10)
         .overlay(alignment: .bottom) {
@@ -364,13 +372,25 @@ private struct StatuslineSettingsRow: View {
         return false
     }
 
+    /// The keep-both-or-replace question, when another tool's line is in
+    /// the way: it takes the row's full width rather than the control
+    /// column, where it wrapped to six lines and cut its buttons short.
+    private var asking: Bool {
+        if case .needsConsent = install.phase { return true }
+        return false
+    }
+
     var body: some View {
-        SettingsRow(label: SettingsCopy.statusline, hint: SettingsCopy.statuslineHint(installed: isInstalled)) {
+        SettingsRow(
+            label: SettingsCopy.statusline,
+            hint: SettingsCopy.statuslineHint(installed: isInstalled),
+            footer: asking ? AnyView(StatuslineInstallControl(model: install, alignment: .leading)) : nil
+        ) {
             if isInstalled {
                 Button(SettingsCopy.customizeStatusline, action: onCustomize)
                     .accessibilityIdentifier("settings-customize-statusline")
                     .accessibilityLabel("Customize the status line")
-            } else {
+            } else if !asking {
                 StatuslineInstallControl(model: install)
                     .frame(maxWidth: 230, alignment: .trailing)
             }
