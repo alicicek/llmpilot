@@ -4,7 +4,10 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.2] - 2026-11-01
+
+History's cards line up. No price, trial length, offer, or account-data
+changes.
 
 ### Fixed
 
