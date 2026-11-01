@@ -4,7 +4,10 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.7.0] - 2026-11-01
+
+Simpler Settings: plan cost is read from each sign-in, and the status line
+is one row. No price, trial length, offer, or account-data changes.
 
 ### Changed
 
