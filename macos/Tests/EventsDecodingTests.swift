@@ -91,4 +91,54 @@ final class EventsDecodingTests: XCTestCase {
     func testOrderedEventsEmpty() {
         XCTAssertEqual(orderedEvents([]), [])
     }
+
+    // MARK: - Activity (EventsFeedView.swift)
+
+    private func event(at: String, kind: String, account: String?, message: String) -> DaemonEvent {
+        let acct = account.map { ",\"account_id\":\"\($0)\"" } ?? ""
+        return try! DaemonDates.decoder().decode(
+            DaemonEvent.self,
+            from: Data("{\"at\":\"\(at)\",\"kind\":\"\(kind)\"\(acct),\"message\":\"\(message)\"}".utf8))
+    }
+
+    /// Re-aiming the Mac's wake is plumbing: older daemons logged one per
+    /// schedule edit, and none of them reach the feed.
+    func testActivityHidesWakePlumbing() {
+        let rows = Activity.rows([
+            event(at: "2026-11-01T01:13:00Z", kind: "wake_armed", account: nil, message: "mac will wake Sun 06:13"),
+            event(at: "2026-11-01T01:15:00Z", kind: "trigger", account: "a", message: "01:15 nudge opened a fresh window on a"),
+            event(at: "2026-11-01T01:20:00Z", kind: "wake", account: "a", message: "armed wake for a at 08:30"),
+        ])
+        XCTAssertEqual(rows.map(\.event.kind), ["trigger"])
+    }
+
+    /// Back-to-back repeats of one event fold into a line with a count; the
+    /// same text on another account, or a repeat with something between,
+    /// stays its own line.
+    func testActivityFoldsBackToBackRepeats() {
+        let rows = Activity.rows([
+            event(at: "2026-11-01T03:35:00Z", kind: "trigger_skipped", account: "a", message: "skipped"),
+            event(at: "2026-11-01T03:58:00Z", kind: "trigger_skipped", account: "a", message: "skipped"),
+            event(at: "2026-11-01T04:10:00Z", kind: "trigger_skipped", account: "b", message: "skipped"),
+            event(at: "2026-11-01T04:20:00Z", kind: "switch", account: "b", message: "Switched to b"),
+            event(at: "2026-11-01T04:30:00Z", kind: "trigger_skipped", account: "b", message: "skipped"),
+        ])
+        XCTAssertEqual(rows.map(\.count), [1, 1, 1, 2])
+        XCTAssertEqual(rows.map(\.event.accountID), ["b", "b", "b", "a"])
+        // The folded line keeps its newest time.
+        XCTAssertEqual(rows[3].event.at, ISO8601DateFormatter().date(from: "2026-11-01T03:58:00Z"))
+    }
+
+    func testFailedTodayCountsOnlyTodaysFailures() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = ISO8601DateFormatter().date(from: "2026-11-01T12:00:00Z")!
+        let events = [
+            event(at: "2026-10-31T23:59:00Z", kind: "trigger_failed", account: "a", message: "yesterday"),
+            event(at: "2026-11-01T01:15:00Z", kind: "trigger_failed", account: "a", message: "today"),
+            event(at: "2026-11-01T02:00:00Z", kind: "trigger_skipped", account: "a", message: "not a failure"),
+        ]
+        XCTAssertEqual(Activity.failedToday(events, now: now, calendar: cal), 1)
+        XCTAssertEqual(Activity.failedToday([], now: now, calendar: cal), 0)
+    }
 }

@@ -542,7 +542,7 @@ struct NativeCockpitRootView: View {
                 if showHistory {
                     HistorySectionView(model: historyModel, state: state)
                 }
-                sectionBox { EventsFeedView(events: state.events, version: state.version) }
+                EventsFeedView(events: state.events, version: state.version)
             }
             .padding(16)
         }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -111,7 +110,7 @@ func claudeRunner(resolver *claudecfg.CLIResolver) pilotapi.TriggerRunner {
 	return func(ctx context.Context, env []string, _ string, args ...string) ([]byte, error) {
 		cli, err := resolver.Resolve(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("no Claude Code where llmpilot can find it: %w", err)
+			return nil, err // "no Claude Code installation found on this Mac"
 		}
 		cmd := exec.CommandContext(ctx, cli.Path, args...)
 		cmd.Env = startEnv(env, cli.Env)

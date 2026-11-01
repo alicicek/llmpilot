@@ -112,7 +112,7 @@ func (d *Daemon) startPlanned(ctx context.Context, now time.Time) {
 		if !p.Rolling && p.NextAt != nil && now.Sub(*p.NextAt) > oneTapExpiry {
 			if d.dropOneTap(p.AccountID, *p.NextAt) {
 				// Say why the start never came, where the user looks.
-				msg := fmt.Sprintf("the %s start for %s did not happen — Claude Code wasn't signed in to it then", p.NextAt.Local().Format("15:04"), acct.Label)
+				msg := fmt.Sprintf("The %s one-tap start for %s did not happen — Claude Code wasn't signed in to it then", p.NextAt.Local().Format("15:04"), acct.Label)
 				if err := d.Store.AppendEvent(store.Event{Kind: "trigger_skipped", AccountID: acct.ID, Message: msg}); err != nil {
 					d.Log.Warn("append event", "err", err)
 				}

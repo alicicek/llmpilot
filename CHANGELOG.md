@@ -4,6 +4,29 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-11-01
+
+A quieter activity list. No price, trial length, offer, or account-data
+changes.
+
+### Changed
+
+- **Activity is folded away.** The list of what llmpilot did now sits
+  under one "Activity" row at the foot of the cockpit, closed until you
+  open it, and says how many starts failed today when any did. Each line
+  is a time and a plain sentence: no event labels, a mark only on
+  failures, repeats folded into one line, and the Mac's wake bookkeeping
+  left out.
+- **Plainer wording for daily times.** A daily time is named by its time
+  ("01:15 nudge opened a fresh window on work · resets 06:15") instead of
+  its internal ID, and a failure says what went wrong in words.
+
+### Fixed
+
+- **Accounts with no 5-hour limit stay quiet.** Their daily times no
+  longer add a "skipped" line to the activity list three times a day, and
+  no longer wake the Mac — there is no window for them to start.
+
 ## [1.6.0] - 2026-11-01
 
 Windows that start themselves, a forecast of when you'll hit your limit,
