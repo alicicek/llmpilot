@@ -1,52 +1,63 @@
 <!doctype html>
-<!-- Source for background.tiff (620x400pt). Regenerate after edits (see
-     scratchpad shoot script / release notes):
-       playwright screenshots at deviceScaleFactor 1 and 2, then
-       tiffutil -cathidpicheck bg1x.png bg2x.png -out background.tiff
+<!-- Source for background.tiff (620x400pt window). Regenerate after edits:
+       chrome --headless --screenshot at --force-device-scale-factor 1 and 2
+       (file:// URL, never a dev server: per-origin zoom corrupts the shot),
+       then tiffutil -cathidpicheck bg1x.png bg2x.png -out background.tiff
 
      LIGHT surface by design, not preference: Finder draws icon labels in
      dark text over background pictures and exposes NO label-color control
      (dmgbuild settings spec; create-dmg #197) — a dark floor makes the
-     app/Applications labels near-invisible. Light is also Apple's own DMG
-     material. Tokens from the design system's light column.
+     app/Applications labels near-invisible. Tokens from the design system's
+     light column.
 
      SAFE ZONE: window bounds include the ~28pt title bar, and a user can
      have BOTH the path bar and status bar enabled (~82pt total chrome), so
      the worst-case canvas is ~318pt. Every glyph ends by y=303; the canvas
-     is 560pt tall so resizes reveal floor, never a white seam. -->
+     is 560pt tall so resizes reveal floor, never a white seam.
+
+     The real icons are Finder's: create-dmg pins them at centers 160/460,
+     y156, 128pt. Nothing is drawn inside those wells — the art only frames
+     them: chevrons and a ghost of the app being dragged between, a dashed
+     drop zone around Applications. -->
 <html lang="en">
 <meta charset="utf-8">
 <style>
   * { margin:0; box-sizing:border-box; }
   html,body { width:620px; height:560px; overflow:hidden; }
-  body { background:#F5F5F7; color:#1D1D1F;
+  body { color:#1D1D1F; position:relative;
+    background:linear-gradient(180deg, #F7F8FA 0%, #EEF0F4 60%, #EEF0F4 100%);
     font:14px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-    -webkit-font-smoothing:antialiased; position:relative; }
-  header { position:absolute; top:24px; left:26px; right:26px;
-    display:flex; align-items:center; gap:10px;
-    padding-bottom:12px; border-bottom:1px solid rgba(0,0,0,.11); }
-  header img { width:22px; height:22px; border-radius:5px; }
-  /* Three sizes, clean steps (18 → 14 → 11): the drag instruction is the
-     hero, the wordmark a quiet anchor, support lines share 11px. */
-  header .name { font-size:14px; font-weight:700; letter-spacing:-.01em; }
-  header .eyebrow { margin-left:auto; font-size:11px; font-weight:700;
-    letter-spacing:.07em; color:#59595E; }
-  /* Icon wells: create-dmg pins the real icons at centers 160/460, y156,
-     128pt — nothing is drawn there; Finder's dark labels sit on this light
-     floor at full contrast (label color is Finder's, uncontrollable). */
-  .arrow { position:absolute; top:162px; left:250px; width:120px; height:12px; }
-  .drag { position:absolute; top:264px; left:0; right:0; text-align:center;
-    font-size:18px; font-weight:650; color:#1D1D1F; }
+    -webkit-font-smoothing:antialiased; }
+  h1 { position:absolute; top:26px; left:0; right:0; text-align:center;
+    font-size:20px; font-weight:650; letter-spacing:-.015em; }
+  .panel { position:absolute; left:28px; right:28px; top:70px; height:212px;
+    border-radius:22px; background:rgba(255,255,255,.72);
+    border:1px solid rgba(0,0,0,.06);
+    box-shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.05); }
+  .drop { position:absolute; left:384px; top:84px; width:152px; height:184px;
+    border-radius:18px; border:2px dashed rgba(10,122,255,.42);
+    background:rgba(10,122,255,.035); }
+  .chev { position:absolute; left:232px; top:144px; width:52px; height:24px; }
+  .ghost { position:absolute; left:296px; top:118px; width:62px; height:62px;
+    opacity:.42; transform:rotate(-9deg);
+    filter:drop-shadow(0 6px 10px rgba(0,0,0,.18)); }
+  .cursor { position:absolute; left:340px; top:160px; width:18px; height:26px; }
 </style>
 <body>
-  <header>
-    <img src="mark.png" alt="">
-    <span class="name">llmpilot</span>
-    <span class="eyebrow">YOUR ACCOUNTS, ON AUTOPILOT</span>
-  </header>
-  <svg class="arrow" viewBox="0 0 120 12" fill="none" aria-hidden="true">
-    <path d="M2 6 H112 M104 1.5 L112 6 L104 10.5" stroke="#59595E" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <h1>Drag llmpilot into Applications</h1>
+  <div class="panel"></div>
+  <div class="drop"></div>
+  <svg class="chev" viewBox="0 0 52 24" fill="none" aria-hidden="true">
+    <g stroke="#0A7AFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 4 L12 12 L4 20" stroke-opacity=".28"/>
+      <path d="M22 4 L30 12 L22 20" stroke-opacity=".55"/>
+      <path d="M40 4 L48 12 L40 20" stroke-opacity=".9"/>
+    </g>
   </svg>
-  <div class="drag">drag llmpilot to Applications</div>
+  <img class="ghost" src="appicon.png" alt="">
+  <svg class="cursor" viewBox="0 0 18 26" aria-hidden="true">
+    <path d="M2 2 L2 20 L6.5 15.8 L9.6 23 L12.6 21.7 L9.6 14.7 L15.6 14.7 Z"
+      fill="#1D1D1F" stroke="#FFFFFF" stroke-width="1.6" stroke-linejoin="round"/>
+  </svg>
 </body>
 </html>
