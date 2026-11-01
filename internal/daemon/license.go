@@ -594,10 +594,15 @@ func (d *Daemon) kickRecheck(now time.Time) {
 func (d *Daemon) setLicenseStatus(ctx context.Context, status string) {
 	d.mu.Lock()
 	changed := d.licenseStatus != status || d.licenseError != "" || d.seatRefused
+	nowPaid := d.licenseStatus != status && (status == "trialing" || status == "lifetime")
 	d.licenseStatus = status
 	d.licenseError = ""
 	d.seatRefused = false
+	d.planLicenceAt = time.Time{} // the start loop asks again
 	d.mu.Unlock()
+	if nowPaid {
+		d.onLicensed(ctx)
+	}
 	if changed {
 		d.notify(ctx)
 	}

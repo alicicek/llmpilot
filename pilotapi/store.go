@@ -15,6 +15,8 @@ type Store interface {
 	Snapshot(accountID string) (*UsageSnapshot, error)
 	SaveSnapshot(snap *UsageSnapshot) error
 	Schedules() ([]Schedule, error)
+	// WindowPlans is every account's rolling / one-off window starts.
+	WindowPlans() ([]WindowPlan, error)
 	AppendEvent(e Event) error
 }
 

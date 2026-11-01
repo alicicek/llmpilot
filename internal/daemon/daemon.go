@@ -204,6 +204,17 @@ type Daemon struct {
 	// (nil = wake arming off; degraded mode inside is a designed no-op).
 	WakeSync func(ctx context.Context, now time.Time) error
 
+	// StartWindow runs the engine's guarded trigger on one account now — a
+	// window plan's start at a reset — and says what it did (nil: plans
+	// never fire).
+	StartWindow func(ctx context.Context, accountID, why string) (pilotapi.StartOutcome, error)
+	// CanStart reports whether an account's config dir is signed in to that
+	// account right now; a shared folder signed in to another account makes
+	// a planned start wait instead of failing (nil: always try).
+	CanStart func(acct store.Account) bool
+	// HoldAwake keeps the Mac out of idle sleep for d (nil: no hold).
+	HoldAwake func(d time.Duration)
+
 	// TriggerSync mirrors the full schedule set into launchd. The schedule
 	// API calls it BEFORE persisting: a failed bootstrap must not leave a
 	// saved-but-never-loaded schedule. nil = off — sandboxed daemons must
@@ -333,6 +344,12 @@ type Daemon struct {
 	licenseError        string               // last terminal licensing refusal code, "" when none
 	seatRefused         bool                 // the license server refused this install a seat; cleared by any accepted grant
 	lastRecheck         time.Time            // last online check the license view asked for (throttle)
+	planTries           map[string]*planTry  // window-plan start bookkeeping per account
+	heldUntil           time.Time            // the Mac is kept awake until here for a planned start
+	planMu              sync.Mutex           // serializes window-plan read-modify-writes
+	paceNoticed         map[string]time.Time // per account: the window (reset) whose pace notice went out
+	planLicenceAt       time.Time            // when the start loop last read the licence (wall clock)
+	planLicenceOK       bool                 // what it said
 	checkoutOutcome     string               // live checkout's back-out verdict: "" | declined | abandoned
 	checkoutPollGen     int                  // verdict generation — writes and the new-press clear share d.mu
 	cooldown            map[string]coolState // per-account 429 gate (usage+refresh share Anthropic's limit)
@@ -417,6 +434,8 @@ type AccountState struct {
 	Snapshot  *store.UsageSnapshot `json:"snapshot,omitempty"`
 	TokenNote string               `json:"token_note,omitempty"`
 	Stale     bool                 `json:"stale,omitempty"`
+	// Forecasts is the open 5-hour window's pace and wall (forecast.go).
+	Forecasts []BucketForecast `json:"forecasts,omitempty"`
 }
 
 // State is the full document served at GET /v1/state and pushed over SSE.
@@ -431,7 +450,9 @@ type State struct {
 	// (the accounts:null wire kill).
 	Stash     []pilotapi.StashEntry `json:"stash"`
 	Schedules []store.Schedule      `json:"schedules"`
-	License   string                `json:"license_status,omitempty"`
+	// WindowPlans is never null: every account's rolling / one-off starts.
+	WindowPlans []store.WindowPlan `json:"window_plans"`
+	License     string             `json:"license_status,omitempty"`
 	// LicenseError is the last terminal licensing refusal code
 	// (seat_limit_reached, trial_email_used, ...) — a machine code only.
 	LicenseError string `json:"license_error,omitempty"`
@@ -488,7 +509,8 @@ func (d *Daemon) State(ctx context.Context) (State, error) {
 		if d.Pinned != nil && d.Pinned(a) {
 			a.Pinned = true
 		}
-		st.Accounts = append(st.Accounts, AccountState{Account: a, Snapshot: snap, TokenNote: note, Stale: stale})
+		st.Accounts = append(st.Accounts, AccountState{Account: a, Snapshot: snap, TokenNote: note, Stale: stale,
+			Forecasts: d.forecasts(a.ID, snap, time.Now())})
 	}
 	if d.Active != nil {
 		st.ActiveID = d.Active(ctx)
@@ -523,6 +545,14 @@ func (d *Daemon) State(ctx context.Context) (State, error) {
 		scheds = []store.Schedule{}
 	}
 	st.Schedules = scheds
+	plans, err := d.Store.WindowPlans()
+	if err != nil {
+		d.Log.Warn("read window plans", "err", err)
+	}
+	if plans == nil {
+		plans = []store.WindowPlan{}
+	}
+	st.WindowPlans = plans
 	return st, nil
 }
 
@@ -530,6 +560,7 @@ func (d *Daemon) State(ctx context.Context) (State, error) {
 func (d *Daemon) Run(ctx context.Context) error {
 	d.init()
 	recheck := d.seedLicenseStatus(ctx)
+	resynced, lastResync := d.resyncTriggers(ctx), time.Now()
 	if d.Revalidate != nil {
 		go d.entitlementLoop(ctx)
 		// A purchase stored but off — a reinstall wiped the clock anchor, or
@@ -559,6 +590,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-tick.C:
 			d.pollDue(ctx)
+			now := time.Now()
+			d.startPlanned(ctx, now)
+			if !resynced && now.Sub(lastResync) >= time.Minute {
+				resynced, lastResync = d.resyncTriggers(ctx), now
+			}
 		case <-wakeTick:
 			d.wakeSync(ctx)
 		}
@@ -966,6 +1002,7 @@ func (d *Daemon) pollOne(ctx context.Context, a store.Account) {
 		d.appendHistory(historyKey(a.ID, b.Kind, b.Scope), HistorySample{At: now.UTC(), Percent: b.Percent})
 	}
 	d.checkThresholds(ctx, a, prev, snap)
+	d.checkPace(ctx, a, snap)
 	// A proven success is live data: any stale flag or note (rate-limit,
 	// stale) is over — nothing else clears them for an idle account.
 	staleCleared := d.clearStale(a.ID)
@@ -1021,9 +1058,14 @@ func (d *Daemon) entitlementLoop(ctx context.Context) {
 			}
 			d.mu.Lock()
 			changed := d.licenseStatus != result.Status || d.seatRefused
+			nowPaid := changed && (result.Status == "trialing" || result.Status == "lifetime")
 			d.licenseStatus = result.Status
 			d.seatRefused = false
+			d.planLicenceAt = time.Time{} // the start loop asks again
 			d.mu.Unlock()
+			if nowPaid {
+				d.onLicensed(ctx)
+			}
 			if changed {
 				if result.Status == "revoked" {
 					if err := d.Store.AppendEvent(store.Event{Kind: "license_revoked", Message: "Pro paused — the purchase was refunded or disputed; contact support@llmpilot.dev if this looks wrong"}); err != nil {

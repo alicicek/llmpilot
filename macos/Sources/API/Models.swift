@@ -7,6 +7,9 @@ struct DaemonState: Decodable, Equatable {
     var accounts: [AccountState]
     var activeID: String?
     var schedules: [Schedule]
+    /// Every account's rolling / one-off window starts (window_plans; empty
+    /// from a daemon too old to serve it).
+    var windowPlans: [WindowPlan] = []
     /// Preserved foreign credentials awaiting adopt/discard (metadata only —
     /// the payload never rides the wire). Empty array when none.
     var stash: [StashEntry]
@@ -32,6 +35,7 @@ struct DaemonState: Decodable, Equatable {
         case accounts
         case activeID = "active_id"
         case schedules
+        case windowPlans = "window_plans"
         case stash
         case license = "license_status"
         case licenseSeatRefused = "license_seat_refused"
@@ -62,6 +66,7 @@ struct DaemonState: Decodable, Equatable {
         accounts = try c.decodeIfPresent([AccountState].self, forKey: .accounts) ?? []
         activeID = try c.decodeIfPresent(String.self, forKey: .activeID)
         schedules = try c.decodeIfPresent([Schedule].self, forKey: .schedules) ?? []
+        windowPlans = try c.decodeIfPresent([WindowPlan].self, forKey: .windowPlans) ?? []
         stash = try c.decodeIfPresent([StashEntry].self, forKey: .stash) ?? []
         license = try c.decodeIfPresent(String.self, forKey: .license)
         licenseSeatRefused = try c.decodeIfPresent(Bool.self, forKey: .licenseSeatRefused) ?? false
@@ -106,11 +111,100 @@ struct AccountState: Decodable, Equatable, Identifiable {
     /// (internal/daemon/server.go:592-593); pinned/watched accounts carry
     /// their own folder.
     var configDir: String?
+    /// The open 5-hour window's pace and wall (internal/daemon/forecast.go);
+    /// nil until the daemon has a quarter hour of polls to judge it.
+    var forecasts: [BucketForecast]?
 
     enum CodingKeys: String, CodingKey {
-        case id, label, email, pinned, snapshot, stale
+        case id, label, email, pinned, snapshot, stale, forecasts
         case tokenNote = "token_note"
         case configDir = "config_dir"
+    }
+
+    /// The forecast for the 5-hour window, if the daemon has one.
+    var sessionForecast: BucketForecast? {
+        forecasts?.first { $0.kind == "session" || $0.kind == "five_hour" }
+    }
+
+    /// The weekly forecast the daemon sends for an account with no 5-hour
+    /// limit (internal/daemon/forecast.go weeklyForecasts).
+    var weeklyForecast: BucketForecast? {
+        forecasts?.first { $0.kind == "weekly_all" || $0.kind == "seven_day" }
+    }
+
+    /// The account's usage lists no 5-hour limit at all — Anthropic drops it
+    /// for verified accounts on some plans (Ultra), account by account. An
+    /// account WITH one lists it even while idle; no usage yet is unknown
+    /// (pilotapi.NoFiveHourLimit).
+    var noFiveHourLimit: Bool {
+        guard let buckets = snapshot?.buckets, !buckets.isEmpty else { return false }
+        return !buckets.contains { $0.kind == "session" || $0.kind == "five_hour" }
+    }
+
+    /// The pace line's forecast: the weekly one when there is no 5-hour limit.
+    var paceForecast: BucketForecast? { noFiveHourLimit ? weeklyForecast : sessionForecast }
+}
+
+/// An open 5-hour window's pace (forecast.go BucketForecast): percent per
+/// hour at the live burn, and when it reaches 100% at that pace.
+struct BucketForecast: Decodable, Equatable {
+    var kind: String
+    var scope: String?
+    var perHour: Double
+    /// nil: the pace is too slow to reach 100% at all.
+    var wallAt: Date?
+    /// Whether wallAt lands before the window resets.
+    var beforeReset: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case kind, scope
+        case perHour = "per_hour"
+        case wallAt = "wall_at"
+        case beforeReset = "before_reset"
+    }
+
+    init(kind: String, scope: String? = nil, perHour: Double, wallAt: Date?, beforeReset: Bool) {
+        self.kind = kind
+        self.scope = scope
+        self.perHour = perHour
+        self.wallAt = wallAt
+        self.beforeReset = beforeReset
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(String.self, forKey: .kind)
+        scope = try c.decodeIfPresent(String.self, forKey: .scope)
+        perHour = try c.decodeIfPresent(Double.self, forKey: .perHour) ?? 0
+        wallAt = try c.decodeIfPresent(Date.self, forKey: .wallAt)
+        beforeReset = try c.decodeIfPresent(Bool.self, forKey: .beforeReset) ?? false
+    }
+}
+
+/// One account's automatic window starts (pilotapi.WindowPlan): rolling
+/// starts the next window at every reset; nextAt starts one at one moment.
+struct WindowPlan: Decodable, Equatable {
+    var accountID: String
+    var rolling: Bool
+    var nextAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case accountID = "account_id"
+        case rolling
+        case nextAt = "next_at"
+    }
+
+    init(accountID: String, rolling: Bool = false, nextAt: Date? = nil) {
+        self.accountID = accountID
+        self.rolling = rolling
+        self.nextAt = nextAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        accountID = try c.decode(String.self, forKey: .accountID)
+        rolling = try c.decodeIfPresent(Bool.self, forKey: .rolling) ?? false
+        nextAt = try c.decodeIfPresent(Date.self, forKey: .nextAt)
     }
 }
 

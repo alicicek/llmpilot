@@ -462,6 +462,7 @@ func newDaemon(st *store.Store) *daemon.Daemon {
 		if prov.Available {
 			armer := prov.NewArmer(pilotapi.ArmerConfig{Store: st, Log: slog.Default()})
 			d.WakeSync = armer.Sync
+			wireWindowStarts(d, st, prov)
 		}
 		// Cockpit schedule writes must land in launchd too — the API syncs
 		// through this before persisting (Greptile P1: without it a

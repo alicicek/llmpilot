@@ -54,6 +54,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/schedules", d.handleScheduleCreate)
 	mux.HandleFunc("PUT /v1/schedules/{id}", d.handleScheduleUpdate)
 	mux.HandleFunc("DELETE /v1/schedules/{id}", d.handleScheduleDelete)
+	mux.HandleFunc("POST /v1/window-plans", d.handleWindowPlanSet)
 	mux.HandleFunc("GET /v1/doctor", d.handleDoctor)
 	mux.HandleFunc("GET /v1/detect", d.handleDetect)
 	mux.HandleFunc("POST /v1/adopt", d.handleAdopt)
@@ -458,12 +459,18 @@ func (d *Daemon) handleStashDiscard(w http.ResponseWriter, r *http.Request) {
 }
 
 // syncTriggers mirrors scheds into launchd before they are persisted; a
-// failure aborts the mutation so disk and launchd never disagree.
+// failure aborts the mutation so disk and launchd never disagree. An
+// account that keeps its windows rolling has its fixed times paused: they
+// stay in the registry but get no launchd job.
 func (d *Daemon) syncTriggers(ctx context.Context, scheds []store.Schedule) error {
 	if d.TriggerSync == nil {
 		return nil
 	}
-	return d.TriggerSync(ctx, scheds)
+	plans, err := d.Store.WindowPlans()
+	if err != nil {
+		return err
+	}
+	return d.TriggerSync(ctx, pilotapi.LiveSchedules(scheds, plans))
 }
 
 // afterScheduleMutation is the one place every schedule write ends: re-arm
@@ -558,6 +565,12 @@ func (d *Daemon) handleScheduleCreate(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusConflict, fmt.Errorf("already scheduled: %s", sc.ID))
 			return
 		}
+	}
+	// A rolling account's daily times are paused: a new one would be saved
+	// and never fire, out of sight on the board.
+	if plan, err := d.Store.WindowPlanFor(acct.ID); err == nil && plan.Rolling {
+		httpError(w, http.StatusConflict, fmt.Errorf("%s keeps its windows rolling — switch that off to set daily times", acct.Label))
+		return
 	}
 	next := append(scheds, sched)
 	if err := d.syncTriggers(r.Context(), next); err != nil {

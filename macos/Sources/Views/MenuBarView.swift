@@ -279,6 +279,15 @@ struct MenuBarView: View {
                 ForEach(Array(buckets.enumerated()), id: \.offset) { _, bucket in
                     RunwayBar(bucket: bucket, now: model.now, drained: drained)
                 }
+                let reset = account.noFiveHourLimit
+                    ? buckets.first { $0.kind == "weekly_all" || $0.kind == "seven_day" }?.resetsAt
+                    : buckets.first { $0.kind == "session" || $0.kind == "five_hour" }?.resetsAt
+                if !drained, let pace = PaceLine.line(account.paceForecast, resetsAt: reset) {
+                    Text(pace.text)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(pace.warn ? AnyShapeStyle(Theme.warn) : AnyShapeStyle(.tertiary))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } else {
                 Text("no usage data yet")
                     .font(.system(size: 10.5))

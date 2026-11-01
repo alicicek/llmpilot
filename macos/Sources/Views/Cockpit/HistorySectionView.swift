@@ -477,6 +477,7 @@ private final class PreviewHistoryAPI: CockpitDaemonAPI & DaemonAPI, @unchecked 
     }
     func updateSchedule(id: String, hour: Int, minute: Int) async throws -> ScheduleRecord { throw DaemonError.down }
     func deleteSchedule(id: String) async throws {}
+    func setWindowPlan(accountID: String, rolling: Bool, nextAt: Date?) async throws -> WindowPlan { throw DaemonError.down }
     func history(accountID: String, kind: String, scope: String?) async throws -> [HistorySample] { historyResult }
     func doctor() async throws -> DoctorReport { throw DaemonError.down }
     func analytics(days: Int) async throws -> AnalyticsResponse {

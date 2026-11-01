@@ -568,6 +568,20 @@ struct ScheduleCreateRequest: Encodable {
     }
 }
 
+/// POST /v1/window-plans body (windowplan.go): next_at is RFC3339, absent
+/// for none.
+struct WindowPlanRequest: Encodable {
+    var accountID: String
+    var rolling: Bool
+    var nextAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case rolling
+        case accountID = "account_id"
+        case nextAt = "next_at"
+    }
+}
+
 /// PUT /v1/schedules/{id} body — hour/minute only (server.go:502-505).
 struct ScheduleUpdateRequest: Encodable {
     var hour: Int

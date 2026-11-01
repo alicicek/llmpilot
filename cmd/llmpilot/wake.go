@@ -41,7 +41,19 @@ func wakeCmd() *cobra.Command {
 				fmt.Fprintln(out, "no schedules — llmpilot schedule add <account> <HH:MM>")
 				return nil
 			}
+			windowPlans, err := st.WindowPlans()
+			if err != nil {
+				return err
+			}
+			live := map[string]bool{}
+			for _, sc := range pilotapi.LiveSchedules(scheds, windowPlans) {
+				live[sc.ID] = true
+			}
 			for _, p := range pilotapi.Plans(time.Now(), scheds, mode) {
+				if !live[p.ScheduleID] {
+					fmt.Fprintf(out, "%s  paused — the account keeps its windows rolling\n", p.ScheduleID)
+					continue
+				}
 				line := fmt.Sprintf("%s  fires %s", p.ScheduleID, p.FireAt.Local().Format("Mon 15:04"))
 				if !p.WakeAt.IsZero() {
 					line += fmt.Sprintf("  (wake armed %s)", p.WakeAt.Local().Format("15:04"))

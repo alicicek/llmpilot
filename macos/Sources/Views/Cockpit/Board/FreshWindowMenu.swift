@@ -64,6 +64,12 @@ struct FreshWindowMenu: View {
     let laneState: (String) -> (existingResets: [Int], activeEndMinutes: Int?)
     let onCreate: (_ accountID: String, _ hour: Int, _ minute: Int) -> Void
     let onFullyBooked: (_ message: String) -> Void
+    /// Opens "Plan your day from your history" for an account (nil: not
+    /// offered — planning needs the autopilot).
+    var onPlan: ((_ accountID: String) -> Void)? = nil
+    /// The accounts a plan can be made for — rolling ones included (a plan
+    /// turns rolling off), none without a 5-hour limit.
+    var planAccounts: [FreshWindowAccount] = []
 
     var body: some View {
         Menu {
@@ -73,10 +79,19 @@ struct FreshWindowMenu: View {
             ForEach(accounts) { account in
                 Button(account.displayName) { select(account) }
             }
+            if let onPlan, !planAccounts.isEmpty {
+                Divider()
+                Text("PLAN FROM MY HISTORY")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(CockpitTheme.ter)
+                ForEach(planAccounts) { account in
+                    Button("\(account.displayName)…") { onPlan(account.id) }
+                }
+            }
         } label: {
             Text("＋ Fresh window")
         }
-        .disabled(accounts.isEmpty)
+        .disabled(accounts.isEmpty && planAccounts.isEmpty)
         .accessibilityIdentifier("fresh-window-menu")
         // Toolbar.tsx:58 `data-tour="fresh-window"` — the tour's "book on
         // your own clock" step spotlights this button.

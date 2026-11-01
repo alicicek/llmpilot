@@ -34,6 +34,11 @@ struct BoardTrackView: View {
     /// Full-lane refusal surface for the VoiceOver book action (the menu
     /// path has its own). Wired by BoardView -> the integrator's flash.
     var onFullyBooked: (String) -> Void = { _ in }
+    /// A rolling account's next windows (minute-of-day starts, RollingChain):
+    /// drawn as planned blocks, never draggable — the daemon starts them.
+    var rollingStarts: [Int] = []
+    /// Replaces the empty track's hint (an account with no 5-hour limit).
+    var emptyNote: String? = nil
 
     @StateObject private var model = TrackDragModel()
     @FocusState private var focusedIndex: Int?
@@ -73,6 +78,7 @@ struct BoardTrackView: View {
             railLine
             emptyPlaceholder
             midWindowBadge
+            rollingLayer
             forbiddenZonesOverlay
             flashOverlay
             hoverPreviewBadge
@@ -151,9 +157,9 @@ struct BoardTrackView: View {
     @ViewBuilder private var emptyPlaceholder: some View {
         if model.laneSchedules.isEmpty, mid == nil {
             Text(
-                canSchedule
+                emptyNote ?? (canSchedule
                     ? "No fresh windows — click a time to book one"
-                    : "Fresh windows open on a schedule the autopilot runs — nothing booked here"
+                    : "Fresh windows open on a schedule the autopilot runs — nothing booked here")
             )
             .font(.system(size: 11))
             .foregroundColor(CockpitTheme.ter)
@@ -325,7 +331,37 @@ struct BoardTrackView: View {
             }
     }
 
+    // MARK: - rolling (planned windows, not schedules)
+
+    @ViewBuilder private var rollingLayer: some View {
+        if !rollingStarts.isEmpty {
+            ZStack(alignment: .topLeading) {
+                ForEach(rollingStarts, id: \.self) { s in
+                    BoardChargeBlock(trigger: s, reset: min(s + BoardSchedule.windowHours * 60, BoardSchedule.dayMin), ghost: true)
+                    Text("\(BoardSchedule.fmtHM(s)) · rolling")
+                        .font(.system(size: 9.5))
+                        .foregroundColor(CockpitTheme.ter)
+                        .fixedSize()
+                        // Kept inside the track, like the chips.
+                        .offset(x: min(px(Double(s)) - 3, trackPx - 84), y: 71)
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Rolling windows start at \(rollingStarts.map { BoardSchedule.fmtHM($0) }.joined(separator: ", "))")
+        }
+    }
+
     // MARK: - chips (the schedule thumbs + their annotations)
+
+    /// Half a time chip's width (dot, "23:30", padding).
+    private static let chipHalfWidth = 32.0
+
+    /// A chip is centred on its reset but kept whole inside the track: a
+    /// reset near midnight drew half its time past the board's right edge.
+    private func chipCenterX(_ v: Int) -> Double {
+        min(max(px(Double(v)), Self.chipHalfWidth), trackPx - Self.chipHalfWidth)
+    }
 
     private var chips: some View {
         ForEach(Array(model.laneSchedules.enumerated()), id: \.element.schedule.id) { i, ls in
@@ -422,15 +458,25 @@ struct BoardTrackView: View {
                     // report a 1160x116 frame for every chip — VoiceOver's
                     // cursor rect and hit lookup would be wrong on all of
                     // them.
-                    .position(x: px(Double(v)), y: 6 + 10)
+                    .position(x: chipCenterX(v), y: 6 + 10)
 
                 if let suffix = copy.suffix {
-                    Text(suffix)
+                    let label = Text(suffix)
                         .font(.system(size: 10, weight: copy.suffixTone == "amber" ? .semibold : .regular))
                         .foregroundColor(suffixColor(copy.suffixTone))
                         .fixedSize()
-                        .offset(x: px(Double(v)) + 68, y: 11)
-                        .allowsHitTesting(false)
+                    // Near the right edge the note goes on the chip's left,
+                    // where it fits.
+                    if chipCenterX(v) + 68 + 90 > trackPx {
+                        label
+                            .frame(width: max(0, chipCenterX(v) - Self.chipHalfWidth - 6), alignment: .trailing)
+                            .offset(y: 11)
+                            .allowsHitTesting(false)
+                    } else {
+                        label
+                            .offset(x: chipCenterX(v) + 68, y: 11)
+                            .allowsHitTesting(false)
+                    }
                 }
 
                 Text(copy.trigLine)

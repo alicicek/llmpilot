@@ -4,6 +4,47 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-11-01
+
+Windows that start themselves, a forecast of when you'll hit your limit,
+and plans from your own history — and accounts that no longer have a
+5-hour limit are handled as such. No price, trial length, offer, or
+account-data changes.
+
+### Added
+
+- **Keep it rolling.** A switch on each account starts a new 5-hour window
+  the moment the current one resets, day and night, with no times to pick.
+  While it is on, the account's fixed daily times pause (they come back
+  when you switch it off), and the board shows the next windows as dashed
+  blocks.
+- **Start the next window at the reset.** One tap under an account's
+  limits starts the next window the moment the current one resets, once.
+- **When you'll hit the limit.** The board and the menu bar show, from
+  your live pace, when the 5-hour window reaches 100% and whether that is
+  before it resets. One notification per window when you are on pace to
+  hit it within the hour.
+- **Plan your day from your history.** Fresh window → Plan from my history
+  reads three weeks of your Claude Code use and sets daily times so your
+  limit resets while you work.
+- **Accounts with no 5-hour limit.** Anthropic has removed the 5-hour limit
+  from verified Ultra accounts (formerly Max 20x), account by account.
+  llmpilot reads each account's own usage: one with no 5-hour limit says
+  so, shows its weekly pace instead (and notifies a day ahead when you are
+  on pace to hit the weekly limit before it resets), and never starts,
+  schedules, or rolls a 5-hour window on it. Its daily times are skipped.
+  Accounts that still have a 5-hour limit — Pro, Max, and Ultra accounts
+  not yet verified — keep everything.
+
+### Fixed
+
+- A time near midnight is no longer cut off at the board's right edge.
+- History no longer lists a "mac will wake" line for every change you make
+  to a schedule.
+- macOS names llmpilot's schedule jobs "llmpilot" in its background-activity
+  notice instead of "caffeinate". Existing jobs are rewritten once after the
+  update, so macOS may show that notice once more, now naming llmpilot.
+
 ## [1.5.2] - 2026-10-31
 
 Someone who paid for Pro is never offered the trial or a discount, and Pro
@@ -760,6 +801,7 @@ Initial public release: live usage for every account, lock-first switching,
 window scheduling, the cockpit, the menu bar app, the statusline, and the
 one-time Pro autopilot.
 
+[1.6.0]: https://github.com/alicicek/llmpilot/compare/v1.5.2...v1.6.0
 [1.5.2]: https://github.com/alicicek/llmpilot/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/alicicek/llmpilot/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/alicicek/llmpilot/compare/v1.4.1...v1.5.0

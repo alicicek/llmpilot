@@ -100,6 +100,15 @@ final class StubCockpitAPI: CockpitDaemonAPI & DaemonAPI {
         try deleteScheduleResult.get()
     }
 
+    var windowPlanError: Error?
+    private(set) var setPlans: [(accountID: String, rolling: Bool, nextAt: Date?)] = []
+
+    func setWindowPlan(accountID: String, rolling: Bool, nextAt: Date?) async throws -> WindowPlan {
+        setPlans.append((accountID, rolling, nextAt))
+        if let windowPlanError { throw windowPlanError }
+        return WindowPlan(accountID: accountID, rolling: rolling, nextAt: rolling ? nil : nextAt)
+    }
+
     // MARK: - history / doctor / analytics
 
     var historyResult: Result<[HistorySample], Error> = .success([])

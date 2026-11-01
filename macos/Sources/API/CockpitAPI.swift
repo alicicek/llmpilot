@@ -60,6 +60,9 @@ protocol CockpitDaemonAPI: DaemonAPI {
     func updateSchedule(id: String, hour: Int, minute: Int) async throws -> ScheduleRecord
     // DELETE /v1/schedules/{id} — REQUIRES the Bearer install token.
     func deleteSchedule(id: String) async throws
+    // POST /v1/window-plans — one account's rolling / one-off window starts
+    // (windowplan.go); entitlement-gated 402 server-side.
+    func setWindowPlan(accountID: String, rolling: Bool, nextAt: Date?) async throws -> WindowPlan
 
     // GET /v1/history (server.go:68,851-864).
     func history(accountID: String, kind: String, scope: String?) async throws -> [HistorySample]
@@ -294,6 +297,14 @@ extension HTTPDaemonClient: CockpitDaemonAPI {
 
     func deleteSchedule(id: String) async throws {
         try await cDelete("v1/schedules/\(pathID(id))")
+    }
+
+    func setWindowPlan(accountID: String, rolling: Bool, nextAt: Date?) async throws -> WindowPlan {
+        let body = WindowPlanRequest(
+            accountID: accountID, rolling: rolling,
+            nextAt: nextAt.map { ISO8601DateFormatter().string(from: $0) })
+        let data = try await cPost("v1/window-plans", body: body)
+        return try DaemonDates.decoder().decode(WindowPlan.self, from: data)
     }
 
     // MARK: history / doctor / analytics

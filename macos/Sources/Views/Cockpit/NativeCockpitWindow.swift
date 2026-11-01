@@ -37,6 +37,7 @@ struct NativeCockpitRootView: View {
 
     @State private var addOpen = false
     @State private var settingsOpen = false
+    @State private var planTarget: PlanTarget?
     @State private var statuslineOpen = false
     /// Native twin of the web's localStorage llmpilot.showHistory — the
     /// Settings toggle writes the same key (SettingsSheet); this gates the
@@ -236,6 +237,13 @@ struct NativeCockpitRootView: View {
         // usage poll to carry it once the network is back.
         .onChange(of: settingsOpen) { open in
             if open { Task { await cockpit.loadLicense() } }
+        }
+        .sheet(item: $planTarget) { target in
+            PlanFromHistoryHost(
+                api: api, accountID: target.id, accountName: target.name,
+                existing: fleet.state?.schedules ?? [],
+                windowPlan: fleet.state?.windowPlans.first { $0.accountID == target.id },
+                onClose: { planTarget = nil })
         }
         .sheet(isPresented: $settingsOpen) {
             SheetChrome(minWidth: 460, onClose: { settingsOpen = false }) {
@@ -483,9 +491,11 @@ struct NativeCockpitRootView: View {
                         // : undefined` — reopens regardless of `tourSeen`.
                         onGuide: tourEligible(state: state, showFlow: false) ? { openTour() } : nil)
                     FreshWindowMenu(
-                        accounts: state.accounts.map {
-                            FreshWindowAccount(id: $0.id, label: $0.label, email: $0.email)
-                        },
+                        // A rolling account books nothing by hand: its daily
+                        // times are paused while it rolls.
+                        accounts: state.accounts
+                            .filter { a in !a.noFiveHourLimit && !state.windowPlans.contains { $0.accountID == a.id && $0.rolling } }
+                            .map { FreshWindowAccount(id: $0.id, label: $0.label, email: $0.email) },
                         nowMinutes: nowMinutes,
                         laneState: { accountID in
                             let resets = state.schedules
@@ -498,7 +508,15 @@ struct NativeCockpitRootView: View {
                         onCreate: { accountID, hour, minute in
                             Task { _ = await scheduleActions.create(accountID: accountID, hour: hour, minute: minute) }
                         },
-                        onFullyBooked: { scheduleActions.flashLocal($0) })
+                        onFullyBooked: { scheduleActions.flashLocal($0) },
+                        onPlan: state.licensed ? { accountID in
+                            let a = state.accounts.first { $0.id == accountID }
+                            let name = (a?.label.isEmpty == false ? a?.label : a?.email) ?? accountID
+                            planTarget = PlanTarget(id: accountID, name: name)
+                        } : nil,
+                        planAccounts: state.accounts.filter { !$0.noFiveHourLimit }.map {
+                            FreshWindowAccount(id: $0.id, label: $0.label, email: $0.email)
+                        })
                 }
                 // App.tsx:429-439 — the transient error flash (switch 409s
                 // etc.). Dismiss clears the SOURCE (setFlash(null) twin), so

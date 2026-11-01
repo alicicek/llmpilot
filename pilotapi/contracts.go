@@ -21,10 +21,29 @@ type TriggerRunner func(ctx context.Context, env []string, name string, args ...
 type CmdRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 // Firer executes one schedule's trigger (the cannot-shift rule lives in the
-// engine's implementation).
+// engine's implementation). Start runs the same guarded trigger on one
+// account outside any schedule — a window plan's start at a reset; why is
+// the event's reason ("rolling", "one-tap") — and says what it did, so the
+// caller never has to guess from a usage snapshot that may lag.
 type Firer interface {
 	Fire(ctx context.Context, id string) error
+	Start(ctx context.Context, accountID, why string) (StartOutcome, error)
 }
+
+// StartOutcome is what a Firer.Start did. The zero value is a failure: only
+// an explicit StartFired ever counts as a window started.
+type StartOutcome int
+
+const (
+	// StartFailed: the trigger itself failed, or the account is unknown.
+	StartFailed StartOutcome = iota
+	// StartFired: the trigger ran, so a window started.
+	StartFired
+	// StartSkipped: a window was already open (an open window cannot shift).
+	StartSkipped
+	// StartRefused: the account's folder is signed in to someone else.
+	StartRefused
+)
 
 // FirerConfig carries the Firer's injected dependencies. Identity is
 // REQUIRED wiring (the claudecfg adapter stays internal to the public

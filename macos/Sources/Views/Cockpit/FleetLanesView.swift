@@ -192,8 +192,32 @@ struct FleetLaneRow: View {
     let nowMinutes: Int
     var switchingID: String? = nil
     var onSwitch: (String) -> Void = { _ in }
+    /// This account's rolling / one-off window starts (nil: none set).
+    var plan: WindowPlan? = nil
+    /// Whether the row offers them at all — they need the autopilot.
+    var planEnabled = false
+    /// The account has fixed daily times (paused while it rolls).
+    var hasDailyTimes = false
+    /// Rolling on/off, or a one-tap at a date (nil cancels it).
+    var onPlan: (_ rolling: Bool, _ nextAt: Date?) -> Void = { _, _ in }
 
     @Environment(\.colorScheme) private var colorScheme
+    /// The switch's new position until the daemon's state agrees: it follows
+    /// the click at once, and a second click cannot fire while the first is
+    /// still on its way.
+    @State private var pendingRolling: Bool?
+
+    private var sessionReset: Date? {
+        account.snapshot?.buckets.first { $0.kind == "session" || $0.kind == "five_hour" }?.resetsAt
+    }
+
+    /// The reset the pace line measures against: the weekly one when the
+    /// account has no 5-hour limit.
+    private var paceReset: Date? {
+        account.noFiveHourLimit
+            ? account.snapshot?.buckets.first { $0.kind == "weekly_all" || $0.kind == "seven_day" }?.resetsAt
+            : sessionReset
+    }
 
     /// LaneHeader.tsx:68 — a switch affordance renders only for a
     /// non-active, non-pinned lane; a pinned lane shows the pin icon and
@@ -210,7 +234,10 @@ struct FleetLaneRow: View {
     }
 
     private var statusLine: LaneStatusLine {
-        laneStatusLine(session: session, stale: stale, nowMinutes: nowMinutes)
+        if account.noFiveHourLimit {
+            return LaneStatusLine(dot: stale ? .gray : .ok, text: "No 5-hour limit — only the weekly one")
+        }
+        return laneStatusLine(session: session, stale: stale, nowMinutes: nowMinutes)
     }
 
     /// LaneHeader.tsx line 28: `(account.label || account.email || "?")`.
@@ -345,16 +372,89 @@ struct FleetLaneRow: View {
                     }
                 }
 
+                if !stale, let pace = PaceLine.line(account.paceForecast, resetsAt: paceReset, now: Date()) {
+                    Text(pace.text)
+                        .font(.system(size: 10.5))
+                        .foregroundColor(pace.warn ? CockpitTheme.warn : CockpitTheme.ter)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("pace-\(account.id)")
+                }
+
                 if !active, account.pinned {
                     Text(FleetCopy.watchedLane)
                         .font(.system(size: 10))
                         .foregroundColor(CockpitTheme.ter)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+
+                if planEnabled {
+                    planControls.padding(.top, 2)
+                }
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    /// "Keep it rolling", and — while it is off — the one-tap start at the
+    /// open window's reset.
+    @ViewBuilder private var planControls: some View {
+        let stored = plan?.rolling == true
+        let rolling = pendingRolling ?? stored
+        VStack(alignment: .leading, spacing: 3) {
+            Toggle(isOn: Binding(get: { rolling }, set: { on in
+                pendingRolling = on
+                onPlan(on, nil)
+            })) {
+                Text("Keep it rolling")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(CockpitTheme.sec)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .disabled(pendingRolling != nil)
+            .help("Starts a new 5-hour window the moment each one resets, day and night.")
+            .accessibilityIdentifier("rolling-\(account.id)")
+            .onChange(of: stored) { _ in pendingRolling = nil }
+            // A refused change (no Pro, launchd said no) leaves the state as
+            // it was: let the switch go back after a moment.
+            .task(id: pendingRolling) {
+                guard pendingRolling != nil else { return }
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                pendingRolling = nil
+            }
+
+            if account.noFiveHourLimit {
+                Text("This account has no 5-hour limit, so there's no window to start.")
+                    .font(.system(size: 10))
+                    .foregroundColor(CockpitTheme.ter)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if rolling {
+                Text(PlanRow.rollingCaption(sessionReset: sessionReset, now: Date(), pausedDailyTimes: hasDailyTimes,
+                                            signedIn: active || account.pinned))
+                    .font(.system(size: 10))
+                    .foregroundColor(CockpitTheme.ter)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let oneTap = PlanRow.oneTap(plan: plan, sessionReset: sessionReset, now: Date()) {
+                switch oneTap {
+                case let .offer(at):
+                    Button("Start the next window at \(hm(at))") { onPlan(false, at) }
+                        .buttonStyle(.link)
+                        .font(.system(size: 10.5))
+                        .accessibilityIdentifier("one-tap-\(account.id)")
+                case let .set(at):
+                    HStack(spacing: 6) {
+                        Text("Next window starts \(hm(at))")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(CockpitTheme.sec)
+                        Button("Cancel") { onPlan(false, nil) }
+                            .buttonStyle(.link)
+                            .font(.system(size: 10.5))
+                            .accessibilityIdentifier("one-tap-cancel-\(account.id)")
+                    }
+                }
+            }
+        }
     }
 }
 

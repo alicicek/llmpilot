@@ -69,6 +69,9 @@ struct NativeBoardSection: View {
                         Task { await actions.delete(id: id) }
                     },
                     onFullyBooked: { actions.flashLocal($0) },
+                    onPlan: { accountID, rolling, nextAt in
+                        Task { await actions.setPlan(accountID: accountID, rolling: rolling, nextAt: nextAt) }
+                    },
                     reservedTrailing: selectedInspector == nil ? 0 : BoardInspector.panelWidth,
                     selectedID: $selectedID)
 

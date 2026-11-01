@@ -28,6 +28,8 @@ struct BoardView: View {
     var onMove: (String, Int, Int) -> Void = { _, _, _ in }
     var onDelete: (String) -> Void = { _ in }
     var onFullyBooked: (String) -> Void = { _ in }
+    /// Rolling on/off or a one-tap start for an account (nil cancels it).
+    var onPlan: (_ accountID: String, _ rolling: Bool, _ nextAt: Date?) -> Void = { _, _, _ in }
     /// Width of whatever the integrator lays over the board's trailing
     /// edge (the Inspector while a schedule is selected). Subtracted from
     /// the measured width before the track is derived, so the 24h axis
@@ -39,8 +41,19 @@ struct BoardView: View {
         schedules.map { BoardClassify.ScheduleInput(id: $0.id, accountID: $0.accountID, hour: $0.hour, minute: $0.minute) }
     }
 
+    /// Each lane's measured identity-column height: a lane is as tall as
+    /// its track or its column, whichever is taller — a fixed height cut the
+    /// last lane off once a column carried the pace line and the rolling
+    /// switch.
+    @State private var columnHeights: [String: Double] = [:]
+
+    private func rowHeight(_ accountID: String) -> Double {
+        max(BoardGeometry.rowPx, columnHeights[accountID] ?? BoardGeometry.rowPx)
+    }
+
     private var totalHeight: Double {
-        30 + Double(state.accounts.count) * BoardGeometry.rowPx
+        let dividers = Double(max(0, state.accounts.count - 1))
+        return 30 + state.accounts.reduce(0) { $0 + rowHeight($1.id) } + dividers
     }
 
     var body: some View {
@@ -80,6 +93,7 @@ struct BoardView: View {
                 }
                 .frame(width: BoardGeometry.headerPx + trackPx, height: totalHeight, alignment: .topLeading)
                 .environment(\.boardTrackPx, trackPx)
+                .onPreferenceChange(LaneColumnHeightKey.self) { columnHeights = $0 }
             }
             .frame(height: totalHeight)
             .background(CockpitTheme.win)
@@ -91,8 +105,24 @@ struct BoardView: View {
     private func laneRow(account: AccountState, inputs: [BoardClassify.ScheduleInput]) -> some View {
         let sched = BoardClassify.laneSchedules(schedules: inputs, accountID: account.id)
         let mid = Self.midWindowFor(account)
+        let plan = state.windowPlans.first { $0.accountID == account.id }
+        let rolling = plan?.rolling == true
+        // No 5-hour limit (verified accounts on some plans): no window to
+        // schedule, start or roll — only the weekly limit.
+        let noFive = account.noFiveHourLimit
         HStack(alignment: .top, spacing: 0) {
-            FleetLaneRow(account: account, active: account.id == state.activeID, nowMinutes: nowMinutes, onSwitch: onSwitch)
+            FleetLaneRow(
+                account: account, active: account.id == state.activeID, nowMinutes: nowMinutes, onSwitch: onSwitch,
+                // Shown while a plan exists even without Pro: what was set up
+                // can always be switched off.
+                plan: plan,
+                planEnabled: (canSchedule && !noFive) || plan?.rolling == true || plan?.nextAt != nil,
+                hasDailyTimes: !sched.isEmpty,
+                onPlan: { rolling, nextAt in onPlan(account.id, rolling, nextAt) })
+                .fixedSize(horizontal: false, vertical: true)
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: LaneColumnHeightKey.self, value: [account.id: g.size.height])
+                })
                 .frame(width: BoardGeometry.headerPx, alignment: .leading)
                 .overlay(alignment: .trailing) {
                     Rectangle().fill(CockpitTheme.hairSoft).frame(width: 1)
@@ -101,11 +131,13 @@ struct BoardView: View {
             BoardTrackView(
                 accountID: account.id,
                 accountLabel: account.label,
-                schedules: sched,
+                // A rolling account's fixed times are paused: off the track,
+                // and the track books nothing new while it rolls.
+                schedules: rolling || noFive ? [] : sched,
                 mid: mid,
                 nowMinutes: nowMinutes,
                 selectedID: selectedID,
-                canSchedule: canSchedule,
+                canSchedule: canSchedule && !rolling && !noFive,
                 onSelect: { selectedID = $0 },
                 onCreate: { hour, minute in onCreate(account.id, hour, minute) },
                 onMove: onMove,
@@ -113,9 +145,20 @@ struct BoardView: View {
                     if id == selectedID { selectedID = nil }
                     onDelete(id)
                 },
-                onFullyBooked: onFullyBooked
+                onFullyBooked: onFullyBooked,
+                rollingStarts: rolling && !noFive
+                    ? RollingChain.starts(
+                        reset: account.snapshot?.buckets.first { $0.kind == "session" || $0.kind == "five_hour" }?.resetsAt,
+                        now: Date())
+                    : [],
+                emptyNote: noFive
+                    ? (sched.isEmpty
+                        ? "No 5-hour limit on this account — nothing to schedule"
+                        : "No 5-hour limit on this account — its daily times are skipped")
+                    : nil
             )
         }
+        .frame(height: rowHeight(account.id), alignment: .top)
     }
 
     /// web/src/board/Board.tsx `midWindowFor`: the lane's currently-active
@@ -137,5 +180,14 @@ struct BoardView: View {
         let windowMin = BoardSchedule.windowHours * 60
         let start = (end - windowMin + BoardSchedule.dayMin) % BoardSchedule.dayMin
         return BoardClassify.MidWindow(start: start, end: end)
+    }
+}
+
+/// Each lane's identity-column height, keyed by account (BoardView sizes the
+/// lane to fit it).
+private struct LaneColumnHeightKey: PreferenceKey {
+    static var defaultValue: [String: Double] = [:]
+    static func reduce(value: inout [String: Double], nextValue: () -> [String: Double]) {
+        value.merge(nextValue()) { $1 }
     }
 }

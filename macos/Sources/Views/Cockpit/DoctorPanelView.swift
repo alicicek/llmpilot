@@ -583,6 +583,7 @@ private final class PreviewDoctorAPI: CockpitDaemonAPI & DaemonAPI, @unchecked S
     }
     func updateSchedule(id: String, hour: Int, minute: Int) async throws -> ScheduleRecord { throw DaemonError.down }
     func deleteSchedule(id: String) async throws {}
+    func setWindowPlan(accountID: String, rolling: Bool, nextAt: Date?) async throws -> WindowPlan { throw DaemonError.down }
     func history(accountID: String, kind: String, scope: String?) async throws -> [HistorySample] { [] }
     func doctor() async throws -> DoctorReport {
         guard let reportResult else { throw DaemonError.down }

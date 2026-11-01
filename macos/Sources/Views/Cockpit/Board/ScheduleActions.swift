@@ -60,6 +60,15 @@ final class ScheduleActions: ObservableObject {
         }
     }
 
+    /// Rolling on/off, or a one-tap start at `nextAt` (nil cancels it).
+    func setPlan(accountID: String, rolling: Bool, nextAt: Date?) async {
+        do {
+            _ = try await api.setWindowPlan(accountID: accountID, rolling: rolling, nextAt: nextAt)
+        } catch {
+            route(error)
+        }
+    }
+
     /// A local-only failure (e.g. FreshWindowMenu's "fully booked" — never
     /// reaches the daemon, same as App.tsx's `bookFreshWindow` calling
     /// `setFlash` directly instead of going through `report`).

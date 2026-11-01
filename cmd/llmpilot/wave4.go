@@ -64,7 +64,12 @@ func syncTriggers(cmd *cobra.Command, st *store.Store, scheds []store.Schedule) 
 	if err != nil {
 		return err
 	}
-	return l.Sync(cmd.Context(), bin, scheds, st.Home())
+	// A rolling account's fixed times stay paused (see LiveSchedules).
+	plans, err := st.WindowPlans()
+	if err != nil {
+		return err
+	}
+	return l.Sync(cmd.Context(), bin, pilotapi.LiveSchedules(scheds, plans), st.Home())
 }
 
 func parseHHMM(s string) (int, int, error) {
@@ -121,6 +126,11 @@ bucket starts).`,
 					fmt.Fprintf(cmd.OutOrStdout(), "already scheduled: %s\n", sc.ID)
 					return nil
 				}
+			}
+			// A rolling account's daily times are paused: a new one would be
+			// saved and never fire.
+			if plan, err := st.WindowPlanFor(acct.ID); err == nil && plan.Rolling {
+				return fmt.Errorf("%s keeps its windows rolling — switch that off in the app to set daily times", acct.Label)
 			}
 			next := append(scheds, sched)
 			if err := syncTriggers(cmd, st, next); err != nil {
@@ -254,6 +264,7 @@ bucket starts).`,
 					return acct.EmailAddress
 				},
 			})
+			defer holdAwake()()
 			return f.Fire(cmd.Context(), args[0])
 		},
 	}
@@ -301,4 +312,23 @@ func logCmd() *cobra.Command {
 func macNotify(ctx context.Context, title, body string) {
 	script := fmt.Sprintf("display notification %q with title %q", body, title)
 	_ = exec.CommandContext(ctx, "osascript", "-e", script).Run()
+}
+
+// holdAwake keeps the Mac out of idle sleep (and system sleep on power) for
+// as long as this process runs — what a trigger used to get from launchd
+// starting it under caffeinate, before the job launched llmpilot itself so
+// macOS names it. Returns the release; failing to start the hold only costs
+// the hold. A sandbox never runs it.
+var holdAwake = func() func() {
+	if os.Getenv("LLMPILOT_TEST") != "" {
+		return func() {}
+	}
+	cmd := exec.Command("/usr/bin/caffeinate", "-is", "-w", strconv.Itoa(os.Getpid()))
+	if err := cmd.Start(); err != nil {
+		return func() {}
+	}
+	return func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}
 }

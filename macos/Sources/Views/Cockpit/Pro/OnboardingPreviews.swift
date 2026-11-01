@@ -91,6 +91,7 @@ private struct PreviewStubAPI: CockpitDaemonAPI {
     ) async throws -> ScheduleRecord { try await fail() }
     func updateSchedule(id: String, hour: Int, minute: Int) async throws -> ScheduleRecord { try await fail() }
     func deleteSchedule(id: String) async throws { try await failVoid() }
+    func setWindowPlan(accountID: String, rolling: Bool, nextAt: Date?) async throws -> WindowPlan { try await fail() }
     func history(accountID: String, kind: String, scope: String?) async throws -> [HistorySample] { try await fail() }
     func doctor() async throws -> DoctorReport { try await fail() }
     func analytics(days: Int) async throws -> AnalyticsResponse { try await fail() }
