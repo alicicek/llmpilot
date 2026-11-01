@@ -44,7 +44,10 @@ struct HistoryCard<Content: View>: View {
             content
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // Fill the height the grid row offers, top-aligned: two cards side
+        // by side end level, instead of the shorter one floating centred
+        // beside the taller.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(CockpitTheme.panel)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(CockpitTheme.hair, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 8))

@@ -4,6 +4,13 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **History cards line up.** Two cards side by side now end level, instead
+  of the shorter one floating in the middle of the row with uneven gaps.
+
 ## [1.6.1] - 2026-11-01
 
 A quieter activity list, and a fix for clicks on an account with no
