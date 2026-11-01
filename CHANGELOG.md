@@ -38,6 +38,11 @@ account-data changes.
 
 ### Fixed
 
+- **Daily times start their window again when Claude Code lives in your
+  home folder** (`~/.local/bin`, where its own installer puts it). A
+  scheduled start runs in the background, without your shell's PATH, and
+  failed there with "claude: executable file not found"; it now finds
+  Claude Code the way sign-in does.
 - A time near midnight is no longer cut off at the board's right edge.
 - History no longer lists a "mac will wake" line for every change you make
   to a schedule.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -95,4 +96,25 @@ func holdAwakeFor(d time.Duration) {
 		return
 	}
 	go func() { _ = cmd.Wait() }()
+}
+
+// claudeRunner runs Claude Code for a scheduled trigger. A launchd job has
+// none of the user's PATH — Claude Code's own installer puts it in
+// ~/.local/bin, which launchd never sees — so it runs the Claude Code the
+// sign-in finds, in the environment that lookup resolved, pinned to the
+// engine's config dir. A sandbox keeps the engine's own exec of the `claude`
+// on its PATH (the golden recordings put a stand-in there): nil.
+func claudeRunner(resolver *claudecfg.CLIResolver) pilotapi.TriggerRunner {
+	if os.Getenv("LLMPILOT_TEST") != "" {
+		return nil
+	}
+	return func(ctx context.Context, env []string, _ string, args ...string) ([]byte, error) {
+		cli, err := resolver.Resolve(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("no Claude Code where llmpilot can find it: %w", err)
+		}
+		cmd := exec.CommandContext(ctx, cli.Path, args...)
+		cmd.Env = startEnv(env, cli.Env)
+		return cmd.CombinedOutput()
+	}
 }

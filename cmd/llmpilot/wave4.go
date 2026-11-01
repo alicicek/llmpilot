@@ -243,9 +243,17 @@ bucket starts).`,
 				return pilot.NotLicensed("scheduling")
 			}
 			ver := claudecfg.Version(cmd.Context(), claudecfg.ExecRunner)
+			// Find Claude Code before the engine's identity check, not
+			// after: the lookup can ask the login shell for up to ten
+			// seconds. A failed lookup is reported by the run itself.
+			resolver := &claudecfg.CLIResolver{}
+			if os.Getenv("LLMPILOT_TEST") == "" {
+				_, _ = resolver.Resolve(cmd.Context())
+			}
 			f := prov.NewFirer(pilotapi.FirerConfig{
 				Store: st,
 				Out:   cmd.OutOrStdout(),
+				Run:   claudeRunner(resolver),
 				Fetch: func(ctx context.Context, a store.Account) ([]store.Bucket, error) {
 					c := &anthropic.UsageClient{
 						Source:    tokenSourceFor(a),
