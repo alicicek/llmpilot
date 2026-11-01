@@ -121,16 +121,20 @@ bucket starts).`,
 				Model:     model,
 				Effort:    effort,
 			}
+			// A rolling account's daily times are paused: a new one would be
+			// saved and never fire.
+			if plan, err := st.WindowPlanFor(acct.ID); err == nil && plan.Rolling {
+				return fmt.Errorf("%s keeps its windows rolling — switch that off in the app to set daily times", acct.Label)
+			}
+			// Nor has an account with no 5-hour limit a window to start.
+			if snap, _ := st.Snapshot(acct.ID); pilotapi.NoFiveHourLimit(snap) {
+				return fmt.Errorf("%s has no 5-hour limit, so there is no window for a daily time to start", acct.Label)
+			}
 			for _, sc := range scheds {
 				if sc.ID == sched.ID {
 					fmt.Fprintf(cmd.OutOrStdout(), "already scheduled: %s\n", sc.ID)
 					return nil
 				}
-			}
-			// A rolling account's daily times are paused: a new one would be
-			// saved and never fire.
-			if plan, err := st.WindowPlanFor(acct.ID); err == nil && plan.Rolling {
-				return fmt.Errorf("%s keeps its windows rolling — switch that off in the app to set daily times", acct.Label)
 			}
 			next := append(scheds, sched)
 			if err := syncTriggers(cmd, st, next); err != nil {

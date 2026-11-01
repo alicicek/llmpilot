@@ -486,6 +486,41 @@ func TestScheduleCreateRefusedWhileRolling(t *testing.T) {
 	}
 }
 
+// An account with no 5-hour limit has no window for a daily time to start:
+// one is refused rather than saved out of sight, only ever to skip. A
+// duplicate on an account that has the limit says which time, in words.
+func TestScheduleCreateRefusedWithNoFiveHourLimit(t *testing.T) {
+	st := testStore(t)
+	if err := st.SaveSnapshot(&store.UsageSnapshot{AccountID: "a", AsOf: time.Now().UTC(),
+		Buckets: []store.Bucket{{Kind: "weekly_all", Percent: 60}}}); err != nil {
+		t.Fatal(err)
+	}
+	d := &Daemon{Store: st}
+	srv := httptest.NewServer(withToken(d))
+	defer srv.Close()
+	post := func(body string) (int, string) {
+		resp, err := http.Post(srv.URL+"/v1/schedules", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return resp.StatusCode, string(b)
+	}
+	if code, body := post(`{"account_id":"a","hour":2,"minute":15}`); code != http.StatusConflict || !strings.Contains(body, "no 5-hour limit") {
+		t.Fatalf("a daily time with no 5-hour limit = %d %s, want 409", code, body)
+	}
+	if scheds, _ := st.Schedules(); len(scheds) != 0 {
+		t.Fatalf("the refused time was saved: %+v", scheds)
+	}
+	if code, _ := post(`{"account_id":"b","hour":2,"minute":15}`); code != http.StatusCreated {
+		t.Fatalf("another account's daily time = %d", code)
+	}
+	if code, body := post(`{"account_id":"b","hour":2,"minute":15}`); code != http.StatusConflict || !strings.Contains(body, "already has a daily time at 02:15") {
+		t.Fatalf("a duplicate = %d %s", code, body)
+	}
+}
+
 // The hold after a fire is wall-clock time: Go's monotonic clock stops while
 // the Mac sleeps, and a hold counted in awake time would block the next
 // morning's start.

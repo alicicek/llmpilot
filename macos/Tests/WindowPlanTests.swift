@@ -127,4 +127,28 @@ final class WindowPlanTests: XCTestCase {
                        "At this week's pace it resets before you hit 100%.")
         XCTAssertEqual(PaceLine.roughDuration(48 * 3600), "2 days")
     }
+
+    /// A lane that rolls, or has no 5-hour limit, books nothing on a click —
+    /// it says why instead. Every other lane books (without Pro the
+    /// daemon's answer is the Pro offer).
+    func testNoBookingReason() {
+        XCTAssertNil(BoardView.noBookingReason(label: "work", rolling: false, noFive: false))
+        XCTAssertEqual(
+            BoardView.noBookingReason(label: "work", rolling: false, noFive: true),
+            "work has no 5-hour limit, so there's no window to start — only the weekly limit applies.")
+        XCTAssertEqual(
+            BoardView.noBookingReason(label: "work", rolling: true, noFive: false),
+            "work keeps its windows rolling — switch that off to set daily times.")
+        // No limit wins: rolling has nothing to roll there either.
+        XCTAssertEqual(
+            BoardView.noBookingReason(label: "work", rolling: true, noFive: true),
+            BoardView.noBookingReason(label: "work", rolling: false, noFive: true))
+    }
+
+    /// The hidden daily times are counted in the note beside "Remove them".
+    func testNoFiveNoteCountsTheHiddenTimes() {
+        XCTAssertEqual(BoardView.noFiveNote(dailyTimes: 0), "No 5-hour limit on this account — nothing to schedule")
+        XCTAssertEqual(BoardView.noFiveNote(dailyTimes: 1), "No 5-hour limit on this account — its daily time is skipped")
+        XCTAssertEqual(BoardView.noFiveNote(dailyTimes: 10), "No 5-hour limit on this account — its 10 daily times are skipped")
+    }
 }

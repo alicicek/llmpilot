@@ -151,10 +151,11 @@ struct BoardView: View {
                         reset: account.snapshot?.buckets.first { $0.kind == "session" || $0.kind == "five_hour" }?.resetsAt,
                         now: Date())
                     : [],
-                emptyNote: noFive
-                    ? (sched.isEmpty
-                        ? "No 5-hour limit on this account — nothing to schedule"
-                        : "No 5-hour limit on this account — its daily times are skipped")
+                emptyNote: noFive ? Self.noFiveNote(dailyTimes: sched.count) : nil,
+                noBooking: Self.noBookingReason(label: account.label, rolling: rolling, noFive: noFive),
+                noteAction: noFive && !sched.isEmpty
+                    ? (label: sched.count == 1 ? "Remove it" : "Remove them",
+                       run: { for s in sched { onDelete(s.schedule.id) } })
                     : nil
             )
         }
@@ -168,6 +169,30 @@ struct BoardView: View {
     /// file's own status-line derivation does.
     static func midWindow(for account: AccountState) -> BoardClassify.MidWindow? {
         midWindowFor(account)
+    }
+
+    /// Why a click on a lane books nothing — said instead of booking — or
+    /// nil where it books (a lane without Pro books too: the daemon's answer
+    /// is the Pro offer).
+    static func noBookingReason(label: String, rolling: Bool, noFive: Bool) -> String? {
+        if noFive {
+            return "\(label) has no 5-hour limit, so there's no window to start — only the weekly limit applies."
+        }
+        if rolling {
+            return "\(label) keeps its windows rolling — switch that off to set daily times."
+        }
+        return nil
+    }
+
+    /// The track's note on an account with no 5-hour limit. Its daily times
+    /// are kept off the track (they draw windows that never come), so the
+    /// note counts them — beside the button that removes them.
+    static func noFiveNote(dailyTimes: Int) -> String {
+        switch dailyTimes {
+        case 0: return "No 5-hour limit on this account — nothing to schedule"
+        case 1: return "No 5-hour limit on this account — its daily time is skipped"
+        default: return "No 5-hour limit on this account — its \(dailyTimes) daily times are skipped"
+        }
     }
 
     private static func midWindowFor(_ account: AccountState) -> BoardClassify.MidWindow? {

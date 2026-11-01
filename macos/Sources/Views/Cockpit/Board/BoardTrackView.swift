@@ -31,14 +31,20 @@ struct BoardTrackView: View {
     var onMove: (String, Int, Int) -> Void = { _, _, _ in }
     var onDelete: (String) -> Void = { _ in }
     var ticker: BoardTicker = BoardAudio.shared
-    /// Full-lane refusal surface for the VoiceOver book action (the menu
-    /// path has its own). Wired by BoardView -> the integrator's flash.
+    /// Refusal surface — a full lane on the VoiceOver book action (the menu
+    /// path has its own), a lane that books nothing on a click. Wired by
+    /// BoardView -> the integrator's flash.
     var onFullyBooked: (String) -> Void = { _ in }
     /// A rolling account's next windows (minute-of-day starts, RollingChain):
     /// drawn as planned blocks, never draggable — the daemon starts them.
     var rollingStarts: [Int] = []
     /// Replaces the empty track's hint (an account with no 5-hour limit).
     var emptyNote: String? = nil
+    /// Why a click books nothing on this lane (it rolls, or has no 5-hour
+    /// limit): said on the click instead, with no "book here" preview.
+    var noBooking: String? = nil
+    /// A button beside `emptyNote` — removing daily times the lane hides.
+    var noteAction: (label: String, run: () -> Void)? = nil
 
     @StateObject private var model = TrackDragModel()
     @FocusState private var focusedIndex: Int?
@@ -98,7 +104,7 @@ struct BoardTrackView: View {
         }
         .gesture(createGesture)
         .trackHoverPreview { location in
-            if let location {
+            if let location, noBooking == nil {
                 // Snap BEFORE the preview/legality check (Track.tsx:176) — the
                 // badge must promise exactly the minute a click would book.
                 model.updateHoverPreview(TrackDragModel.snappedMinutes(fromTrackX: location.x, trackWidth: trackPx))
@@ -125,7 +131,9 @@ struct BoardTrackView: View {
         // to an AX user, so the named action books the next legal slot
         // (Fresh-window semantics). Doubles as the e2e create driver.
         .accessibilityAction(named: "Book next fresh window") {
-            if !model.bookNextAvailable(nowMinutes: nowMinutes, activeEndMinutes: mid?.end) {
+            if let noBooking {
+                onFullyBooked(noBooking)
+            } else if !model.bookNextAvailable(nowMinutes: nowMinutes, activeEndMinutes: mid?.end) {
                 // Full lane: same copy the Fresh-window menu shows — a
                 // silent no-op is exactly what an AX user can't diagnose.
                 onFullyBooked("\(accountLabel) is fully booked — resets must sit ≥ 5 h 15 min apart.")
@@ -156,17 +164,24 @@ struct BoardTrackView: View {
 
     @ViewBuilder private var emptyPlaceholder: some View {
         if model.laneSchedules.isEmpty, mid == nil {
-            Text(
-                emptyNote ?? (canSchedule
-                    ? "No fresh windows — click a time to book one"
-                    : "Fresh windows open on a schedule the autopilot runs — nothing booked here")
-            )
+            HStack(spacing: 8) {
+                Text(
+                    emptyNote ?? (canSchedule
+                        ? "No fresh windows — click a time to book one"
+                        : "Fresh windows open on a schedule the autopilot runs — nothing booked here")
+                )
+                .foregroundColor(CockpitTheme.ter)
+                .allowsHitTesting(false)
+                if let noteAction {
+                    Button(noteAction.label, action: noteAction.run)
+                        .buttonStyle(.plain)
+                        .foregroundColor(CockpitTheme.accTx)
+                }
+            }
             .font(.system(size: 11))
-            .foregroundColor(CockpitTheme.ter)
             .multilineTextAlignment(.center)
             .frame(width: trackPx)
             .position(x: trackPx / 2, y: 42 + 7)
-            .allowsHitTesting(false)
         }
     }
 
@@ -326,6 +341,10 @@ struct BoardTrackView: View {
         SpatialTapGesture(count: 1, coordinateSpace: .named("track"))
             .onEnded { value in
                 onSelect(nil)
+                if let noBooking {
+                    onFullyBooked(noBooking)
+                    return
+                }
                 let minutes = TrackDragModel.snappedMinutes(fromTrackX: value.location.x, trackWidth: trackPx)
                 model.createAt(minutes)
             }

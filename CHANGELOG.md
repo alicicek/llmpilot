@@ -6,8 +6,8 @@ All notable user-facing changes to llmpilot. The format follows
 
 ## [1.6.1] - 2026-11-01
 
-A quieter activity list. No price, trial length, offer, or account-data
-changes.
+A quieter activity list, and a fix for clicks on an account with no
+5-hour limit. No price, trial length, offer, or account-data changes.
 
 ### Changed
 
@@ -23,6 +23,12 @@ changes.
 
 ### Fixed
 
+- **Clicking the track of an account with no 5-hour limit no longer books
+  hidden daily times.** Each click used to save a daily time the track
+  then kept out of sight, so nothing seemed to happen. A click now says
+  why there is no window to start (the same for an account that keeps
+  its windows rolling), and the track counts any daily times it hides
+  beside a button that removes them.
 - **Accounts with no 5-hour limit stay quiet.** Their daily times no
   longer add a "skipped" line to the activity list three times a day, and
   no longer wake the Mac — there is no window for them to start.

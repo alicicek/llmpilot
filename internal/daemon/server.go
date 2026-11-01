@@ -560,17 +560,23 @@ func (d *Daemon) handleScheduleCreate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, err)
 		return
 	}
-	for _, sc := range scheds {
-		if sc.ID == sched.ID {
-			httpError(w, http.StatusConflict, fmt.Errorf("already scheduled: %s", sc.ID))
-			return
-		}
-	}
 	// A rolling account's daily times are paused: a new one would be saved
 	// and never fire, out of sight on the board.
 	if plan, err := d.Store.WindowPlanFor(acct.ID); err == nil && plan.Rolling {
 		httpError(w, http.StatusConflict, fmt.Errorf("%s keeps its windows rolling — switch that off to set daily times", acct.Label))
 		return
+	}
+	// Nor has an account with no 5-hour limit any window for one to start:
+	// it would only ever skip, also out of sight.
+	if snap, _ := d.Store.Snapshot(acct.ID); pilotapi.NoFiveHourLimit(snap) {
+		httpError(w, http.StatusConflict, fmt.Errorf("%s has no 5-hour limit, so there is no window for a daily time to start", acct.Label))
+		return
+	}
+	for _, sc := range scheds {
+		if sc.ID == sched.ID {
+			httpError(w, http.StatusConflict, fmt.Errorf("%s already has a daily time at %02d:%02d", acct.Label, sc.Hour, sc.Minute))
+			return
+		}
 	}
 	next := append(scheds, sched)
 	if err := d.syncTriggers(r.Context(), next); err != nil {
