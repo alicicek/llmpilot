@@ -40,8 +40,11 @@ struct BoardTrackView: View {
     var rollingStarts: [Int] = []
     /// Replaces the empty track's hint (an account with no 5-hour limit).
     var emptyNote: String? = nil
-    /// Why a click books nothing on this lane (it rolls, or has no 5-hour
-    /// limit): said on the click instead, with no "book here" preview.
+    /// Why this lane books nothing (it rolls, or has no 5-hour limit). A
+    /// click does nothing and there is no "book here" preview — the lane's
+    /// own note already says why, and a banner on every click only shouted
+    /// it (owner 2026-11-01). VoiceOver's book action, which has no note to
+    /// read, says it instead.
     var noBooking: String? = nil
     /// A button beside `emptyNote` — removing daily times the lane hides.
     var noteAction: (label: String, run: () -> Void)? = nil
@@ -341,10 +344,7 @@ struct BoardTrackView: View {
         SpatialTapGesture(count: 1, coordinateSpace: .named("track"))
             .onEnded { value in
                 onSelect(nil)
-                if let noBooking {
-                    onFullyBooked(noBooking)
-                    return
-                }
+                if noBooking != nil { return }
                 let minutes = TrackDragModel.snappedMinutes(fromTrackX: value.location.x, trackWidth: trackPx)
                 model.createAt(minutes)
             }

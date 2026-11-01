@@ -128,8 +128,8 @@ final class WindowPlanTests: XCTestCase {
         XCTAssertEqual(PaceLine.roughDuration(48 * 3600), "2 days")
     }
 
-    /// A lane that rolls, or has no 5-hour limit, books nothing on a click —
-    /// it says why instead. Every other lane books (without Pro the
+    /// A lane that rolls, or has no 5-hour limit, books nothing — VoiceOver's
+    /// book action says why. Every other lane books (without Pro the
     /// daemon's answer is the Pro offer).
     func testNoBookingReason() {
         XCTAssertNil(BoardView.noBookingReason(label: "work", rolling: false, noFive: false))

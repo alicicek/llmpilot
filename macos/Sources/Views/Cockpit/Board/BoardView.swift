@@ -171,9 +171,9 @@ struct BoardView: View {
         midWindowFor(account)
     }
 
-    /// Why a click on a lane books nothing — said instead of booking — or
-    /// nil where it books (a lane without Pro books too: the daemon's answer
-    /// is the Pro offer).
+    /// Why a lane books nothing (its clicks do nothing; VoiceOver's book
+    /// action says this), or nil where it books — a lane without Pro books
+    /// too: the daemon's answer is the Pro offer.
     static func noBookingReason(label: String, rolling: Bool, noFive: Bool) -> String? {
         if noFive {
             return "\(label) has no 5-hour limit, so there's no window to start — only the weekly limit applies."
