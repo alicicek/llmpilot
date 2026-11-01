@@ -1106,7 +1106,31 @@ func (d *Daemon) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 		"files_parsed": filesParsed,
 		"files_reused": filesReused,
 		"as_of":        time.Now().UTC(),
+		// What each account's plan costs a month, read from its sign-in —
+		// History's value readout compares against it, with nothing for
+		// the user to type.
+		"plan_cost_monthly": planCosts(accs),
 	})
+}
+
+// planCosts is each account's monthly plan list price, for the accounts
+// whose sign-in names a known plan. An account sharing the global folder
+// has no sign-in of its own to read, so it is left out.
+func planCosts(accs []store.Account) map[string]float64 {
+	out := map[string]float64{}
+	for _, a := range accs {
+		if a.ConfigDir == "" {
+			continue
+		}
+		acct, err := claudecfg.DirAt(a.ConfigDir).OAuthAccount()
+		if err != nil || acct == nil {
+			continue
+		}
+		if _, usd := acct.Plan(); usd > 0 {
+			out[a.ID] = usd
+		}
+	}
+	return out
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

@@ -194,6 +194,10 @@ struct AnalyticsResponse: Decodable, Equatable {
     var filesParsed: Int
     var filesReused: Int
     var asOf: Date
+    /// account id -> its plan's monthly list price, read by the daemon from
+    /// each account's own sign-in (server.go `planCosts`). Absent from an
+    /// older daemon, and for accounts whose plan it could not tell.
+    var planCostMonthly: [String: Double]
 
     enum CodingKeys: String, CodingKey {
         case cells
@@ -202,6 +206,7 @@ struct AnalyticsResponse: Decodable, Equatable {
         case filesParsed = "files_parsed"
         case filesReused = "files_reused"
         case asOf = "as_of"
+        case planCostMonthly = "plan_cost_monthly"
     }
 
     init(from decoder: Decoder) throws {
@@ -212,6 +217,7 @@ struct AnalyticsResponse: Decodable, Equatable {
         filesParsed = try c.decodeIfPresent(Int.self, forKey: .filesParsed) ?? 0
         filesReused = try c.decodeIfPresent(Int.self, forKey: .filesReused) ?? 0
         asOf = try c.decode(Date.self, forKey: .asOf)
+        planCostMonthly = try c.decodeIfPresent([String: Double].self, forKey: .planCostMonthly) ?? [:]
     }
 }
 

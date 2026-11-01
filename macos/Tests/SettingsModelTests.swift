@@ -31,19 +31,41 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(
             SettingsCopy.autoSwitchHint(nil),
             "Switches when an account is ≈8 min from its limit, judged from live burn.")
-        XCTAssertEqual(SettingsCopy.statusline, "Statusline") // :117
-        XCTAssertEqual(
-            SettingsCopy.statuslineHint,
-            "Segments, presets, and a live preview of your terminal line.") // :117
-        XCTAssertEqual(SettingsCopy.customizeStatusline, "Customize statusline") // :125
         XCTAssertEqual(SettingsCopy.usageNotifications, "Usage notifications") // :128
-        XCTAssertEqual(
-            SettingsCopy.notificationsHint("75, 90"),
-            "Notifies when a bucket crosses 75, 90%.") // :128
-        XCTAssertEqual(SettingsCopy.planCostLabel("mira"), "Plan cost — mira") // :140
-        XCTAssertEqual(
-            SettingsCopy.planCostHint,
-            "Monthly cost, used by the value readout in History.") // :141
+    }
+
+    // MARK: - the native sheet's own copy (no web twin)
+
+    /// One status line row: its hint says what the line does, in the words
+    /// of whether it is already there.
+    func testStatuslineRowCopy() {
+        XCTAssertEqual(SettingsCopy.statusline, "Status line")
+        XCTAssertEqual(SettingsCopy.statuslineHint(installed: true), "Your limits show at the bottom of Claude Code.")
+        XCTAssertEqual(SettingsCopy.statuslineHint(installed: false), "Show your limits at the bottom of Claude Code.")
+        XCTAssertEqual(SettingsCopy.customizeStatusline, "Customize…")
+    }
+
+    func testNotificationsHintNamesThePercentages() {
+        XCTAssertEqual(SettingsCopy.notificationsHint(SettingsCopy.defaultThresholdsText),
+                       "Notifies when a limit passes 75% and 90%.")
+        XCTAssertEqual(SettingsCopy.thresholdsList([50, 75, 90]), "50%, 75% and 90%")
+        XCTAssertEqual(SettingsCopy.thresholdsList([80]), "80%")
+    }
+
+    /// The row's installed state is the doctor's statusline check: only
+    /// "ok" (llmpilot's own line) counts; a finding is absent or another
+    /// tool's; no report, or not checked, is unknown.
+    func testStatuslineInstalledReadsTheDoctorsCheck() throws {
+        func report(_ state: String?) throws -> DoctorReport {
+            let checks = state.map { #"[{"id":"statusline","title":"Claude Code's statusline","state":"\#($0)"}]"# } ?? "[]"
+            let json = #"{"as_of":"2026-11-01T00:00:00Z","clean":true,"problems":0,"findings":[],"checks":\#(checks)}"#
+            return try DaemonDates.decoder().decode(DoctorReport.self, from: Data(json.utf8))
+        }
+        XCTAssertEqual(SettingsSheet.statuslineInstalled(try report("ok")), true)
+        XCTAssertEqual(SettingsSheet.statuslineInstalled(try report("finding")), false)
+        XCTAssertNil(SettingsSheet.statuslineInstalled(try report("not_checked")))
+        XCTAssertNil(SettingsSheet.statuslineInstalled(try report(nil)))
+        XCTAssertNil(SettingsSheet.statuslineInstalled(nil))
     }
 
     // MARK: - the fix's fail case: no PUT before a successful GET
@@ -72,7 +94,6 @@ final class SettingsModelTests: XCTestCase {
 
         model.setAutoSwitch(true)
         model.setUsageNotifications(true)
-        model.commitPlanCost("50", accountID: "acc1")
 
         // Give any errant fire-and-forget Task a chance to run.
         try? await Task.sleep(nanoseconds: 50_000_000)
@@ -126,55 +147,6 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(put?.notifications?.thresholds, [60, 80], "no UI for this field — must round-trip unmodified")
         XCTAssertEqual(put?.notifications?.disabled, true, "the ONE field we actually toggled")
         XCTAssertEqual(put?.planCostMonthly, ["acc1": 200], "untouched map must be preserved")
-    }
-
-    // MARK: - plan cost: empty/invalid input deletes the key, never stores 0
-
-    func testPlanCostEmptyInputDeletesKey() async {
-        let api = StubCockpitAPI()
-        let initial = CockpitConfig(autopilot: nil, notifications: nil, planCostMonthly: ["acc1": 200, "acc2": 50])
-        api.cockpitConfigResult = .success(initial)
-        api.putConfigResult = .success(initial)
-        let model = SettingsModel(api: api)
-        await model.load()
-
-        model.commitPlanCost("", accountID: "acc1")
-        await waitForPUT(api)
-
-        let put = try? XCTUnwrap(api.putConfigRequests.first)
-        XCTAssertNil(put?.planCostMonthly?["acc1"])
-        XCTAssertEqual(put?.planCostMonthly?["acc2"], 50, "another account's cost must survive")
-    }
-
-    func testPlanCostInvalidInputDeletesKeyNeverStoresZero() async {
-        let api = StubCockpitAPI()
-        let initial = CockpitConfig(autopilot: nil, notifications: nil, planCostMonthly: ["acc1": 200])
-        api.cockpitConfigResult = .success(initial)
-        api.putConfigResult = .success(initial)
-        let model = SettingsModel(api: api)
-        await model.load()
-
-        model.commitPlanCost("not-a-number", accountID: "acc1")
-        await waitForPUT(api)
-
-        let put = try? XCTUnwrap(api.putConfigRequests.first)
-        XCTAssertNil(put?.planCostMonthly?["acc1"])
-        XCTAssertNotEqual(put?.planCostMonthly?["acc1"], 0, "an unparseable field must delete the key, never store 0")
-    }
-
-    func testPlanCostValidInputStoresTheValue() async {
-        let api = StubCockpitAPI()
-        let initial = CockpitConfig(autopilot: nil, notifications: nil, planCostMonthly: nil)
-        api.cockpitConfigResult = .success(initial)
-        api.putConfigResult = .success(initial)
-        let model = SettingsModel(api: api)
-        await model.load()
-
-        model.commitPlanCost("199.99", accountID: "acc1")
-        await waitForPUT(api)
-
-        let put = try? XCTUnwrap(api.putConfigRequests.first)
-        XCTAssertEqual(put?.planCostMonthly?["acc1"], 199.99)
     }
 
     // MARK: - autopilot / notifications inversion mapping

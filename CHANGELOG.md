@@ -4,6 +4,22 @@ All notable user-facing changes to llmpilot. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Plan cost is read, not typed.** History's value readout now knows what
+  each account's plan costs from its own sign-in (Pro $20, Max $100, Ultra
+  $200 a month, list prices), so Settings no longer asks for it. The old
+  field only showed a grey "200" that was never saved.
+- **One status line row.** Settings had "Statusline" and "Terminal
+  statusline" side by side. There is now one "Status line" row: Install
+  when it isn't in Claude Code yet, Customize once it is.
+- **A shorter Pro section.** With Pro on, the restore-by-email and
+  recovery-code fields are gone from this Mac's Settings; one line says
+  how to turn Pro on on another Mac.
+- Usage notifications now read "Notifies when a limit passes 75% and 90%."
+
 ## [1.6.3] - 2026-11-01
 
 A quieter board. No price, trial length, offer, or account-data changes.

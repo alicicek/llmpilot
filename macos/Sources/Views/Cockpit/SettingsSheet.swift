@@ -1,8 +1,9 @@
 import SwiftUI
 
 // Native port of web/src/shell/SettingsDialog.tsx — the daemon config sheet
-// (autopilot/notifications/plan_cost_monthly over GET/PUT /v1/config) plus
-// the local Show History preference and the statusline entry point.
+// (autopilot/notifications over GET/PUT /v1/config) plus the local Show
+// History preference and the status line row. Plan cost is not asked for:
+// the daemon reads each account's plan from its sign-in.
 //
 // Phase 4 chunk B wires web/src/pro/LicenseSection.tsx's card
 // (LicenseCardView.swift) at the TOP of the sheet, exactly as the web
@@ -20,16 +21,18 @@ enum SettingsCopy {
     static let showHistory = "Show History" // :102
     static let showHistoryHint = "The charts section under the board." // :102
     static let autoSwitch = "Auto-switch" // :106
-    static let statusline = "Statusline" // :117
-    static let statuslineHint = "Segments, presets, and a live preview of your terminal line." // :117
-    static let customizeStatusline = "Customize statusline" // :125
-    /// U5: the install row — the daemon writes Claude Code's settings.json,
-    /// so a DMG-only install needs no terminal for this.
-    static let terminalStatusline = "Terminal statusline"
-    static let terminalStatuslineHint = "Wire the line into Claude Code so your limits show in the terminal."
+    /// One row for the line under Claude Code's prompt: install it when it
+    /// isn't there, customize it when it is (it was two rows — "Statusline"
+    /// and "Terminal statusline" — that read as the same thing twice).
+    static let statusline = "Status line"
+    static func statuslineHint(installed: Bool) -> String {
+        installed
+            ? "Your limits show at the bottom of Claude Code."
+            : "Show your limits at the bottom of Claude Code."
+    }
+    static let customizeStatusline = "Customize…"
     static let usageNotifications = "Usage notifications" // :128
-    static let defaultThresholdsText = "75, 90" // :82
-    static let planCostHint = "Monthly cost, used by the value readout in History." // :141
+    static let defaultThresholdsText = "75% and 90%" // :82
 
     /// nil threshold = adaptive time-to-wall (the default, owner
     /// 2026-08-13); a set value = the user chose fixed mode and the hint
@@ -50,17 +53,19 @@ enum SettingsCopy {
     static let autoSwitchOffer = "Turn on the autopilot"
 
     static func notificationsHint(_ thresholdsText: String) -> String {
-        "Notifies when a bucket crosses \(thresholdsText)%." // :128
+        "Notifies when a limit passes \(thresholdsText)."
     }
 
-    static func planCostLabel(_ name: String) -> String {
-        "Plan cost — \(name)" // :140
+    /// "75% and 90%" / "50%, 75% and 90%".
+    static func thresholdsList(_ values: [Double]) -> String {
+        let parts = values.map { "\(jsNumberString($0))%" }
+        guard parts.count > 1 else { return parts.first ?? "" }
+        return parts.dropLast().joined(separator: ", ") + " and " + parts.last!
     }
 }
 
-/// Drives the native Settings sheet: config.json's autopilot/notifications/
-/// plan_cost_monthly over GET/PUT /v1/config, plus derived read state for the
-/// hints. Mirrors SettingsDialog.tsx's load-on-open + save-on-change
+/// Drives the native Settings sheet: config.json's autopilot/notifications
+/// over GET/PUT /v1/config, plus derived read state for the hints. Mirrors SettingsDialog.tsx's load-on-open + save-on-change
 /// discipline — no Save/Cancel buttons; every control mutation PUTs the FULL
 /// local config copy immediately, because handleConfigPut is a full replace
 /// server-side (internal/daemon/server.go:833-849 decodes straight into
@@ -82,7 +87,7 @@ final class SettingsModel: ObservableObject {
 
     private let api: CockpitDaemonAPI
 
-    /// U5: the Statusline row's "Install statusline" button — the daemon
+    /// U5: the status line row's install button — the daemon
     /// writes settings.json, so a DMG-only install needs no terminal. The
     /// integrator passes the doctor's reload so the "not showing your
     /// runway" note leaves the cockpit as soon as the write lands.
@@ -122,11 +127,7 @@ final class SettingsModel: ObservableObject {
         guard let t = config?.notifications?.thresholds, !t.isEmpty else {
             return SettingsCopy.defaultThresholdsText
         }
-        return t.map { jsNumberString($0) }.joined(separator: ", ")
-    }
-
-    func planCost(for accountID: String) -> Double? {
-        config?.planCostMonthly?[accountID]
+        return SettingsCopy.thresholdsList(t)
     }
 
     // MARK: - mutations
@@ -134,8 +135,8 @@ final class SettingsModel: ObservableObject {
     /// The one gate every mutator goes through: no successful load yet, no
     /// PUT — the fix's fail case (SettingsModelTests.testNoPUTBeforeLoad...).
     /// Mirrors SettingsDialog.tsx:71-79's `patch`, minus the `{}` fallback.
-    /// Serialized so two rapid mutations (plan-cost commit on focus loss +
-    /// a toggle in the same gesture) can never land out of order — the PUT
+    /// Serialized so two rapid mutations (two toggles in quick succession)
+    /// can never land out of order — the PUT
     /// is a FULL replace with no version check, so an older body arriving
     /// last would silently win server-side.
     private var pendingPut: Task<Void, Never>?
@@ -176,24 +177,6 @@ final class SettingsModel: ObservableObject {
             cfg.notifications = n
         }
     }
-
-    /// SettingsDialog.tsx:152-160 — empty or unparseable text DELETES the
-    /// key (never stores 0: a blank field means "no override", not "$0/mo").
-    /// NATIVE DEVIATION: the web PUTs on every keystroke (`onChange`); this
-    /// commits once, on focus loss/submit — same end state, far less daemon
-    /// chatter.
-    func commitPlanCost(_ text: String, accountID: String) {
-        patch { cfg in
-            var costs = cfg.planCostMonthly ?? [:]
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let v = Double(trimmed), v.isFinite {
-                costs[accountID] = v
-            } else {
-                costs.removeValue(forKey: accountID)
-            }
-            cfg.planCostMonthly = costs
-        }
-    }
 }
 
 // MARK: - view
@@ -229,9 +212,13 @@ private struct SettingsRow<Content: View>: View {
 /// hands off to the statusline editor.
 struct SettingsSheet: View {
     @ObservedObject var model: SettingsModel
-    let accounts: [AccountState]
     let onClose: () -> Void
     let onOpenStatusline: () -> Void
+    /// Whether llmpilot's line is the one in Claude Code, from the doctor's
+    /// statusline check: true installed, false not (absent, or another
+    /// tool's), nil not known yet — read as not installed, where the
+    /// install button is harmless ("Already installed").
+    var statuslineInstalled: Bool? = nil
     /// Phase 4 chunk B — Settings → License (web/src/pro/LicenseSection.tsx).
     /// `nil` licenseModel omits the card entirely (pre-integration default).
     var license: LicenseInfo? = nil
@@ -257,15 +244,22 @@ struct SettingsSheet: View {
         return license.available && !license.active && !license.paidButOff
     }
 
+    /// The doctor's statusline check, read for the status line row: "ok"
+    /// only when llmpilot's line is the one installed (doctor.go
+    /// checkInstall); a finding means absent or another tool's; nil — no
+    /// report yet, or not checked — is unknown.
+    static func statuslineInstalled(_ report: DoctorReport?) -> Bool? {
+        switch report?.checks.first(where: { $0.id == "statusline" })?.state {
+        case "ok": return true
+        case "finding": return false
+        default: return nil
+        }
+    }
+
     /// Native twin of the web's `localStorage.llmpilot.showHistory`
     /// (SettingsDialog.tsx:6-10) — a LOCAL display preference, never PUT to
     /// the daemon. Default true matches `showHistoryPref()`'s `!== "off"`.
     @AppStorage("showHistory") private var showHistoryPref = true
-
-    /// Uncommitted plan-cost text per account id, keyed while a field is
-    /// being edited; committed (and cleared) on submit or focus loss.
-    @State private var drafts: [String: String] = [:]
-    @FocusState private var focusedAccountID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -316,18 +310,13 @@ struct SettingsSheet: View {
                         EmptyView()
                     }
                 }
-                SettingsRow(label: SettingsCopy.statusline, hint: SettingsCopy.statuslineHint) {
-                    Button(SettingsCopy.customizeStatusline) {
+                StatuslineSettingsRow(
+                    install: model.statuslineInstall,
+                    installed: statuslineInstalled == true,
+                    onCustomize: {
                         onClose()
                         onOpenStatusline()
-                    }
-                    .accessibilityIdentifier("settings-customize-statusline")
-                    .accessibilityLabel(SettingsCopy.customizeStatusline)
-                }
-                SettingsRow(label: SettingsCopy.terminalStatusline, hint: SettingsCopy.terminalStatuslineHint) {
-                    StatuslineInstallControl(model: model.statuslineInstall)
-                        .frame(maxWidth: 230, alignment: .trailing)
-                }
+                    })
                 SettingsRow(
                     label: SettingsCopy.usageNotifications,
                     hint: SettingsCopy.notificationsHint(model.thresholdsText)
@@ -352,59 +341,39 @@ struct SettingsSheet: View {
                         .accessibilityIdentifier("settings-usage-notifications")
                         .accessibilityLabel(SettingsCopy.usageNotifications)
                 }
-                ForEach(accounts) { account in
-                    planCostRow(account)
-                }
             }
         }
         // No root padding/frame: SheetChrome owns the inset ring (owner
         // 2026-08-13 — the doubled padding read 32pt against Close's 16pt).
         .task { await model.load() }
     }
+}
 
-    private func planCostRow(_ account: AccountState) -> some View {
-        let name = account.label.isEmpty ? account.email : account.label
-        return SettingsRow(label: SettingsCopy.planCostLabel(name), hint: SettingsCopy.planCostHint) {
-            HStack(spacing: 4) {
-                Text("$").font(.system(size: 12)).foregroundColor(CockpitTheme.sec)
-                TextField(
-                    "200",
-                    text: Binding(
-                        get: { drafts[account.id] ?? draftText(for: account) },
-                        set: { drafts[account.id] = $0 }
-                    )
-                )
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 64)
-                .multilineTextAlignment(.trailing)
-                .focused($focusedAccountID, equals: account.id)
-                .disabled(!model.loaded)
-                .onSubmit { commitDraft(for: account.id) }
-                .accessibilityIdentifier("settings-plan-cost-\(account.id)")
-                .accessibilityLabel(SettingsCopy.planCostLabel(name))
-                Text("/mo").font(.system(size: 12)).foregroundColor(CockpitTheme.sec)
-            }
-        }
-        // Single-param onChange (macOS 13 target — the two-param
-        // (old,new) overload needs macOS 14): fires with the NEWLY focused
-        // id, so "this row lost focus" reads as "the new focus isn't me".
-        // Harmless no-op for rows with no pending draft (the guard in
-        // commitDraft below).
-        .onChange(of: focusedAccountID) { newValue in
-            if newValue != account.id {
-                commitDraft(for: account.id)
-            }
-        }
+/// The status line row: Install while llmpilot's line isn't in Claude Code
+/// (the doctor says so, and nothing installed it since), Customize once it
+/// is. Observes the install model itself so a fresh install swaps the
+/// button in place.
+private struct StatuslineSettingsRow: View {
+    @ObservedObject var install: StatuslineInstallModel
+    let installed: Bool
+    let onCustomize: () -> Void
+
+    private var isInstalled: Bool {
+        if installed { return true }
+        if case .done = install.phase { return true }
+        return false
     }
 
-    private func draftText(for account: AccountState) -> String {
-        guard let v = model.planCost(for: account.id) else { return "" }
-        return jsNumberString(v)
-    }
-
-    private func commitDraft(for accountID: String) {
-        guard let text = drafts[accountID] else { return }
-        model.commitPlanCost(text, accountID: accountID)
-        drafts[accountID] = nil
+    var body: some View {
+        SettingsRow(label: SettingsCopy.statusline, hint: SettingsCopy.statuslineHint(installed: isInstalled)) {
+            if isInstalled {
+                Button(SettingsCopy.customizeStatusline, action: onCustomize)
+                    .accessibilityIdentifier("settings-customize-statusline")
+                    .accessibilityLabel("Customize the status line")
+            } else {
+                StatuslineInstallControl(model: install)
+                    .frame(maxWidth: 230, alignment: .trailing)
+            }
+        }
     }
 }

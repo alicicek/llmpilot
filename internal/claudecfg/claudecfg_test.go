@@ -199,6 +199,31 @@ func TestTierLabelMapsKnownVocabularyAndNeverGuesses(t *testing.T) {
 	}
 }
 
+// Plan: the plan's own name first, the tier when only that is there (Ultra
+// was Max 20×), and nothing for a login that names no known plan.
+func TestPlanReadsTheNameThenTheTierAndNeverGuesses(t *testing.T) {
+	cases := []struct {
+		name, tier string
+		wantName   string
+		wantUSD    float64
+	}{
+		{"Ultra", "default_claude_max_20x", "Ultra", 200},
+		{"Max", "", "Max", 100},
+		{"Pro", "", "Pro", 20},
+		{"", "default_claude_max_20x", "Ultra", 200},
+		{"", "default_claude_max_5x", "Max", 100},
+		{"", "default_claude_pro", "Pro", 20},
+		{"Team", "team_premium_something", "", 0},
+		{"", "", "", 0},
+	}
+	for _, c := range cases {
+		a := OAuthAccount{PlanDisplayName: c.name, OrganizationRateLimitTier: c.tier}
+		if n, usd := a.Plan(); n != c.wantName || usd != c.wantUSD {
+			t.Errorf("Plan(%q, %q) = %q %v, want %q %v", c.name, c.tier, n, usd, c.wantName, c.wantUSD)
+		}
+	}
+}
+
 // TierMultiplier: the same never-guess rule as TierLabel — the adaptive
 // ceiling treats 0 as "safest", so an unknown raw value maps to 0, never
 // to a flattering multiple (owner 2026-08-13). Team/Enterprise raw values

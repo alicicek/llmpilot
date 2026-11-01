@@ -206,8 +206,9 @@ enum ProjectsDerivation {
 
 enum ValueDerivation {
     /// Value.tsx `planCost` memo (live branch only — the `fixturesMode`
-    /// branch has no native counterpart). `perAccount` is the daemon's
-    /// `plan_cost_monthly` map, loaded via `cockpitConfig()`.
+    /// branch has no native counterpart). `perAccount` is each account's
+    /// plan price as the daemon read it from the sign-in (analytics'
+    /// `plan_cost_monthly`) — nothing the user types.
     static func planCost(selectedAccountIds: [String], perAccount: [String: Double], rangeDays: Int) -> Double {
         let prorate = Double(rangeDays) / 30.0
         let sum = selectedAccountIds.reduce(0.0) { $0 + (perAccount[$1] ?? 0) }
@@ -244,10 +245,9 @@ enum ValueDerivation {
 /// never edited: this chunk only wraps it with the loading flags and filter
 /// state Charts.tsx keeps that CockpitViewModel itself doesn't track).
 ///
-/// Plan cost rides `CockpitDaemonAPI.cockpitConfig()` (GET /v1/config, the
-/// same read Value.tsx's `fetchConfig()` makes) — loaded alongside
-/// analytics; a failed fetch falls back to the $0 plan-cost presentation
-/// Charts.tsx line 108 defines.
+/// Plan cost rides the analytics response itself (each account's plan,
+/// read by the daemon from its sign-in); a failed fetch falls back to the
+/// $0 plan-cost presentation Charts.tsx line 108 defines.
 @MainActor
 final class HistorySectionModel: ObservableObject {
     @Published var range: HistoryRangeKey = .sevenDay
@@ -264,9 +264,6 @@ final class HistorySectionModel: ObservableObject {
     func loadAnalyticsIfNeeded() async {
         isAnalyticsLoading = true
         await cockpit.loadAnalytics(days: range.days)
-        // Plan cost for the Value card (Charts.tsx fetches config alongside
-        // analytics); errors degrade to the $0 presentation, never block.
-        await cockpit.loadConfig()
         isAnalyticsLoading = false
     }
 
@@ -447,7 +444,7 @@ struct HistorySectionView: View {
                 ValueCard(
                     cells: filteredCells,
                     range: model.range,
-                    planCostMonthly: cockpit.config?.planCostMonthly ?? [:],
+                    planCostMonthly: cockpit.analytics?.planCostMonthly ?? [:],
                     selectedAccountIds: selected.filter { $0 != "" }
                 )
             }

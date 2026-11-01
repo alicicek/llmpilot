@@ -86,7 +86,7 @@ final class StatuslineInstallModel: ObservableObject {
 }
 
 enum StatuslineInstallCopy {
-    static let button = "Install statusline"
+    static let button = "Install status line"
     static let working = "Installing…"
     static let keepBoth = "Keep both"
     static let replaceIt = "Replace it"

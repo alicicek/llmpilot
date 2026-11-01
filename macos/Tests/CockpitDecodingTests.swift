@@ -113,6 +113,18 @@ final class CockpitDecodingTests: XCTestCase {
         let r = try DaemonDates.decoder().decode(AnalyticsResponse.self, from: Data(json.utf8))
         XCTAssertEqual(r.cells, [])
         XCTAssertEqual(r.hourWeekday, [])
+        // An older daemon sends no plan costs: none known, never a failure.
+        XCTAssertEqual(r.planCostMonthly, [:])
+    }
+
+    /// Each account's plan price, read by the daemon from its sign-in.
+    func testAnalyticsResponseCarriesPlanCosts() throws {
+        let json = #"""
+        {"cells": [], "hour_weekday": [], "files_total": 0, "files_parsed": 0, "files_reused": 0,
+         "as_of": "2026-11-01T00:00:00Z", "plan_cost_monthly": {"acct-a": 200, "acct-b": 100}}
+        """#
+        let r = try DaemonDates.decoder().decode(AnalyticsResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(r.planCostMonthly, ["acct-a": 200, "acct-b": 100])
     }
 
     func testAnalyticsResponseSharedAccountEmptyID() throws {

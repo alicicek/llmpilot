@@ -144,12 +144,21 @@ struct LicenseCardView: View {
                 revealRow(masked: masked)
             }
 
-            recoverForm
-            claimForm
+            // Restoring is for a Mac where Pro is not on: with it active
+            // here the two fields only asked for things already done, so
+            // they give way to the one line about other Macs.
+            if license?.active == true {
+                Text("On another Mac, restore Pro from its Settings with your purchase email.")
+                    .font(.system(size: 10))
+                    .foregroundColor(CockpitTheme.ter)
+            } else {
+                recoverForm
+                claimForm
 
-            Text("Stored on this Mac. Other Macs turn on Pro by email — enter the code from the email above.")
-                .font(.system(size: 10))
-                .foregroundColor(CockpitTheme.ter)
+                Text("Stored on this Mac. Other Macs turn on Pro by email — enter the code from the email above.")
+                    .font(.system(size: 10))
+                    .foregroundColor(CockpitTheme.ter)
+            }
 
             if let note = model.note {
                 Text(note).font(.system(size: 11)).foregroundColor(CockpitTheme.sec).accessibilityIdentifier("license-note")

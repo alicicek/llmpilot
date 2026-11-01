@@ -249,7 +249,6 @@ struct NativeCockpitRootView: View {
             SheetChrome(minWidth: 460, onClose: { settingsOpen = false }) {
                 SettingsSheet(
                     model: settingsModel,
-                    accounts: state.accounts,
                     onClose: { settingsOpen = false },
                     onOpenStatusline: {
                         settingsOpen = false
@@ -262,6 +261,7 @@ struct NativeCockpitRootView: View {
                             statuslineOpen = true
                         }
                     },
+                    statuslineInstalled: SettingsSheet.statuslineInstalled(doctorModel.report),
                     license: cockpit.license,
                     licenseModel: licenseAccountModel,
                     onTurnOn: {

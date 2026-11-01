@@ -40,10 +40,45 @@ type analyticsResp struct {
 			Output int64 `json:"output"`
 		} `json:"tokens"`
 	} `json:"cells"`
-	HourWeekday [7][24]int64 `json:"hour_weekday"`
-	FilesTotal  int          `json:"files_total"`
-	FilesParsed int          `json:"files_parsed"`
-	FilesReused int          `json:"files_reused"`
+	HourWeekday [7][24]int64       `json:"hour_weekday"`
+	FilesTotal  int                `json:"files_total"`
+	FilesParsed int                `json:"files_parsed"`
+	FilesReused int                `json:"files_reused"`
+	PlanCosts   map[string]float64 `json:"plan_cost_monthly"`
+}
+
+// Each account's plan cost comes from its own sign-in, with nothing typed:
+// the plan's name where Claude Code writes it, else its tier. An account
+// whose sign-in names no known plan is left out rather than guessed.
+func TestAnalyticsReportsPlanCostsFromEachSignIn(t *testing.T) {
+	st := store.At(t.TempDir())
+	ultra, max5, team := t.TempDir(), t.TempDir(), t.TempDir()
+	for dir, acct := range map[string]string{
+		ultra: `{"emailAddress":"u@x.dev","planDisplayName":"Ultra"}`,
+		max5:  `{"emailAddress":"m@x.dev","organizationRateLimitTier":"default_claude_max_5x"}`,
+		team:  `{"emailAddress":"t@x.dev","organizationRateLimitTier":"team_something"}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(`{"oauthAccount":`+acct+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.SaveAccounts([]store.Account{
+		{ID: "u", Label: "u", Email: "u@x.dev", ConfigDir: ultra},
+		{ID: "m", Label: "m", Email: "m@x.dev", ConfigDir: max5},
+		{ID: "t", Label: "t", Email: "t@x.dev", ConfigDir: team},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := &Daemon{Store: st}
+	srv := httptest.NewServer(withToken(d))
+	defer srv.Close()
+	out, code := getAnalytics(t, srv, "")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if len(out.PlanCosts) != 2 || out.PlanCosts["u"] != 200 || out.PlanCosts["m"] != 100 {
+		t.Fatalf("plan costs = %v, want u=200 m=100 and no t", out.PlanCosts)
+	}
 }
 
 func getAnalytics(t *testing.T, srv *httptest.Server, query string) (analyticsResp, int) {

@@ -106,9 +106,9 @@ struct RhythmCard: View {
 struct ValueCard: View {
     let cells: [AnalyticsCell]
     let range: HistoryRangeKey
-    /// account id -> monthly plan cost, from the daemon's
-    /// `plan_cost_monthly` config (loaded via `cockpitConfig()`); empty
-    /// when unset or the fetch failed, degrading to the $0 presentation.
+    /// account id -> monthly plan price, read by the daemon from each
+    /// sign-in (analytics' `plan_cost_monthly`); empty when no plan is
+    /// known or the fetch failed, degrading to the $0 presentation.
     let planCostMonthly: [String: Double]
     /// Real account ids only — "" (shared) already excluded by the caller,
     /// mirroring Value.tsx's `selectedAccountIds` contract.

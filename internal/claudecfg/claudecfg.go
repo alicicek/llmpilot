@@ -160,6 +160,37 @@ type OAuthAccount struct {
 	DisplayName               string `json:"displayName"`
 	BillingType               string `json:"billingType"`
 	OrganizationRateLimitTier string `json:"organizationRateLimitTier"`
+	// PlanDisplayName is the plan's own name ("Ultra"); newer Claude Code
+	// versions write it, older logins carry only the rate-limit tier.
+	PlanDisplayName string `json:"planDisplayName"`
+}
+
+// Plan is the account's Claude plan and its monthly list price in US
+// dollars, or ("", 0) when neither the plan name nor the tier names one —
+// never a guess (Team, Enterprise and API-key logins stay unknown). The
+// tier fallback maps max_20x to Ultra: Anthropic renamed Max 20× to Ultra
+// at the same $200. Prices are claude.com/pricing as of 2026-11-01,
+// monthly billing (an annual Pro plan costs less).
+func (a *OAuthAccount) Plan() (string, float64) {
+	switch strings.ToLower(strings.TrimSpace(a.PlanDisplayName)) {
+	case "pro":
+		return "Pro", 20
+	case "max", "max 5x", "max 5×":
+		return "Max", 100
+	case "ultra", "max 20x", "max 20×":
+		return "Ultra", 200
+	}
+	t := strings.ToLower(a.OrganizationRateLimitTier)
+	switch {
+	case strings.Contains(t, "max_20x"):
+		return "Ultra", 200
+	case strings.Contains(t, "max_5x"):
+		return "Max", 100
+	case strings.Contains(t, "pro"):
+		return "Pro", 20
+	default:
+		return "", 0
+	}
 }
 
 // TierLabel maps organizationRateLimitTier's raw vocabulary to the display
